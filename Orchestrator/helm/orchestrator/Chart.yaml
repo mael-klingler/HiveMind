@@ -1,0 +1,7 @@
+apiVersion: v2
+name: hivemind-orchestrator
+description: HiveMind Orchestrator - Repo-Verwaltung, LeanKG, Ollama-Integration
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.24.0-0"

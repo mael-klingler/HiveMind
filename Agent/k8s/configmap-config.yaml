@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: hivemind
+  labels:
+    app.kubernetes.io/name: hivemind
+    app.kubernetes.io/component: agent
+data:
+  opencode.json.template: |
+    {
+      "$schema": "https://opencode.ai/config.json",
+      "model": "ollama/${OPENCODE_MODEL}",
+      "small_model": "ollama/${OPENCODE_MODEL}",
+      "autoupdate": false,
+      "share": "disabled",
+      "permissions": {
+        "write": "allow",
+        "bash": "allow",
+        "external_directory": "allow",
+        "doom_loop": "allow"
+      },
+      "provider": {
+        "ollama": {
+          "npm": "@ai-sdk/openai-compatible",
+          "name": "Ollama",
+          "options": {
+            "baseURL": "${OLLAMA_BASE_URL}"
+          },
+          "models": {
+            "${OPENCODE_MODEL}": {
+              "name": "${OPENCODE_MODEL}",
+              "options": {
+                "num_ctx": 32768
+              }
+            }
+          }
+        }
+      },
+      "mcp": {
+        "servers": {
+          "leankg-mcp": {
+            "type": "local",
+            "command": ["leankg", "mcp-stdio"]
+          }
+        }
+      }
+    }

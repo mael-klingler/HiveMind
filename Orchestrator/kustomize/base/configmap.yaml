@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-config
+data:
+  orchestrator_config.json: |
+    {
+      "work_dir": "/app/workspace",
+      "pvc_mount_path": "/app/workspace/repos",
+      "track_branch": "main",
+      "auto_pull_interval_minutes": 60,
+      "leankg_enabled": true,
+      "ollama_host_from_env": true,
+      "ollama_model_from_env": true,
+      "opencode_model_from_env": true,
+      "max_related_files_per_repo": 5,
+      "log_level": "INFO",
+      "repositories": [
+        {"name": "auth-service", "url": "https://gitlab.example.com/myorg/services/auth.git", "branch": "main", "description": "Authentication service.", "tags": ["backend", "auth", "service"]},
+        {"name": "api-gateway", "url": "https://gitlab.example.com/myorg/services/gateway.git", "branch": "main", "description": "API Gateway.", "tags": ["backend", "gateway", "api", "service"]},
+        {"name": "frontend", "url": "https://gitlab.example.com/myorg/frontend.git", "branch": "main", "description": "Main frontend application.", "tags": ["frontend", "web", "ui"]}
+      ]
+    }

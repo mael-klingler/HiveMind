@@ -1,0 +1,94 @@
+# HiveMind Orchestrator Helm Chart – Values
+
+image:
+  repository: hivemind/orchestrator
+  pullPolicy: Always
+  tag: "latest"
+
+replicaCount: 1
+
+git:
+  token: ""
+
+envFromSecret:
+  enabled: true
+  name: "orchestrator-env"
+
+envFromConfigMap:
+  enabled: false
+  name: ""
+
+ollamaCloud:
+  apiKey: ""
+
+config:
+  work_dir: "/app/workspace"
+  pvc_mount_path: "/app/workspace/repos"
+  track_branch: "main"
+  auto_pull_interval_minutes: 60
+  leankg_enabled: true
+  ollama_host: ""
+  ollama_model: ""
+  opencode_model: ""
+  log_level: "INFO"
+
+  repositories:
+    - name: "auth-service"
+      url: "https://gitlab.example.com/myorg/services/auth.git"
+      branch: "main"
+      description: "Authentication service."
+      tags: ["backend", "auth", "service"]
+    - name: "api-gateway"
+      url: "https://gitlab.example.com/myorg/services/gateway.git"
+      branch: "main"
+      description: "API Gateway."
+      tags: ["backend", "gateway", "api", "service"]
+    - name: "frontend"
+      url: "https://gitlab.example.com/myorg/frontend.git"
+      branch: "main"
+      description: "Main frontend application."
+      tags: ["frontend", "web", "ui"]
+
+persistence:
+  enabled: true
+  storageClassName: "standard"
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: hivemind.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    enabled: false
+    certManager:
+      enabled: false
+      issuerName: letsencrypt-staging
+      issuerKind: ClusterIssuer
+    existingSecret: ""
+
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+
+rbac:
+  create: true
+
+agentNamespace: hivemind

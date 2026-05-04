@@ -1,0 +1,17 @@
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled .Values.ingress.tls.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "orchestrator.fullname" . }}-tls
+  labels:
+    {{- include "orchestrator.labels" . | nindent 4 }}
+spec:
+  secretName: tls-{{ include "orchestrator.fullname" . }}
+  issuerRef:
+    name: {{ .Values.ingress.tls.certManager.issuerName }}
+    kind: {{ .Values.ingress.tls.certManager.issuerKind | default "ClusterIssuer" }}
+  dnsNames:
+    {{- range .Values.ingress.hosts }}
+    - {{ .host | quote }}
+    {{- end }}
+{{- end }}

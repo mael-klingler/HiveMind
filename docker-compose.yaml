@@ -1,0 +1,127 @@
+services:
+  orchestrator-init:
+    build:
+      context: ./Orchestrator
+      dockerfile: Dockerfile
+    image: hivemind/orchestrator:latest
+    container_name: orchestrator-init
+    command: ["init"]
+    environment:
+      - GIT_HOST=${GITLAB_HOST:-gitlab.example.com}
+      - GIT_USER=gitlab-ci-token
+      - GIT_TOKEN=${GITLAB_TOKEN}
+      - ORCHESTRATOR_CONFIG=/app/config/orchestrator_config.json
+    volumes:
+      - ./Orchestrator/orchestrator_config.json:/app/config/orchestrator_config.json:ro
+      - repo-storage:/app/workspace/repos
+      - ${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro
+    profiles:
+      - init
+
+  orchestrator-process:
+    build:
+      context: ./Orchestrator
+      dockerfile: Dockerfile
+    image: hivemind/orchestrator:latest
+    container_name: orchestrator-process
+    command:
+      - "process"
+      - "/app/tickets/example_ticket.json"
+    environment:
+      - GIT_HOST=${GITLAB_HOST:-gitlab.example.com}
+      - GIT_USER=gitlab-ci-token
+      - GIT_TOKEN=${GITLAB_TOKEN}
+      - ORCHESTRATOR_CONFIG=/app/config/orchestrator_config.json
+    volumes:
+      - ./Orchestrator/orchestrator_config.json:/app/config/orchestrator_config.json:ro
+      - ./Orchestrator/example_ticket.json:/app/tickets/example_ticket.json:ro
+      - repo-storage:/app/workspace/repos
+      - workspace:/app/workspace
+      - ${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro
+    profiles:
+      - process
+
+  agent:
+    build:
+      context: ./Agent
+      dockerfile: Dockerfile
+    image: hivemind-opencode:latest
+    container_name: hivemind-agent
+    environment:
+      - GITLAB_TOKEN=${GITLAB_TOKEN}
+      - GITLAB_HOST=${GITLAB_HOST:-gitlab.example.com}
+      - OPENCODE_MODEL=${OPENCODE_MODEL:-glm-5.1:cloud}
+      - DRY_RUN=${DRY_RUN:-true}
+      - GIT_SSH_COMMAND=ssh -i /root/.ssh/ssh-privatekey -o StrictHostKeyChecking=no -o IdentitiesOnly=yes
+      - ORCHESTRATOR_WORKSPACE=/workspace
+    volumes:
+      - workspace:/workspace
+      - ${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro
+    depends_on:
+      orchestrator-process:
+        condition: service_completed_successfully
+    profiles:
+      - run
+
+  orchestrator-init-full:
+    extends:
+      service: orchestrator-init
+    profiles:
+      - full
+
+  orchestrator-process-full:
+    extends:
+      service: orchestrator-process
+    depends_on:
+      orchestrator-init-full:
+        condition: service_completed_successfully
+    profiles:
+      - full
+
+  agent-full:
+    extends:
+      service: agent
+    depends_on:
+      orchestrator-process-full:
+        condition: service_completed_successfully
+    profiles:
+      - full
+
+  ticketservice-db:
+    image: postgres:16-alpine
+    container_name: ticketservice-db
+    environment:
+      POSTGRES_USER: ticketservice
+      POSTGRES_PASSWORD: ticketservice
+      POSTGRES_DB: ticketservice
+    volumes:
+      - ticketservice-db-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticketservice"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ticketservice:
+    build:
+      context: ./TicketService
+      dockerfile: Dockerfile
+    image: hivemind/ticketservice:latest
+    container_name: ticketservice
+    environment:
+      - TICKETSVC_DATABASE_URL=postgresql+asyncpg://ticketservice:ticketservice@ticketservice-db:5432/ticketservice
+      - TICKETSVC_DATABASE_URL_SYNC=postgresql://ticketservice:ticketservice@ticketservice-db:5432/ticketservice
+    ports:
+      - "8080:8080"
+    depends_on:
+      ticketservice-db:
+        condition: service_healthy
+    profiles:
+      - tickets
+
+volumes:
+  repo-storage:
+  workspace:
+  ticketservice-db-data:

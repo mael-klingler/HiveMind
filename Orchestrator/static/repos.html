@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repositories - HiveMind Orchestrator</title>
+  <style>
+    :root {
+      --bg: #090c10;
+      --bg2: #0d1117;
+      --card: #131a23;
+      --card-hover: #18202b;
+      --border: #21262d;
+      --border-light: #30363d;
+      --accent: #4391eb;
+      --accent-glow: rgba(67,145,235,0.12);
+      --green: #2ea043;
+      --green-glow: rgba(46,160,67,0.12);
+      --yellow: #c69026;
+      --yellow-glow: rgba(198,144,38,0.12);
+      --red: #da3633;
+      --red-glow: rgba(218,54,51,0.12);
+      --purple: #9867e2;
+      --purple-glow: rgba(152,103,226,0.12);
+      --text: #e6edf3;
+      --text2: #c9d1d9;
+      --muted: #7d8590;
+      --muted2: #525a66;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-lg: 0 8px 28px rgba(0,0,0,0.35);
+      --radius: 10px;
+      --radius-sm: 6px;
+      --radius-lg: 14px;
+      --transition: 0.15s ease;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .layout { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 240px; min-width: 240px;
+      background: var(--bg2); border-right: 1px solid var(--border);
+      padding: 1.5rem 0; display: flex; flex-direction: column;
+      position: sticky; top: 0; height: 100vh;
+    }
+    .sidebar-logo {
+      padding: 0 1.5rem 1.5rem;
+      border-bottom: 1px solid var(--border); margin-bottom: 1rem;
+    }
+    .sidebar-logo h1 { font-size: 1.05rem; font-weight: 700; }
+    .sidebar-logo span { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
+    .sidebar-nav { flex: 1; padding: 0 0.75rem; }
+    .sidebar-link {
+      display: flex; align-items: center; gap: 0.65rem;
+      padding: 0.6rem 0.75rem; border-radius: var(--radius-sm);
+      color: var(--text2); font-size: 0.875rem; font-weight: 500;
+      transition: all var(--transition); cursor: pointer;
+      text-decoration: none; margin-bottom: 0.15rem;
+    }
+    .sidebar-link:hover { background: var(--border); text-decoration: none; }
+    .sidebar-link.active { background: var(--accent-glow); color: var(--accent); }
+    .sidebar-link .icon { font-size: 1.1rem; width: 22px; text-align: center; }
+    .sidebar-link .badge-sidebar {
+      margin-left: auto; background: var(--accent); color: #fff;
+      font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.45rem;
+      border-radius: 10px; min-width: 20px; text-align: center;
+    }
+    .sidebar-footer {
+      padding: 1rem 1.5rem 0;
+      border-top: 1px solid var(--border); margin-top: auto;
+    }
+    .sidebar-footer .status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--green); margin-right: 0.4rem;
+      animation: pulse-dot 2s infinite;
+    }
+    .sidebar-footer .status-dot.offline { background: var(--red); animation: none; }
+    @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+    .main { flex: 1; padding: 1.75rem 2rem; overflow-y: auto; }
+    .page-header {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;
+    }
+    .page-header h2 { font-size: 1.15rem; font-weight: 700; }
+
+    .panel {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); margin-bottom: 1rem; overflow: hidden;
+    }
+    .panel-header {
+      padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .panel-header h3 {
+      font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--muted);
+    }
+    .panel-body { padding: 0; }
+
+    .repo-card {
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+      transition: background var(--transition);
+    }
+    .repo-card:last-child { border-bottom: none; }
+    .repo-card:hover { background: var(--card-hover); }
+    .repo-card-top {
+      display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.35rem;
+    }
+    .repo-name { font-size: 0.95rem; font-weight: 700; color: var(--text); }
+    .repo-branch {
+      font-family: "SF Mono","Fira Code",monospace; font-size: 0.72rem;
+      background: var(--purple-glow); color: var(--purple); padding: 0.1rem 0.5rem;
+      border-radius: 10px; font-weight: 600;
+    }
+    .repo-url {
+      font-family: "SF Mono","Fira Code",monospace; font-size: 0.72rem;
+      color: var(--muted2); margin-bottom: 0.3rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%;
+    }
+    .repo-desc { font-size: 0.82rem; color: var(--text2); margin-bottom: 0.45rem; }
+    .repo-tags { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+    .repo-tag {
+      padding: 0.08rem 0.4rem; border-radius: 10px; font-size: 0.62rem;
+      font-weight: 600; background: rgba(255,255,255,0.05);
+      color: var(--muted); border: 1px solid var(--border);
+    }
+    .repo-actions { display: flex; gap: 0.4rem; align-items: center; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.45rem 0.85rem; border-radius: var(--radius-sm);
+      font-size: 0.8rem; font-weight: 600; border: 1px solid transparent;
+      cursor: pointer; transition: all var(--transition); line-height: 1.4;
+    }
+    .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-primary:hover { filter: brightness(1.12); }
+    .btn-secondary { background: transparent; color: var(--text2); border-color: var(--border-light); }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
+    .btn-danger:hover { filter: brightness(1.12); }
+    .btn-sm { font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);
+      z-index: 200; justify-content: center; align-items: center; padding: 1.5rem;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--card); border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg); width: 100%; max-width: 540px;
+      max-height: 85vh; overflow-y: auto;
+      box-shadow: var(--shadow-lg); animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn { from{opacity:0;transform:translateY(-12px)} to{opacity:1;transform:translateY(0)} }
+    .modal-header {
+      padding: 1.15rem 1.5rem; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal-header h3 { font-size: 0.95rem; font-weight: 600; }
+    .modal-close {
+      background: none; border: none; color: var(--muted);
+      font-size: 1.3rem; cursor: pointer; padding: 0.2rem;
+      border-radius: var(--radius-sm); transition: all var(--transition);
+    }
+    .modal-close:hover { color: var(--text); background: var(--border); }
+    .modal-body { padding: 1.25rem 1.5rem; }
+    .modal-footer {
+      padding: 0.85rem 1.5rem; border-top: 1px solid var(--border);
+      display: flex; gap: 0.5rem; justify-content: flex-end;
+    }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label {
+      display: block; font-size: 0.75rem; font-weight: 600;
+      color: var(--muted); margin-bottom: 0.3rem;
+    }
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%; background: var(--bg);
+      border: 1px solid var(--border-light); color: var(--text);
+      padding: 0.5rem 0.65rem; border-radius: var(--radius-sm);
+      font-size: 0.85rem; font-family: inherit;
+      transition: border-color var(--transition);
+    }
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .form-group .help { font-size: 0.68rem; color: var(--muted2); margin-top: 0.2rem; }
+
+    .placeholder {
+      padding: 3rem 1.5rem; text-align: center;
+      color: var(--muted); font-size: 0.85rem;
+    }
+
+    .toast {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      padding: 0.65rem 1rem; border-radius: var(--radius-sm);
+      background: var(--green); color: #fff; font-size: 0.8rem; font-weight: 600;
+      opacity: 0; pointer-events: none; transition: opacity 0.25s ease; z-index: 300;
+    }
+    .toast.error { background: var(--red); }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <h1>HiveMind</h1>
+        <span>Orchestrator v1.0</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="/" class="sidebar-link">
+          <span class="icon">&#9672;</span> Dashboard
+        </a>
+        <a href="/tickets" class="sidebar-link">
+          <span class="icon">&#128195;</span> Kanban
+          <span class="badge-sidebar" id="sidebarTicketBadge">0</span>
+        </a>
+        <a href="/agent" class="sidebar-link">
+          <span class="icon">&#129302;</span> Agent
+        </a>
+        <a href="/repos" class="sidebar-link active">
+          <span class="icon">&#128193;</span> Repositories
+        </a>
+        <a href="/settings" class="sidebar-link">
+          <span class="icon">&#9881;</span> Einstellungen
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <small style="color:var(--muted);font-size:0.7rem">
+          <span class="status-dot" id="connStatus"></span>
+          <span id="connLabel">Verbunden</span>
+        </small>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="page-header">
+        <h2>Repositories</h2>
+        <div style="display:flex;gap:0.5rem">
+          <button class="btn btn-secondary" onclick="initFromGitlab()">&#128270; Von GitLab importieren</button>
+          <button class="btn btn-primary" onclick="openAddRepoModal()">+ Repository hinzufuegen</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h3>Konfigurierte Repositories</h3>
+          <button class="btn btn-secondary btn-sm" onclick="loadRepos()">&#128260; Aktualisieren</button>
+        </div>
+        <div class="panel-body" id="reposList">
+          <div class="placeholder">Lade Repositories...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="addRepoModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Repository hinzufuegen</h3>
+        <button class="modal-close" onclick="closeAddRepoModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Name</label>
+          <input id="repoName" placeholder="auth">
+          <div class="help">Eindeutiger Name fuer das Repository</div>
+        </div>
+        <div class="form-group">
+          <label>URL</label>
+          <input id="repoUrl" placeholder="https://gitlab.example.com/group/repo.git">
+          <div class="help">Git-Clone-URL (HTTPS)</div>
+        </div>
+        <div class="form-group">
+          <label>Branch</label>
+          <input id="repoBranch" placeholder="development" value="development">
+        </div>
+        <div class="form-group">
+          <label>Tags (kommagetrennt)</label>
+          <input id="repoTags" placeholder="backend, api, service">
+        </div>
+        <div class="form-group">
+          <label>Beschreibung</label>
+          <textarea id="repoDesc" rows="2" placeholder="Kurze Beschreibung des Repositories" style="resize:vertical"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddRepoModal()">Abbrechen</button>
+        <button class="btn btn-primary" onclick="addRepo()">Hinzufuegen</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let repos = [];
+
+    async function api(path, method="GET", body=null) {
+      const opts = { method };
+      if (body) { opts.headers = {"Content-Type":"application/json"}; opts.body = JSON.stringify(body); }
+      const res = await fetch("/api" + path, opts);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    }
+
+    async function loadRepos() {
+      try {
+        repos = await api("/repos");
+        renderRepos();
+      } catch(e) {
+        document.getElementById("reposList").innerHTML = `<div class="placeholder">Fehler: ${e.message}</div>`;
+      }
+    }
+
+    function renderRepos() {
+      const el = document.getElementById("reposList");
+      if (!repos.length) {
+        el.innerHTML = `<div class="placeholder">Keine Repositories konfiguriert</div>`;
+        return;
+      }
+      el.innerHTML = repos.map(r => {
+        const tags = (r.tags || []).map(t => `<span class="repo-tag">${t}</span>`).join("");
+        const branch = r.branch || "development";
+        return `<div class="repo-card">
+          <div class="repo-card-top">
+            <div>
+              <span class="repo-name">${r.name}</span>
+              <span class="repo-branch">${branch}</span>
+            </div>
+            <div class="repo-actions">
+              <button class="btn btn-danger btn-sm" onclick="deleteRepo('${r.name}')">Entfernen</button>
+            </div>
+          </div>
+          <div class="repo-url">${r.url}</div>
+          ${r.description ? `<div class="repo-desc">${r.description}</div>` : ""}
+          ${tags ? `<div class="repo-tags">${tags}</div>` : ""}
+        </div>`;
+      }).join("");
+    }
+
+    function openAddRepoModal() {
+      document.getElementById("addRepoModal").classList.add("open");
+      document.getElementById("repoName").value = "";
+      document.getElementById("repoUrl").value = "";
+      document.getElementById("repoBranch").value = "development";
+      document.getElementById("repoTags").value = "";
+      document.getElementById("repoDesc").value = "";
+    }
+    function closeAddRepoModal() { document.getElementById("addRepoModal").classList.remove("open"); }
+    document.getElementById("addRepoModal").addEventListener("click", e => {
+      if (e.target === document.getElementById("addRepoModal")) closeAddRepoModal();
+    });
+
+    async function addRepo() {
+      const name = document.getElementById("repoName").value.trim();
+      const url = document.getElementById("repoUrl").value.trim();
+      if (!name || !url) { showToast("Name und URL sind Pflichtfelder", true); return; }
+      const data = {
+        name,
+        url,
+        branch: document.getElementById("repoBranch").value.trim() || "development",
+        tags: document.getElementById("repoTags").value.split(",").map(s => s.trim()).filter(Boolean),
+        description: document.getElementById("repoDesc").value.trim(),
+      };
+      try {
+        await api("/repos", "POST", data);
+        closeAddRepoModal();
+        showToast("Repository hinzugefuegt!");
+        await loadRepos();
+      } catch(e) {
+        showToast("Fehler: " + e.message, true);
+      }
+    }
+
+    async function deleteRepo(name) {
+      if (!confirm(`Repository "${name}" wirklich entfernen?`)) return;
+      try {
+        await api(`/repos/${encodeURIComponent(name)}`, "DELETE");
+        showToast("Repository entfernt");
+        await loadRepos();
+      } catch(e) {
+        showToast("Fehler: " + e.message, true);
+      }
+    }
+
+    function showToast(msg, isError=false) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = "toast" + (isError ? " error" : "");
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 2500);
+    }
+
+    let es;
+    function connectSSE() {
+      es = new EventSource("/api/stream");
+      es.onopen = () => {
+        document.getElementById("connStatus").classList.remove("offline");
+        document.getElementById("connLabel").textContent = "Verbunden";
+      };
+      es.onerror = () => {
+        document.getElementById("connStatus").classList.add("offline");
+        document.getElementById("connLabel").textContent = "Verbindung verloren";
+        es.close();
+        setTimeout(connectSSE, 5000);
+      };
+    }
+
+    async function updateTicketBadge() {
+      try {
+        const tickets = await fetch("/api/tickets").then(r => r.json());
+        const badge = document.getElementById("sidebarTicketBadge");
+        if (badge) badge.textContent = tickets.length;
+      } catch(e) {}
+    }
+
+    async function initFromGitlab() {
+      if (!confirm("Alle erreichbaren GitLab-Projekte importieren?\nKI generiert Tags und Beschreibungen.")) return;
+      showToast("Importiere von GitLab...");
+      try {
+        const result = await api("/repos/init-from-gitlab", "POST", { use_ai: true });
+        const msg = `${result.added.length} Repos importiert` +
+          (result.skipped.length ? `, ${result.skipped.length} bereits vorhanden` : "");
+        showToast(msg);
+        await loadRepos();
+      } catch(e) {
+        showToast("Fehler: " + e.message, true);
+      }
+    }
+
+    loadRepos();
+    connectSSE();
+    updateTicketBadge();
+    setInterval(() => { loadRepos(); updateTicketBadge(); }, 30000);
+  </script>
+</body>
+</html>

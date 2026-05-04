@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-assignment
+  namespace: hivemind
+  labels:
+    app.kubernetes.io/name: hivemind
+    app.kubernetes.io/component: agent
+data:
+  task.md: |
+    # Auftrag: WIRD VOM ORCHESTRATOR BEFÜLLT
+
+    Diese ConfigMap wird durch den Orchestrator (`Orchestrator/main.py`)
+    nach der Ticket-Analyse mit dem generierten Assignment-Prompt befüllt.
+
+    Befehl zum Befüllen:
+      kubectl create configmap agent-assignment \
+        --from-file=task.md=Orchestrator/assignment_PROJ-123.md \
+        -n hivemind --dry-run=client -o yaml | kubectl apply -f -
+

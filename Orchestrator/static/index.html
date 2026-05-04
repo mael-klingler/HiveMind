@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HiveMind Orchestrator</title>
+  <style>
+    :root {
+      --bg: #090c10;
+      --bg2: #0d1117;
+      --card: #131a23;
+      --card-hover: #18202b;
+      --border: #21262d;
+      --border-light: #30363d;
+      --accent: #4391eb;
+      --accent-glow: rgba(67,145,235,0.15);
+      --green: #2ea043;
+      --green-glow: rgba(46,160,67,0.15);
+      --yellow: #c69026;
+      --yellow-glow: rgba(198,144,38,0.15);
+      --red: #da3633;
+      --red-glow: rgba(218,54,51,0.15);
+      --purple: #9867e2;
+      --purple-glow: rgba(152,103,226,0.15);
+      --text: #e6edf3;
+      --text2: #c9d1d9;
+      --muted: #7d8590;
+      --muted2: #525a66;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,0.3);
+      --radius: 10px;
+      --radius-sm: 6px;
+      --radius-lg: 14px;
+      --transition: 0.15s ease;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Sidebar ────────────────────── */
+    .layout { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 240px;
+      min-width: 240px;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 0;
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .sidebar-logo {
+      padding: 0 1.5rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+    .sidebar-logo h1 { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; }
+    .sidebar-logo span { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
+    .sidebar-nav { flex: 1; padding: 0 0.75rem; }
+    .sidebar-link {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.6rem 0.75rem;
+      border-radius: var(--radius-sm);
+      color: var(--text2);
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all var(--transition);
+      cursor: pointer;
+      text-decoration: none;
+      margin-bottom: 0.15rem;
+    }
+    .sidebar-link:hover { background: var(--border); text-decoration: none; }
+    .sidebar-link.active { background: var(--accent-glow); color: var(--accent); }
+    .sidebar-link .icon { font-size: 1.1rem; width: 22px; text-align: center; }
+    .sidebar-link .badge-sidebar {
+      margin-left: auto;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.1rem 0.45rem;
+      border-radius: 10px;
+      min-width: 20px;
+      text-align: center;
+    }
+    .sidebar-footer {
+      padding: 1rem 1.5rem 0;
+      border-top: 1px solid var(--border);
+      margin-top: auto;
+    }
+    .sidebar-footer .status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 0.4rem;
+      animation: pulse-dot 2s infinite;
+    }
+    .sidebar-footer .status-dot.offline { background: var(--red); animation: none; }
+    @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+
+    /* ── Main Content ───────────────── */
+    .main { flex: 1; padding: 1.75rem 2rem; overflow-y: auto; }
+
+    /* ── Stats Row ──────────────────── */
+    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.75rem; }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.15rem 1.25rem;
+      transition: all var(--transition);
+      cursor: default;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card:hover { border-color: var(--border-light); box-shadow: var(--shadow); }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .stat-card.accent::before { background: var(--accent); }
+    .stat-card.green::before { background: var(--green); }
+    .stat-card.yellow::before { background: var(--yellow); }
+    .stat-card.purple::before { background: var(--purple); }
+    .stat-card .stat-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .stat-card .stat-value { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.03em; }
+    .stat-card .stat-label { font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
+    .stat-card .stat-sub { font-size: 0.7rem; color: var(--muted2); }
+
+    /* ── Content Grid ───────────────── */
+    .content-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 1rem; margin-bottom: 1.75rem; }
+    .content-grid.full { grid-template-columns: 1fr; }
+
+    /* ── Panel / Card ───────────────── */
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-header h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .panel-body { padding: 0; }
+    .panel-body.scroll { max-height: 480px; overflow-y: auto; }
+
+    /* ── Queue Item ─────────────────── */
+    .queue-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.7rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      transition: background var(--transition);
+      cursor: default;
+    }
+    .queue-item:last-child { border-bottom: none; }
+    .queue-item:hover { background: var(--card-hover); }
+    .queue-item .q-pos {
+      width: 22px; height: 22px;
+      background: var(--border);
+      border-radius: 50%;
+      font-size: 0.65rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .queue-item .q-info { flex: 1; min-width: 0; }
+    .queue-item .q-id { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.75rem; color: var(--accent); font-weight: 600; }
+    .queue-item .q-title { font-size: 0.825rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .queue-item .q-agent { font-size: 0.7rem; color: var(--muted2); }
+
+    /* ── Agent Card ─────────────────── */
+    .agent-item {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.7rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .agent-item:last-child { border-bottom: none; }
+    .agent-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .agent-dot.idle { background: var(--green); }
+    .agent-dot.running { background: var(--accent); animation: pulse-dot 1.2s infinite; }
+    .agent-dot.disabled { background: var(--muted2); }
+    .agent-info { flex: 1; min-width: 0; }
+    .agent-name { font-size: 0.825rem; font-weight: 600; }
+    .agent-ticket { font-size: 0.7rem; color: var(--muted2); }
+    .agent-progress { width: 100%; height: 4px; background: var(--border); border-radius: 2px; margin-top: 0.35rem; overflow: hidden; }
+    .agent-progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s ease; }
+
+    /* ── Activity Log ───────────────── */
+    .log-entry {
+      padding: 0.45rem 1.25rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      display: flex;
+      gap: 0.5rem;
+    }
+    .log-entry:last-child { border-bottom: none; }
+    .log-time { color: var(--muted2); flex-shrink: 0; }
+    .log-agent { color: var(--yellow); flex-shrink: 0; }
+    .log-msg { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Badges ─────────────────────── */
+    .badge {
+      padding: 0.12rem 0.5rem;
+      border-radius: 10px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    .badge-waiting { background: var(--yellow-glow); color: var(--yellow); }
+    .badge-running { background: var(--accent-glow); color: var(--accent); }
+    .badge-completed { background: var(--green-glow); color: var(--green); }
+    .badge-failed { background: var(--red-glow); color: var(--red); }
+
+    /* ── Buttons ────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 0.85rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all var(--transition);
+      line-height: 1.4;
+    }
+    .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-primary:hover { filter: brightness(1.12); }
+    .btn-secondary { background: transparent; color: var(--text2); border-color: var(--border-light); }
+    .btn-secondary:hover { background: var(--border); }
+
+    /* ── Modal ──────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(2px);
+      z-index: 200;
+      justify-content: center;
+      align-items: center;
+      padding: 1.5rem;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 540px;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow-lg);
+      animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }
+    .modal-header {
+      padding: 1.15rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-header h3 { font-size: 0.95rem; font-weight: 600; }
+    .modal-close {
+      background: none; border: none;
+      color: var(--muted); font-size: 1.3rem;
+      cursor: pointer; padding: 0.2rem;
+      border-radius: var(--radius-sm); transition: all var(--transition);
+    }
+    .modal-close:hover { color: var(--text); background: var(--border); }
+    .modal-body { padding: 1.25rem 1.5rem; }
+    .modal-footer {
+      padding: 0.85rem 1.5rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border-light);
+      color: var(--text);
+      padding: 0.5rem 0.65rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      font-family: inherit;
+      transition: border-color var(--transition);
+    }
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+
+    /* ── Loading / Empty ────────────── */
+    .placeholder {
+      padding: 2rem 1.25rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.825rem;
+    }
+
+    /* ── Toast ──────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      padding: 0.65rem 1rem;
+      border-radius: var(--radius-sm);
+      background: var(--green);
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+      z-index: 300;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <h1>HiveMind</h1>
+        <span>Orchestrator v1.0</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="/" class="sidebar-link active">
+          <span class="icon">&#9672;</span> Dashboard
+        </a>
+        <a href="/tickets" class="sidebar-link">
+          <span class="icon">&#128195;</span> Kanban
+          <span class="badge-sidebar" id="sidebarTicketBadge">0</span>
+        </a>
+        <a href="/agent" class="sidebar-link">
+          <span class="icon">&#129302;</span> Agent
+        </a>
+        <a href="/repos" class="sidebar-link">
+          <span class="icon">&#128193;</span> Repositories
+        </a>
+        <a href="/settings" class="sidebar-link">
+          <span class="icon">&#9881;</span> Einstellungen
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <small style="color:var(--muted);font-size:0.7rem">
+          <span class="status-dot" id="connStatus"></span>
+          <span id="connLabel">Verbunden</span>
+        </small>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card yellow">
+          <div class="stat-icon">&#128195;</div>
+          <div class="stat-value" id="statQueue">0</div>
+          <div class="stat-label">Queue</div>
+          <div class="stat-sub">Wartende Tickets</div>
+        </div>
+        <div class="stat-card accent">
+          <div class="stat-icon">&#129302;</div>
+          <div class="stat-value" id="statAgents">0</div>
+          <div class="stat-label">Agenten</div>
+          <div class="stat-sub" id="statActiveAgents">0 aktiv</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-icon">&#9989;</div>
+          <div class="stat-value" id="statCompleted">0</div>
+          <div class="stat-label">Erledigt</div>
+          <div class="stat-sub">Completed / Merged</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-icon">&#128203;</div>
+          <div class="stat-value" id="statTotal">0</div>
+          <div class="stat-label">Gesamt</div>
+          <div class="stat-sub">Alle Tickets</div>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="content-grid">
+        <!-- Queue Panel -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Queue &amp; Aktive Tickets</h2>
+            <button class="btn btn-primary btn-sm" onclick="openNewTicketModal()" style="font-size:0.75rem;padding:0.35rem 0.7rem">+ Neues Ticket</button>
+          </div>
+          <div class="panel-body scroll" id="queueList">
+            <div class="placeholder">Keine Tickets in der Queue</div>
+          </div>
+        </div>
+
+        <!-- Agents Panel -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Agenten</h2>
+          </div>
+          <div class="panel-body" id="agentList">
+            <div class="placeholder">Keine Agenten</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Aktivitaet</h2>
+        </div>
+        <div class="panel-body scroll" id="activityLog" style="max-height:350px">
+          <div class="placeholder">Noch keine Aktivitaet</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- New Ticket Modal -->
+  <div class="modal-overlay" id="ticketModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Neues Ticket erstellen</h3>
+        <button class="modal-close" onclick="closeTicketModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>ID</label>
+            <input id="ticketId" placeholder="PROJ-123">
+          </div>
+          <div class="form-group">
+            <label>Titel</label>
+            <input id="ticketTitle" placeholder="Login-Button implementieren">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Beschreibung</label>
+          <textarea id="ticketDesc" rows="3" placeholder="Beschreibe das Ticket..."></textarea>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Typ</label>
+            <select id="ticketType">
+              <option>Task</option><option>Bug</option><option>Feature</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Prioritaet</label>
+            <select id="ticketPriority">
+              <option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Labels (kommagetrennt)</label>
+          <input id="ticketLabels" placeholder="backend, api, bug">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeTicketModal()">Abbrechen</button>
+        <button class="btn btn-primary" onclick="createTicket()">Erstellen</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let queue = [], agents = [], tickets = [];
+
+    async function api(path, method="GET", body=null) {
+      const opts = { method };
+      if (body) { opts.headers = {"Content-Type":"application/json"}; opts.body = JSON.stringify(body); }
+      const res = await fetch("/api" + path, opts);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    }
+
+    function renderQueue() {
+      const el = document.getElementById("queueList");
+      const ticketMap = {};
+      tickets.forEach(t => { ticketMap[t.id] = t; });
+      const runningTickets = tickets.filter(t => t.status === "running");
+      const queuedTickets = tickets.filter(t => t.status === "queued");
+      const activeItems = [
+        ...runningTickets.map(t => ({
+          ticket_id: t.id,
+          title: t.title,
+          agent_name: t.agent_id || "—",
+          status: "running",
+          badge: "running"
+        })),
+        ...queuedTickets.map(t => ({
+          ticket_id: t.id,
+          title: t.title,
+          agent_name: "Wartet...",
+          status: "queued",
+          badge: "waiting"
+        }))
+      ];
+      if (!activeItems.length) { el.innerHTML = `<div class="placeholder">Keine aktiven Tickets</div>`; return; }
+      el.innerHTML = activeItems.map((q, idx) => {
+        return `<div class="queue-item">
+          <div class="q-pos">${idx + 1}</div>
+          <div class="q-info">
+            <span class="q-id">${q.ticket_id}</span>
+            <div class="q-title">${q.title || "—"}</div>
+            <div class="q-agent">${q.agent_name}</div>
+          </div>
+          <span class="badge badge-${q.badge}">${q.status}</span>
+        </div>`;
+      }).join("");
+    }
+
+    function renderAgents() {
+      const el = document.getElementById("agentList");
+      if (!agents.length) { el.innerHTML = `<div class="placeholder">Keine Agenten</div>`; return; }
+      el.innerHTML = agents.map(a => {
+        const pct = a.progress || 0;
+        const st = a.status || "idle";
+        return `<div class="agent-item">
+          <div class="agent-dot ${st}"></div>
+          <div class="agent-info">
+            <div class="agent-name">${a.name}</div>
+            <div class="agent-ticket">${st === "running" && a.current_ticket_id ? a.current_ticket_id : st}</div>
+            <div class="agent-progress"><div class="agent-progress-bar" style="width:${pct}%"></div></div>
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderLog(logs) {
+      const el = document.getElementById("activityLog");
+      if (!logs || !logs.length) { el.innerHTML = `<div class="placeholder">Noch keine Aktivitaet</div>`; return; }
+      el.innerHTML = logs.slice(0, 60).map(s => {
+        const ts = s.timestamp ? new Date(s.timestamp).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "";
+        return `<div class="log-entry">
+          <span class="log-time">${ts}</span>
+          <span class="log-agent">[${s.agent_id || "system"}]</span>
+          <span class="log-msg">${s.step_name}${s.detail ? ": " + s.detail : ""}</span>
+        </div>`;
+      }).join("");
+    }
+
+    function updateStats() {
+      document.getElementById("statQueue").textContent = tickets.filter(t => t.status === "queued").length;
+      document.getElementById("statAgents").textContent = agents.length;
+      document.getElementById("statActiveAgents").textContent = agents.filter(a => a.status === "running").length + " aktiv";
+      document.getElementById("statCompleted").textContent = tickets.filter(t => t.status === "completed" || t.status === "merged").length;
+      document.getElementById("statTotal").textContent = tickets.length;
+      document.getElementById("sidebarTicketBadge").textContent = tickets.length;
+    }
+
+    async function refreshData() {
+      try {
+        [queue, agents, tickets] = await Promise.all([api("/queue"), api("/agents"), api("/tickets")]);
+        const logs = await api("/steps");
+        updateStats();
+        renderQueue();
+        renderAgents();
+        renderLog(logs);
+      } catch (e) { console.error("Refresh error:", e); }
+    }
+
+    let es;
+    function connectSSE() {
+      es = new EventSource("/api/stream");
+      es.onopen = () => {
+        document.getElementById("connStatus").classList.remove("offline");
+        document.getElementById("connLabel").textContent = "Verbunden";
+      };
+      es.onerror = () => {
+        document.getElementById("connStatus").classList.add("offline");
+        document.getElementById("connLabel").textContent = "Verbindung verloren";
+        es.close();
+        setTimeout(connectSSE, 5000);
+      };
+      es.addEventListener("message", () => { try { refreshData(); } catch (err) {} });
+      es.addEventListener("queue_updated", () => refreshData());
+      es.addEventListener("agent_updated", () => refreshData());
+      es.addEventListener("ticket_created", () => refreshData());
+      es.addEventListener("ticket_completed", () => refreshData());
+      es.addEventListener("ticket_merged", () => refreshData());
+      es.addEventListener("ticket_requeued", () => refreshData());
+    }
+
+    function openNewTicketModal() { document.getElementById("ticketModal").classList.add("open"); }
+    function closeTicketModal() { document.getElementById("ticketModal").classList.remove("open"); }
+    document.getElementById("ticketModal").addEventListener("click", (e) => {
+      if (e.target === document.getElementById("ticketModal")) closeTicketModal();
+    });
+
+    async function createTicket() {
+      const id = document.getElementById("ticketId").value || "TASK-" + Date.now();
+      const data = {
+        id, title: document.getElementById("ticketTitle").value,
+        description: document.getElementById("ticketDesc").value,
+        issue_type: document.getElementById("ticketType").value,
+        priority: document.getElementById("ticketPriority").value,
+        labels: document.getElementById("ticketLabels").value.split(",").map(s => s.trim()).filter(Boolean),
+      };
+      if (!data.title) { showToast("Bitte einen Titel eingeben"); return; }
+      await api("/tickets", "POST", data);
+      closeTicketModal();
+      document.getElementById("ticketId").value = "";
+      document.getElementById("ticketTitle").value = "";
+      document.getElementById("ticketDesc").value = "";
+      showToast("Ticket erstellt!");
+      await refreshData();
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 2500);
+    }
+
+    refreshData();
+    connectSSE();
+    setInterval(refreshData, 15000);
+  </script>
+</body>
+</html>

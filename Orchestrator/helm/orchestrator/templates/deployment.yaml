@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "orchestrator.fullname" . }}
+  labels:
+    {{- include "orchestrator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "orchestrator.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "orchestrator.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.rbac.create }}
+      serviceAccountName: {{ include "orchestrator.fullname" . }}
+      {{- end }}
+      initContainers:
+        - name: repo-init
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python3", "/app/main.py", "init"]
+          env:
+            - name: ORCHESTRATOR_CONFIG
+              value: /app/config/orchestrator_config.json
+            - name: GIT_HOST
+              value: "gitlab.example.com"
+            - name: GIT_USER
+              value: "gitlab-ci-token"
+            - name: GIT_TOKEN
+              value: "{{ .Values.git.token }}"
+            - name: OLLAMA_HOST
+              value: {{ .Values.config.ollama_host }}
+            - name: OLLAMA_MODEL
+              value: {{ .Values.config.ollama_model }}
+            - name: OPENCODE_MODEL
+              value: {{ .Values.config.opencode_model }}
+            - name: OLLAMA_CLOUD_API_KEY
+              value: "{{ .Values.ollamaCloud.apiKey }}"
+            - name: TRACK_BRANCH
+              value: "main"
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+            - name: repo-storage
+              mountPath: {{ .Values.config.pvc_mount_path }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      containers:
+        - name: orchestrator
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python3", "/app/main.py", "serve"]
+          env:
+            - name: ORCHESTRATOR_CONFIG
+              value: /app/config/orchestrator_config.json
+            - name: GIT_HOST
+              value: "gitlab.example.com"
+            - name: GIT_USER
+              value: "gitlab-ci-token"
+            - name: GIT_TOKEN
+              value: "{{ .Values.git.token }}"
+            - name: OLLAMA_HOST
+              value: {{ .Values.config.ollama_host }}
+            - name: OLLAMA_MODEL
+              value: {{ .Values.config.ollama_model }}
+            - name: OPENCODE_MODEL
+              value: {{ .Values.config.opencode_model }}
+            - name: OLLAMA_CLOUD_API_KEY
+              value: "{{ .Values.ollamaCloud.apiKey }}"
+            - name: TRACK_BRANCH
+              value: "main"
+          volumeMounts:
+            - name: workspace
+              mountPath: {{ .Values.config.work_dir }}
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: repo-storage
+              mountPath: {{ .Values.config.pvc_mount_path }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: http
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "orchestrator.fullname" . }}-config
+        - name: repo-storage
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "orchestrator.fullname" . }}-repo-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: workspace
+          emptyDir: {}

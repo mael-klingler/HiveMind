@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: hivemind
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      serviceAccountName: orchestrator
+      initContainers:
+      - name: repo-init
+        image: hivemind-orchestrator:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "-m", "main", "init"]
+        envFrom:
+        - secretRef:
+            name: orchestrator-env
+        env:
+        - name: ORCHESTRATOR_CONFIG
+          value: "/app/config/orchestrator_config.json"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: repo-storage
+          mountPath: /app/workspace/repos
+        - name: workspace
+          mountPath: /app/workspace
+        - name: db-storage
+          mountPath: /app/data
+      containers:
+      - name: orchestrator
+        image: hivemind-orchestrator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        envFrom:
+        - secretRef:
+            name: orchestrator-env
+        env:
+        - name: ORCHESTRATOR_CONFIG
+          value: "/app/config/orchestrator_config.json"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: repo-storage
+          mountPath: /app/workspace/repos
+        - name: workspace
+          mountPath: /app/workspace
+        - name: db-storage
+          mountPath: /app/data
+      volumes:
+      - name: config
+        configMap:
+          name: orchestrator-config
+      - name: repo-storage
+        persistentVolumeClaim:
+          claimName: orchestrator-repos
+      - name: workspace
+        emptyDir: {}
+      - name: db-storage
+        persistentVolumeClaim:
+          claimName: orchestrator-db

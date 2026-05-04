@@ -1,0 +1,188 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hivemind
+  labels:
+    app.kubernetes.io/name: hivemind
+    app.kubernetes.io/component: platform
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orchestrator
+  namespace: hivemind
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orchestrator-agent-manager
+  namespace: hivemind
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "update", "patch", "delete", "get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "update", "patch", "delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orchestrator-agent-manager
+  namespace: hivemind
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator
+    namespace: hivemind
+roleRef:
+  kind: Role
+  name: orchestrator-agent-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-agent-credentials
+  namespace: hivemind
+type: Opaque
+stringData:
+  ssh-privatekey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    PLACEHOLDER
+    -----END OPENSSH PRIVATE KEY-----
+  GITLAB_TOKEN: "glpat-placeholder"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestrator-repo-pvc
+  namespace: hivemind
+spec:
+  storageClassName: local-path
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: hivemind
+  labels:
+    app: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      serviceAccountName: orchestrator
+      initContainers:
+        - name: repo-init
+          image: hivemind/orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/app/main.py", "init"]
+          env:
+            - name: ORCHESTRATOR_CONFIG
+              value: /app/config/orchestrator_config.json
+            - name: AGENT_NAMESPACE
+              value: hivemind
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+            - name: repo-storage
+              mountPath: /app/workspace/repos
+            - name: git-ssh-key
+              mountPath: /root/.ssh
+              readOnly: true
+      containers:
+        - name: orchestrator
+          image: hivemind/orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/app/main.py", "serve"]
+          env:
+            - name: ORCHESTRATOR_CONFIG
+              value: /app/config/orchestrator_config.json
+            - name: AGENT_NAMESPACE
+              value: hivemind
+            - name: AGENT_IMAGE
+              value: hivemind-opencode:latest
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-agent-credentials
+                  key: GITLAB_TOKEN
+            - name: GITLAB_HOST
+              value: "gitlab.example.com"
+            - name: OPENCODE_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-agent-credentials
+                  key: OPENCODE_MODEL
+                  optional: true
+            - name: OLLAMA_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-agent-credentials
+                  key: OLLAMA_HOST
+                  optional: true
+            - name: OLLAMA_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-agent-credentials
+                  key: OLLAMA_BASE_URL
+                  optional: true
+            - name: OLLAMA_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-agent-credentials
+                  key: OLLAMA_MODEL
+                  optional: true
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+            - name: repo-storage
+              mountPath: /app/workspace/repos
+            - name: workspace
+              mountPath: /app/workspace
+            - name: git-ssh-key
+              mountPath: /root/.ssh
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: orchestrator-config
+        - name: repo-storage
+          persistentVolumeClaim:
+            claimName: orchestrator-repo-pvc
+        - name: workspace
+          emptyDir: {}
+        - name: git-ssh-key
+          secret:
+            secretName: gitlab-agent-credentials
+            defaultMode: 0400
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: hivemind
+spec:
+  selector:
+    app: orchestrator
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
