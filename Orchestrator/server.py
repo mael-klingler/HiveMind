@@ -231,10 +231,14 @@ class WorkspaceBuilder:
         self._statuses = []
         self._init_done = False
 
+    @property
+    def repositories(self):
+        return [self._main.RepoConfig.from_dict(r) for r in get_all_repos()]
+
     def _ensure_init(self):
         if not self._init_done:
             self._main.configure_git_credentials()
-            self._statuses = self.git.update_all(self.config.repositories)
+            self._statuses = self.git.update_all(self.repositories)
             if self.config.leankg_enabled:
                 self.leankg.index_all(self._statuses)
             self._init_done = True
@@ -242,7 +246,7 @@ class WorkspaceBuilder:
     async def _aensure_init(self):
         if not self._init_done:
             self._main.configure_git_credentials()
-            self._statuses = await self.git.aupdate_all(self.config.repositories)
+            self._statuses = await self.git.aupdate_all(self.repositories)
             if self.config.leankg_enabled:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self.leankg.index_all, self._statuses)
@@ -264,7 +268,7 @@ class WorkspaceBuilder:
 
         if manual_repos:
             print(f"  🎯 Ticket {ticket.id} has manual repo selection: {manual_repos} – skipping AI analysis")
-            selected_configs = [r for r in self.config.repositories if r.name in manual_repos]
+            selected_configs = [r for r in self.repositories if r.name in manual_repos]
             if not selected_configs:
                 print(f"  ❌ Manual repo selection has no matching repositories – ticket {ticket.id}")
                 return "failed: no matching repositories", None, None
@@ -307,7 +311,7 @@ class WorkspaceBuilder:
                 return "failed: no llm analysis", None, None
 
             selected_names = set(analysis.get("selected_repos", []))
-            selected_configs = [r for r in self.config.repositories if r.name in selected_names]
+            selected_configs = [r for r in self.repositories if r.name in selected_names]
             if not selected_configs:
                 print(f"  ❌ AI analysis selected no matching repositories – ticket {ticket.id}")
                 return "failed: no matching repositories", None, None
@@ -932,7 +936,7 @@ async def agent_pod_monitor():
                     slug = re.sub(r'[^a-z0-9]+', '-', ticket_title.lower()).strip('-')[:40]
                     branch_name = f"feature/{ticket_id.lower()}-{slug}" if slug else f"feature/{ticket_id.lower()}"
 
-                    for repo in _get_worker().config.repositories:
+                    for repo in _get_worker().repositories:
                         encoded_path = repo.url.split("://")[-1].replace(".git", "").replace(":", "/") if "://" in repo.url else ""
                         if not encoded_path:
                             continue
@@ -2197,7 +2201,12 @@ async def api_repo_branches(name: str):
             except Exception:
                 pass
 
-    repo_dir = Path(_get_worker().config.pvc_mount_path) / name if _worker else None
+    repo_dir = None
+    try:
+        w = _get_worker()
+        repo_dir = Path(w.config.pvc_mount_path) / name
+    except Exception:
+        pass
     if repo_dir and repo_dir.exists() and (repo_dir / ".git").exists():
         try:
             result = subprocess.run(

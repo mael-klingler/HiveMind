@@ -540,13 +540,15 @@ $(SAVED_PWD="$PWD"; for dir in /workspace/*/; do
   repo="${dir%/}"
   [ -d "$repo/.git" ] || continue
   cd "$repo" || continue
-  if [ -n "$(git log development..HEAD --oneline 2>/dev/null)" ]; then
+  _base=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$(git branch --show-current 2>/dev/null)" 2>/dev/null | sed 's|origin/||' || echo "main")
+  [ -z "$_base" ] && _base="main"
+  if [ -n "$(git log "origin/$_base"..HEAD --oneline 2>/dev/null)" ]; then
     echo "#### $(basename "$repo")"
     echo ""
-    git log --oneline development..HEAD 2>/dev/null
+    git log --oneline "origin/$_base"..HEAD 2>/dev/null
     echo ""
     echo "\`\`\`"
-    git diff --stat development..HEAD 2>/dev/null
+    git diff --stat "origin/$_base"..HEAD 2>/dev/null
     echo "\`\`\`"
     echo ""
   fi
@@ -566,10 +568,14 @@ for dir in /workspace/*/; do
       echo "📦 $(basename "$repo"): No changes and no branch, skipping."
       continue
     fi
+    MR_TARGET_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
     git checkout -b "$BRANCH"
   else
+    MR_TARGET_BRANCH=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$BRANCH" 2>/dev/null | sed 's|origin/||' || echo "main")
     git checkout "$BRANCH"
   fi
+  [ -z "$MR_TARGET_BRANCH" ] && MR_TARGET_BRANCH="main"
+  echo "   MR target branch: $MR_TARGET_BRANCH"
 
   if [ -n "$(git status --porcelain)" ]; then
     git add -A
@@ -595,7 +601,7 @@ for dir in /workspace/*/; do
   MR_URL=$(create_merge_request \
     "$PROJECT_PATH" \
     "$BRANCH" \
-    "main" \
+    "${MR_TARGET_BRANCH:-main}" \
     "[${TICKET_ID}] ${TICKET_TITLE}" \
     "$MR_DESCRIPTION" 2>&1) || true
 
