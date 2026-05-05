@@ -1,131 +1,184 @@
 # HiveMind
 
-Autonomous AI coding agents on Kubernetes. Ticket in, merge request out.
+**Autonomous AI coding agents on Kubernetes. Ticket in, merge request out.**
 
-Local coding agents (Cursor, Copilot, opencode) sit inside one person's editor and vanish when the tab closes. HiveMind gives them an infrastructure: a queue, an orchestrator, ephemeral pods, and a review lifecycle -- so agents run unsupervised, in parallel, across multiple repositories, with built-in feedback loops and zero state leakage between tasks.
-
----
-
-## The Problem with Local Coding Agents
-
-| Limitation | What happens | What HiveMind does |
-|---|---|---|
-| **Single-user** | Only the person at the keyboard can steer the agent. | Agents pick tickets from a shared queue. Anyone on the team submits work. |
-| **No isolation** | Agent edits your working tree, conflicts with your uncommitted changes. | Each task gets its own ephemeral K8s pod with a fresh workspace. No state leaks between tasks. |
-| **No queue** | You run one agent session at a time, manually. | Orchestrator manages a work queue with N parallel agent slots. |
-| **No retry** | Agent fails, you re-prompt by hand. | Failed pods are detected, tickets are re-queued with retry context (merge conflicts, pipeline failures, review feedback). Up to 3 automatic retries. |
-| **No review loop** | Agent pushes a branch, you review later, manually tell it what to fix. | MR review comments trigger automatic follow-up sessions. The agent reads feedback, makes changes, commits, and pushes. |
-| **Single repo** | Most agents operate in one repo at a time. | One ticket can span multiple repos -- the LLM picks which ones, the agent works across all of them. |
-| **No observability** | You watch the terminal. Walk away, you lose context. | Web dashboard, live SSE events, per-ticket logs, MR tracking, pipeline status -- all in the browser. |
-| **No persistence** | Agent learning dies with the session. | Per-agent memory blocks (persona, preferences, project conventions) survive across sessions. LeanKG code indexes persist on PVC. |
+[![Version](https://img.shields.io/badge/version-0.1.26-blue)](.version)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![K8s](https://img.shields.io/badge/platform-Kubernetes-326ce5)](Orchestrator/k8s/)
 
 ---
 
-## How It Works
+## Why HiveMind?
+
+Your team uses AI coding agents. A developer opens Copilot, writes a prompt, waits, reviews the output, pushes a branch, creates a merge request. Then someone reviews the MR, finds issues, and... the loop breaks. The agent session is gone. Context is lost. Someone has to start over.
+
+**HiveMind closes that loop.** It turns AI coding from a manual, single-user, single-session tool into a production-grade parallel workforce:
+
+| Without HiveMind | With HiveMind |
+|---|---|
+| One person prompts one agent at a time | Submit 10 tickets, 3 agents work in parallel |
+| Agent edits your working tree, conflicts with your changes | Each task runs in an isolated K8s pod with a fresh workspace |
+| Agent crashes, you re-prompt from scratch | Automatic retry with full context (merge conflicts, pipeline failures, review feedback) |
+| You review the MR, paste feedback into a new agent session | Review comments trigger follow-up sessions automatically |
+| Agent only works in one repo | One ticket spans multiple repos -- the LLM picks which ones |
+| Context dies when the tab closes | Per-agent memory blocks survive across sessions |
+| You stare at a terminal to monitor progress | Web dashboard with live logs, MR tracking, pipeline status |
+
+**The result:** Your AI agents go from "helpful assistant for one developer" to "autonomous workforce for the entire team." Tickets come in from GitLab issues, webhooks, or the API. Merge requests come out. Humans review. Agents iterate. Nobody babysits a terminal.
+
+---
+
+## How It Works — The Full Loop
 
 ```
-  Ticket ──▸ Orchestrator (K8s Deployment, port 8080)
-                   │
-                   ├── LLM analyzes ticket + repo context (Ollama)
-                   ├── Selects 1-4 relevant repositories
-                   ├── Generates assignment prompt
-                   │
-                   ├── kubectl apply ──────────────────────────────┐
-                   │   ConfigMaps: repos, assignment,              │
-                   │              opencode.json, memory            │
-                   │   Secret: gitlab-agent-credentials            │
-                   │                                               │  Agent Pod
-                   │                                               │  (restartPolicy: Never)
-                   │   Init Container ◄────────────────────────────┤
-                   │     git clone + leankg index                  │
-                   │                                               │
-                   │   Main Container ◄────────────────────────────┤
-                   │     opencode web (port 4096)                  │
-                   │     opencode run (task prompt)                │
-                   │     git commit + push                         │
-                   │     create GitLab Merge Request ────────┐     │
-                   │                                         │     │
-                   │     comment polling ◄───────────────────┤     │
-                   │       (wait for human feedback)         │     │
-                   │       follow-up opencode run ───────────┤     │
-                   │                                         │     │
-                   ├── Review Lifecycle Monitor              │     │
-                   │     watches MR state via GitLab API ◄───┘     │
-                   │     pipeline failure → re-queue               │
-                   │     merge conflict → re-queue                 │
-                   │     MR merged → mark completed, delete pod    │
-                   │                                               │
-                   └── Agent Pod Monitor                           │
-                         pod failed → re-queue (with delay)        │
-                         pod succeeded → completed                 │
-                         pod stale (>60 min) → auto-complete       │
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                         YOU SUBMIT A TICKET                          │
+  │                    (GitLab issue / API / Web UI)                     │
+  └──────────────────────────┬───────────────────────────────────────────┘
+                             │
+                             ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                        ORCHESTRATOR PICKS IT UP                      │
+  │                                                                      │
+  │   1. LLM analyzes the ticket + repo context (Ollama)                 │
+  │   2. Selects 1-4 relevant repositories                               │
+  │   3. Generates a detailed assignment prompt                          │
+  │   4. Spawns an ephemeral K8s pod with everything the agent needs     │
+  │      ┌─ ConfigMaps: repos, assignment, opencode config, memory       │ 
+  │      └─ Init Container: git clone + LeanKG index                     │ 
+  └──────────────────────────┬───────────────────────────────────────────┘
+                             │
+                             ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                       AGENT POD DOES THE WORK                        │
+  │                                                                      │
+  │   Phase 1: opencode run — analyzes codebase, makes changes           │
+  │   Phase 2: git commit + push to feature/TICKET-ID branch             │
+  │            creates GitLab Merge Request                              │
+  │   Phase 3: polls for your review comments                            │
+  │            runs follow-up sessions to address feedback               │
+  │                                                                      │
+  │   ┌─────────────────────────────┐  ┌────────────────────────────┐    │
+  │   │  opencode web (port 4096)   │  │  Interactive session via   │    │
+  │   │  live agent dashboard       │  │  Orchestrator proxy        │    │
+  │   └─────────────────────────────┘  └────────────────────────────┘    │
+  └──────────────────────────┬───────────────────────────────────────────┘
+                             │
+                             ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                      REVIEW LIFECYCLE MONITOR                        │
+  │                                                                      │
+  │   watches MR state via GitLab API                                    │
+  │   ├── pipeline failed?   → re-queue with "fix the pipeline" context  │
+  │   ├── merge conflict?    → re-queue with "rebase and resolve"        │
+  │   ├── review comments?   → agent runs follow-up, pushes fixes        │
+  │   └── MR merged?         → mark completed, delete pod                │
+  └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Components
+---
 
-**Orchestrator** -- FastAPI server (Python 3.11) running as a K8s Deployment:
+## What Makes This Different?
 
-- **Queue Processor**: Assigns idle agents to queued tickets, with smart agent selection based on repository affinity
-- **Workspace Builder**: LLM-powered ticket analysis via Ollama, selects relevant repos, generates assignment prompts, spawns agent pods
-- **Review Lifecycle Monitor**: Watches MRs for pipeline failures, merge conflicts, and review comments -- re-queues tickets with full retry context
-- **Agent Pod Monitor**: Tracks pod health, handles failures with configurable retry (default: 3 retries, 120s delay), auto-cleanup
-- **Web UI**: Dashboard, Kanban board, agent management, repo management, settings -- all with live SSE updates
-- **REST API**: Full CRUD for tickets, agents, queue, repos, settings, MCP servers, agent instructions, memory blocks, plugins
+### 1. Autonomous, Not Interactive
 
-**Agent** -- opencode-ai (Node.js 22) running in ephemeral K8s Pods:
+The agent doesn't need you to hold its hand. Submit a ticket and walk away. It clones repos, analyzes the codebase with LeanKG, makes changes, commits, pushes, creates the MR, and waits for review. You only get involved when you review the MR.
 
-- **Phase 1**: Reads assignment prompt, starts opencode web server (port 4096 for interactive monitoring), runs `opencode run` with the task
-- **Phase 2**: Commits, pushes to `feature/{TICKET_ID}` branch, creates GitLab merge request via `@gitbeaker/rest`
-- **Phase 3**: Polls for human review comments, runs follow-up opencode sessions to address feedback
-- **Memory**: Per-agent persistent memory blocks (persona, human preferences, project conventions), agent journaling
-- **Code Intelligence**: LeanKG indexes repos for semantic code search, accessible to the agent via MCP
+### 2. Built-In Feedback Loops
 
-**Init Container** -- Clones selected repos and runs `leankg init` + `leankg index` before the main agent container starts, so the agent has full code knowledge from the first prompt.
+This is the key differentiator. Most AI coding tools are fire-and-forget. HiveMind agents listen for feedback:
+
+- **GitLab review comments** trigger automatic follow-up sessions
+- **Pipeline failures** re-queue the ticket with "fix the tests" context
+- **Merge conflicts** re-queue with "rebase on target branch" instructions
+- Up to **3 automatic retries** with full context from previous attempts
+
+### 3. Multi-Repo Awareness
+
+One ticket often touches multiple repositories (frontend + backend + shared types). The LLM analyzes which repos are relevant and the agent works across all of them in a single session. One commit per repo, one MR per repo, one ticket.
+
+### 4. Persistent Agent Memory
+
+Agents aren't blank slates. Each agent carries memory blocks that survive across sessions:
+
+- **Persona** — how the agent writes code (style, conventions)
+- **Human preferences** — "use conventional commits", "no emojis in commit messages"
+- **Project context** — tech stack, test commands, architecture decisions
+
+These persist on the orchestrator and are injected into every pod.
+
+### 5. Code Intelligence with LeanKG
+
+Before the agent starts, the init container indexes every selected repo with LeanKG. This gives the agent semantic code search — it can find relevant functions, understand dependencies, and navigate the codebase without guessing.
+
+### 6. Infrastructure, Not a Plugin
+
+HiveMind doesn't run inside your IDE. It runs on your Kubernetes cluster. That means:
+
+- **Parallelism** — N agents working simultaneously, not one at a time
+- **Isolation** — each task gets a fresh workspace, no state leaks
+- **Observability** — web dashboard, live logs, MR tracking, SSE events
+- **Scalability** — add more agent slots by changing one config value
+- **Team access** — anyone can submit tickets, anyone can review MRs
+
+---
+
+## Key Components
+
+### Orchestrator (FastAPI / Python 3.11)
+
+The control plane. One long-running K8s Deployment that manages everything:
+
+| Component | What it does |
+|-----------|-------------|
+| **Queue Processor** | Assigns idle agents to queued tickets, smart selection by repo affinity |
+| **Workspace Builder** | LLM-powered analysis (Ollama), selects repos, generates prompts, spawns pods |
+| **Review Lifecycle Monitor** | Watches MRs — pipeline failures, merge conflicts, review comments — re-queues with context |
+| **Agent Pod Monitor** | Tracks pod health, retries failures (3 retries, 120s delay), auto-cleanup |
+| **Agent Session Proxy** | Forwards opencode web UI from agent pods through `/agent-session/{ticket_id}/` |
+| **Web UI** | Dashboard, Kanban board, agent/repo management, settings — live SSE updates |
+| **REST API** | Full CRUD for tickets, agents, queue, repos, settings, MCP servers, memory, plugins |
+| **GitLab Webhooks** | Auto-create tickets from GitLab issues, track MR state changes |
+
+### Agent (opencode-ai / Node.js 22)
+
+Ephemeral K8s pods (`restartPolicy: Never`) that do the actual work:
+
+| Phase | What happens |
+|-------|-------------|
+| **1 — Work** | Reads assignment, starts opencode web (port 4096), runs `opencode run` with the task |
+| **2 — Ship** | Commits to `feature/{TICKET_ID}`, pushes, creates GitLab MR via `@gitbeaker/rest` |
+| **3 — Listen** | Polls orchestrator for human review comments, runs follow-up sessions on feedback |
+
+### Init Container
+
+Runs **before** the agent starts: clones selected repos and runs `leankg init` + `leankg index` so the agent has full code knowledge from the first prompt.
 
 ---
 
 ## Kubernetes Architecture
 
-HiveMind runs entirely on Kubernetes -- no external dependencies beyond your GitLab and LLM endpoint.
-
-### Namespace: `hivemind`
-
-All resources live in the `hivemind` namespace. The orchestrator Deployment is the only long-running component. Agent Pods are ephemeral (`restartPolicy: Never`) and are created/deleted dynamically.
-
-### Persistent Storage
-
-| PVC | Purpose |
-|-----|---------|
-| `orchestrator-repos` | Cloned git repositories (shared between orchestrator and agent init containers) |
-| `orchestrator-db` | SQLite database (tickets, agents, queue, settings, memory blocks) |
-
-### Secrets
-
-| Secret | Contents |
-|--------|----------|
-| `orchestrator-env` | All runtime config: `GITLAB_TOKEN`, `OLLAMA_HOST`, `OLLAMA_MODEL`, `OPENCODE_MODEL`, `AGENT_IMAGE`, etc. |
-| `gitlab-agent-credentials` | SSH private key + GitLab PAT for agent pods (clone + push) |
-| `ollama-cloud-api-key` | Optional: Ollama Cloud API key for agent pods |
+HiveMind runs entirely on Kubernetes. No external dependencies beyond GitLab and an LLM endpoint.
 
 ### Deployed Resources
 
 ```
 namespace/hivemind
 serviceaccount/orchestrator
-role/orchestrator-agent-manager          # create/delete pods, configmaps
+role/orchestrator-agent-manager          # pods, configmaps, services
 rolebinding/orchestrator-agent-manager
-configmap/orchestrator-config             # orchestrator_config.json
-secret/orchestrator-env                  # all env vars from .env
-secret/gitlab-agent-credentials          # ssh key + gitlab token
+secret/gitlab-agent-credentials          # SSH key + GitLab PAT
+secret/ollama-cloud-api-key              # Optional: cloud LLM key
 pvc/orchestrator-repos                   # 10Gi repo storage
-pvc/orchestrator-db                      # 1Gi database
-deployment/orchestrator                  # 1 replica, init container + main
+deployment/orchestrator                  # 1 replica, init + main
 service/orchestrator                     # ClusterIP :8080
+service/agent-session                   # Headless — agent pod DNS for proxy
+ingress/hivemind-orchestrator            # External access + WebSocket support
 ```
 
 ### Agent Pod Lifecycle
 
-Each ticket spawns a Pod with this structure:
+Each ticket spawns an ephemeral pod:
 
 ```yaml
 apiVersion: v1
@@ -133,59 +186,37 @@ kind: Pod
 metadata:
   name: agent-worker-{ticket-id}
   namespace: hivemind
+  labels:
+    app.kubernetes.io/component: agent   # Matched by agent-session headless service
 spec:
-  restartPolicy: Never                    # Ephemeral -- runs once, then terminates
+  restartPolicy: Never
   volumes:
-    - name: workspace                     # emptyDir: shared between init + main
-    - name: repos-config                  # ConfigMap: repos.json
-    - name: task-prompt                   # ConfigMap: assignment.md
-    - name: opencode-config               # ConfigMap: opencode.json
-    - name: memory-blocks                 # ConfigMap: agent memory (persona, etc.)
+    - workspace                           # emptyDir: shared init ↔ main
+    - repos-config                        # ConfigMap: repos.json
+    - task-prompt                         # ConfigMap: assignment.md
+    - opencode-config                     # ConfigMap: opencode.json
+    - memory-blocks                       # ConfigMap: agent memory
   initContainers:
-    - name: clone-repos                   # git clone + leankg init/index each repo
+    - clone-repos                         # git clone + leankg index
   containers:
-    - name: opencode-agent               # entrypoint.sh → opencode run → push → MR
-      ports:
-        - containerPort: 4096            # opencode web server (interactive)
-      resources:
-        requests: { cpu: 500m, memory: 1Gi }
-        limits:   { cpu: 4,    memory: 8Gi }
+    - opencode-agent                      # entrypoint → opencode → push → MR → feedback
+      ports: [4096]                       # opencode web (proxied by orchestrator)
+      resources: { requests: 500m/1Gi, limits: 4/8Gi }
 ```
 
-Pods are cleaned up automatically:
-- **Success**: Pod terminates, orchestrator marks ticket as completed, deletes pod
-- **Failure**: Pod crashes, orchestrator re-queues the ticket (up to 3 retries with 120s delay)
-- **Stale**: Pod disappears without terminating (>60 min), orchestrator auto-completes and cleans up
+**Cleanup is automatic:**
+
+| Scenario | What happens |
+|----------|-------------|
+| Pod succeeds | Ticket marked completed, pod deleted |
+| Pod crashes | Ticket re-queued (up to 3 retries, 120s delay) |
+| Pod goes stale (>60 min) | Auto-completed, pod cleaned up |
+| MR merged | Pod deleted, agent slot freed |
 
 ### RBAC (Least Privilege)
 
-The orchestrator ServiceAccount can only:
-- `create/update/patch/delete/get/list` ConfigMaps and Pods in the `hivemind` namespace
-- `get/list` Pod logs
-
-Agent pods have **zero** K8s RBAC -- they cannot access the API server, cannot list pods, cannot read secrets beyond what is mounted into their filesystem.
-
-### Kustomize Overlays
-
-```
-Orchestrator/kustomize/
-  base/                    # Production-ready base manifests
-    namespace.yaml
-    pvc.yaml
-    configmap.yaml
-    rbac.yaml
-    deployment.yaml
-    service.yaml
-    kustomization.yaml
-  overlays/
-    dev/                   # Dev overlay: local config, ingress
-      kustomization.yaml
-      configmap-patch.yaml
-      ingress.yaml
-    prod/                  # Prod overlay: production config
-      kustomization.yaml
-      configmap-patch.yaml
-```
+- **Orchestrator** can manage pods, configmaps, and services in `hivemind` only
+- **Agent pods** have zero K8s RBAC — they cannot access the API server, list pods, or read secrets
 
 ---
 
@@ -193,149 +224,127 @@ Orchestrator/kustomize/
 
 ### Prerequisites
 
-- A Kubernetes cluster (RKE2, k3s, Docker Desktop, minikube, etc.)
-- `kubectl` configured and pointing at your cluster
+- Kubernetes cluster (RKE2, k3s, Docker Desktop, minikube, etc.)
+- `kubectl` configured
 - Docker (for building images)
-- A GitLab instance with a Personal Access Token
-- An Ollama endpoint (or any OpenAI-compatible LLM API)
+- GitLab instance + Personal Access Token
+- Ollama endpoint (or any OpenAI-compatible LLM API)
 
-### 1. Configure -- `setup.sh`
-
-`setup.sh` is an interactive script that collects all configuration values and stores them as a K8s Secret. It reads defaults from `.env` (or copies `.env.example` if `.env` doesn't exist) so you only enter values once.
+### 1. Configure
 
 ```bash
 ./setup.sh
 ```
 
-What it does:
+Interactive script that collects config values and creates K8s secrets. Reads defaults from `.env` so you only enter values once.
 
-1. **Checks prerequisites** -- `kubectl` installed, cluster reachable
-2. **Creates the `hivemind` namespace** if it doesn't exist
-3. **Prompts for configuration values** with defaults from `.env`:
-   - `GITLAB_HOST` -- your GitLab instance (e.g. `gitlab.com`)
-   - `GIT_USER` -- git username (default: `gitlab-ci-token`)
-   - `GITLAB_TOKEN` -- Personal Access Token (hidden input)
-   - `OLLAMA_HOST` -- Ollama endpoint without `/v1` (e.g. `http://host.docker.internal:11434`)
-   - `OLLAMA_BASE_URL` -- Ollama endpoint with `/v1` (e.g. `http://host.docker.internal:11434/v1`)
-   - `OLLAMA_MODEL` -- model name (e.g. `glm-5.1:cloud`)
-   - `OPENCODE_MODEL` -- same model name for the agent
-   - `OLLAMA_CLOUD_API_KEY` -- optional cloud API key (hidden input)
-   - `AGENT_IMAGE` -- Docker image tag for agent pods
-4. **Creates the `orchestrator-env` K8s Secret** with all values
-5. **Syncs entered values back to `.env`** so subsequent runs use your answers as defaults
-
-After setup, run `./redeploy.sh` to build and deploy.
-
-### 2. Build & Deploy -- `redeploy.sh`
-
-`redeploy.sh` is the single command for building, versioning, and deploying HiveMind. It handles the full pipeline: semver bump, Docker build, K8s secret update, image import, manifest apply, rollout wait, and git tagging.
+### 2. Build & Deploy
 
 ```bash
 ./redeploy.sh              # patch bump + build + deploy
 ```
 
-What it does, step by step:
-
-**Version Management:**
-- Reads current version from `.version`
-- Bumps version (default: patch) or uses explicit `--version X.Y.Z`
-- Writes new version to `.version`
-
-**Docker Build:**
-- Builds `hivemind-opencode` (Agent image) from `Agent/Dockerfile`
-- Builds `hivemind-orchestrator` (Orchestrator image) from `Orchestrator/Dockerfile`
-- Tags both images with the new version and `latest`
-- With `--no-cache`: removes all old HiveMind images and prunes build cache first
-
-**K8s Deploy:**
-- Updates `kustomization.yaml` and `deployment.yaml` with the new image tag
-- Reads `.env` and patches the `orchestrator-env` K8s Secret (so agents always use the latest config)
-- Force-deletes the old orchestrator Deployment and Pods
-- **Imports images into worker nodes** -- `docker save` creates a tarball, then pipes it into each worker node via `docker exec` and `ctr -n k8s.io images import`. This is what makes local images available on RKE2/k3s clusters that don't have a registry.
-- Applies Kustomize manifests: `kubectl apply -k Orchestrator/kustomize/base/`
-- Waits for rollout: `kubectl rollout status deployment/orchestrator --timeout=120s`
-- Commits and tags the release in git
-
-**Alternative modes:**
+Handles the full pipeline: semver bump, Docker build, K8s secret update, image import to worker nodes, manifest apply, rollout wait, git tag.
 
 | Flag | What it does |
 |------|-------------|
 | `--minor` | Bump minor version (0.x.0) |
 | `--major` | Bump major version (x.0.0) |
-| `--version 2.0.0` | Use an explicit version |
-| `--no-cache` | Clean build: remove all old images first |
-| `--skip-build` | Only re-deploy the current version (no rebuild) |
-| `--docker` | Build via docker-compose instead (local testing) |
-| `--tag` | Create a git tag without deploying |
-| `--changelog` | Show git log since the last tag |
+| `--version 2.0.0` | Use explicit version |
+| `--no-cache` | Clean build |
+| `--skip-build` | Re-deploy current version without rebuild |
+| `--docker` | Build via docker-compose (local testing) |
 
-### 3. Access the Web UI
+### 3. Open the Dashboard
 
 ```bash
 kubectl port-forward -n hivemind deployment/orchestrator 8080:8080
 ```
 
-Open [http://localhost:8080](http://localhost:8080) -- you'll see the dashboard with 3 idle agent slots.
+Open [http://localhost:8080](http://localhost:8080) — dashboard with idle agent slots ready.
 
-### 4. Submit a Ticket
+### 4. Submit Tickets
 
-Via the Web UI (Kanban board), or via API:
+**Via Web UI** — Kanban board at `/tickets`
+
+**Via API:**
 
 ```bash
 curl -X POST http://localhost:8080/api/tickets \
   -H "Content-Type: application/json" \
-  -d '{"id":"PROJ-123","title":"Fix login error display on mobile","description":"The login button on the mobile view does not show validation errors...","labels":["bug","frontend"],"priority":"High"}'
+  -d '{
+    "id": "PROJ-123",
+    "title": "Fix login error on mobile",
+    "description": "Login button does not show validation errors on mobile viewport...",
+    "labels": ["bug", "frontend"],
+    "priority": "High"
+  }'
 ```
 
-Or via GitLab webhook: configure your GitLab project to send Issue events to `http://<orchestrator>/api/webhooks/gitlab`.
+**Via GitLab Webhook** — configure your GitLab project to send Issue events to `http://<orchestrator>/webhooks/gitlab`. Tickets are auto-created from GitLab issues.
 
-### 5. Watch the Agent Work
+### 5. Watch & Interact
 
 ```bash
-# Follow agent pod logs
+# Agent pod logs
 kubectl -n hivemind logs -f agent-worker-proj-123
 
-# Or access the opencode web UI on the agent pod
-kubectl port-forward -n hivemind agent-worker-proj-123 4096:4096
+# Or access the agent's live opencode session through the orchestrator proxy
+# Open: http://localhost:8080/agent-session/PROJ-123/
 ```
 
-The agent will:
-1. Analyze the codebase using LeanKG
-2. Make code changes across relevant repos
-3. Commit to `feature/PROJ-123` and push
-4. Create a GitLab Merge Request
-5. Wait for your review feedback
+The agent will: analyze the codebase → make changes → commit & push → create MR → wait for your review. When you comment on the MR, the agent picks it up automatically.
 
 ---
 
 ## Configuration
 
-All configuration flows through `.env` (the single source of truth):
+All config flows through `.env` (single source of truth):
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `GITLAB_HOST` | GitLab instance hostname | `gitlab.com` |
+| `GITLAB_HOST` | GitLab hostname | `gitlab.com` |
 | `GIT_USER` | Git username for HTTPS clone | `gitlab-ci-token` |
 | `GITLAB_TOKEN` | GitLab Personal Access Token | `glpat-...` |
 | `OLLAMA_HOST` | Ollama endpoint (no `/v1`) | `http://host.docker.internal:11434` |
 | `OLLAMA_BASE_URL` | Ollama endpoint (with `/v1`) | `http://host.docker.internal:11434/v1` |
-| `OLLAMA_MODEL` | LLM model for orchestrator analysis | `glm-5.1:cloud` |
-| `OPENCODE_MODEL` | LLM model for the coding agent | `glm-5.1:cloud` |
-| `OLLAMA_CLOUD_API_KEY` | Optional: cloud API key | `sk-...` |
+| `OLLAMA_MODEL` | LLM for orchestrator analysis | `glm-5.1:cloud` |
+| `OPENCODE_MODEL` | LLM for the coding agent | `glm-5.1:cloud` |
+| `OLLAMA_CLOUD_API_KEY` | Cloud LLM key (optional) | `sk-...` |
 | `AGENT_NAMESPACE` | K8s namespace | `hivemind` |
 | `AGENT_IMAGE` | Docker image for agent pods | `hivemind-opencode:latest` |
-| `DRY_RUN` | If true, agent prints task but does nothing | `false` |
+| `AGENT_MAX_RETRIES` | Max retry attempts | `3` |
+| `AGENT_RETRY_DELAY` | Seconds between retries | `120` |
 
 ---
 
-## Documentation
+## REST API Reference
 
-| Document | Content |
-|----------|---------|
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Architecture, components, deployment guide (Helm / Kubectl / Docker Compose) |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Detailed data flows, design decisions, class diagrams |
-| [`docs/USAGE.md`](docs/USAGE.md) | Step-by-step: submit ticket, follow agent, review MR, debug |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | RBAC, secrets, threat model, network policies, best practices |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/tickets` | GET/POST | List or create tickets |
+| `/api/tickets/{id}` | GET/PATCH | Get or update a ticket |
+| `/api/tickets/{id}/reopen` | POST | Reopen a closed ticket |
+| `/api/tickets/{id}/stop` | POST | Stop a running ticket |
+| `/api/tickets/{id}/review` | POST | Submit review (approve / changes requested) |
+| `/api/tickets/{id}/mr` | POST | Set MR URL |
+| `/api/tickets/{id}/logs` | GET | Live agent pod logs |
+| `/api/tickets/{id}/comments` | GET/POST | Ticket comments |
+| `/api/agents` | GET | List all agents |
+| `/api/agents/{id}/progress` | POST | Update agent progress |
+| `/api/agents/{id}/complete` | POST | Mark agent task complete |
+| `/api/agent-sessions` | GET | List active agent sessions |
+| `/api/agent-profiles` | GET/POST | Agent profiles with skills & memory |
+| `/api/agent-memory/{id}` | GET/POST/DELETE | Agent memory blocks |
+| `/api/repos` | GET/POST/PUT/DELETE | Repository management |
+| `/api/repos/{name}/branches` | GET | List repo branches from GitLab |
+| `/api/config` | GET/POST | Max agent slots, version |
+| `/api/settings` | GET/POST | Runtime settings |
+| `/api/mcp-servers` | GET/POST/PATCH/DELETE | MCP server config |
+| `/api/plugins` | GET/POST/PATCH/DELETE | opencode plugin config |
+| `/api/stream` | GET | SSE live event stream |
+| `/agent-session/{ticket_id}/` | ANY | Proxy to agent's opencode web UI |
+| `/webhooks/gitlab` | POST | GitLab webhook receiver |
 
 ---
 
@@ -344,30 +353,46 @@ All configuration flows through `.env` (the single source of truth):
 ```
 .
 ├── Agent/                         # The autonomous coding agent
-│   ├── Dockerfile                 # Multi-stage: LeanKG build + Node.js runtime + opencode
-│   ├── entrypoint.sh              # Agent lifecycle: setup → opencode run → commit/push/MR → feedback loop
-│   ├── opencode.json.template     # opencode AI config template (envsubst)
-│   ├── repos.json                 # Fallback repo mapping
-│   └── k8s/                       # K8s manifest templates for manual agent pod creation
+│   ├── Dockerfile                 # Multi-stage: LeanKG build + Node.js + opencode
+│   ├── entrypoint.sh             # Agent lifecycle: setup → work → ship → listen
+│   ├── opencode.json.template     # opencode config template (envsubst)
+│   └── k8s/                       # Manifest templates for manual pod creation
 │
 ├── Orchestrator/                  # The control plane
-│   ├── main.py                    # CLI + core logic (repo manager, LLM client, pod spawner)
-│   ├── server.py                  # FastAPI: web UI, REST API, SSE, GitLab webhooks, monitors
-│   ├── database.py                # SQLite persistence (tickets, agents, queue, memory blocks)
-│   ├── Dockerfile                 # Multi-stage: LeanKG build + Python 3.11 runtime
+│   ├── main.py                    # CLI + core: repo manager, LLM client, pod spawner
+│   ├── server.py                  # FastAPI: web UI, REST API, SSE, webhooks, monitors, proxy
+│   ├── database.py                # SQLite: tickets, agents, queue, memory, repos
+│   ├── Dockerfile                 # Multi-stage: LeanKG build + Python 3.11
 │   ├── orchestrator_config.json   # Project config (repos, model, feature flags)
-│   ├── requirements.txt           # fastapi + uvicorn
-│   ├── static/                    # Dark-themed web UI (dashboard, kanban, agents, repos, settings)
-│   └── kustomize/                 # K8s manifests (base + dev/prod overlays)
+│   ├── requirements.txt           # fastapi + uvicorn + httpx + websockets
+│   ├── static/                    # Dark-themed web UI
+│   │   ├── index.html             # Dashboard
+│   │   ├── tickets.html            # Kanban board with live logs + agent session links
+│   │   ├── agent.html             # Agent profiles, skills, memory, MCP, instructions
+│   │   ├── repos.html              # Repo management with branch dropdown from GitLab
+│   │   └── settings.html           # Settings, pod status, orchestrator control
+│   ├── k8s/                       # K8s manifests (namespaces, RBAC, services, ingress)
+│   └── kustomize/                 # Kustomize overlays (base + dev/prod)
 │
 ├── docs/                          # Architecture, deployment, usage, security docs
 ├── setup.sh                       # Interactive K8s setup (secrets, .env sync)
 ├── redeploy.sh                    # Versioned build + deploy (semver, image import, rollout)
-├── test.sh                        # End-to-end test (dry-run or live)
-├── docker-compose.yaml            # Local Docker Compose (profiles: init, process, run, full, tickets)
-├── .env.example                   # Single source of truth for all config values
-└── .version                       # Current version (read by redeploy.sh)
+├── test.sh                        # End-to-end test
+├── docker-compose.yaml            # Local Docker Compose profiles
+├── .env.example                   # Config template
+└── .version                       # Current version (read by orchestrator + redeploy.sh)
 ```
+
+---
+
+## Documentation
+
+| Document | Content |
+|----------|---------|
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Architecture, components, deployment guide (Helm / Kubectl / Docker Compose) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Data flows, design decisions, class diagrams |
+| [`docs/USAGE.md`](docs/USAGE.md) | Submit ticket → follow agent → review MR → debug |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | RBAC, secrets, threat model, network policies |
 
 ---
 
