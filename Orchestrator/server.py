@@ -19,9 +19,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+import httpx
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from database import (
@@ -1022,6 +1023,112 @@ async def sse_generator() -> AsyncGenerator[str, None]:
     finally:
         if q in clients:
             clients.remove(q)
+
+
+# ── Agent Session Proxy ─────────────────────────────────────────────
+
+AGENT_SESSION_TIMEOUT = 30
+_agent_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_agent_http_client() -> httpx.AsyncClient:
+    global _agent_http_client
+    if _agent_http_client is None or _agent_http_client.is_closed:
+        _agent_http_client = httpx.AsyncClient(timeout=AGENT_SESSION_TIMEOUT)
+    return _agent_http_client
+
+
+def _resolve_pod_url(ticket_id: str) -> Optional[str]:
+    ticket = get_ticket(ticket_id)
+    if not ticket or ticket.get("status") not in ("running", "queued"):
+        return None
+    pod_name = f"agent-worker-{ticket_id.lower()}"
+    namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+    return f"http://{pod_name}.{namespace}.svc.cluster.local:4096"
+
+
+async def _proxy_request(ticket_id: str, path: str, request: Request) -> Response:
+    base_url = _resolve_pod_url(ticket_id)
+    if not base_url:
+        raise HTTPException(status_code=404, detail=f"Kein aktiver Agent fuer Ticket {ticket_id}")
+
+    url = f"{base_url}/{path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+
+    client = _get_agent_http_client()
+
+    headers = {}
+    for key, value in request.headers.items():
+        if key.lower() not in ("host", "transfer-encoding", "connection"):
+            headers[key] = value
+
+    body = await request.body()
+
+    try:
+        resp = await client.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            content=body,
+        )
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        raise HTTPException(status_code=502, detail=f"Agent-Pod nicht erreichbar: {e}")
+
+    response_headers = {}
+    for key, value in resp.headers.items():
+        if key.lower() not in ("transfer-encoding", "content-encoding", "connection"):
+            response_headers[key] = value
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers=response_headers,
+    )
+
+
+@app.api_route("/agent-session/{ticket_id}/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
+async def agent_session_proxy(ticket_id: str, path: str, request: Request):
+    return await _proxy_request(ticket_id, path, request)
+
+
+@app.get("/agent-session/{ticket_id}")
+async def agent_session_root(ticket_id: str, request: Request):
+    return await _proxy_request(ticket_id, "", request)
+
+
+@app.websocket("/agent-session/{ticket_id}/ws")
+async def agent_session_ws(websocket: WebSocket, ticket_id: str):
+    base_url = _resolve_pod_url(ticket_id)
+    if not base_url:
+        await websocket.close(code=4040, reason=f"Kein aktiver Agent fuer Ticket {ticket_id}")
+        return
+
+    await websocket.accept()
+
+    ws_url = base_url.replace("http://", "ws://") + "/ws"
+
+    import websockets
+    try:
+        async with websockets.connect(ws_url) as agent_ws:
+            async def forward_to_agent():
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        await agent_ws.send(data)
+                except (WebSocketDisconnect, Exception):
+                    pass
+
+            async def forward_from_agent():
+                try:
+                    async for message in agent_ws:
+                        await websocket.send_text(message)
+                except Exception:
+                    pass
+
+            await asyncio.gather(forward_to_agent(), forward_from_agent())
+    except Exception as e:
+        await websocket.close(code=1011, reason=str(e))
 
 
 # ── REST API: Tickets ────────────────────────────────────────────
