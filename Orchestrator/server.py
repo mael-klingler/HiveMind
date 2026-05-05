@@ -1274,7 +1274,13 @@ def api_all_steps():
 
 @app.get("/api/config")
 def api_config():
-    return {"max_agents": get_max_agents()}
+    config_data = {"max_agents": get_max_agents()}
+    version_path = Path(__file__).resolve().parent.parent / ".version"
+    try:
+        config_data["version"] = version_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        config_data["version"] = "dev"
+    return config_data
 
 
 @app.post("/api/config")

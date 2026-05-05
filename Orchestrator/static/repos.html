@@ -215,7 +215,7 @@
     <aside class="sidebar">
       <div class="sidebar-logo">
         <h1>HiveMind</h1>
-        <span>Orchestrator v1.0</span>
+        <span id="versionLabel">Orchestrator</span>
       </div>
       <nav class="sidebar-nav">
         <a href="/" class="sidebar-link">
@@ -618,9 +618,18 @@
       }
     }
 
+    async function loadVersion() {
+      try {
+        const cfg = await fetch("/api/config").then(r => r.json());
+        const el = document.getElementById("versionLabel");
+        if (el && cfg.version) el.textContent = `Orchestrator v${cfg.version}`;
+      } catch(e) {}
+    }
+
     loadDefaultBranch();
     loadRepos();
     connectSSE();
+    loadVersion();
     updateTicketBadge();
     setInterval(() => { loadRepos(); updateTicketBadge(); }, 30000);
   </script>

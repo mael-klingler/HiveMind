@@ -15,9 +15,5 @@ data:
       "opencode_model_from_env": true,
       "max_related_files_per_repo": 5,
       "log_level": "INFO",
-      "repositories": [
-        {"name": "auth-service", "url": "https://YOUR_GITLAB_HOST/myorg/services/auth.git", "branch": "main", "description": "Authentication service.", "tags": ["backend", "auth", "service"]},
-        {"name": "api-gateway", "url": "https://YOUR_GITLAB_HOST/myorg/services/gateway.git", "branch": "main", "description": "API Gateway.", "tags": ["backend", "gateway", "api", "service"]},
-        {"name": "frontend", "url": "https://YOUR_GITLAB_HOST/myorg/frontend.git", "branch": "main", "description": "Main frontend application.", "tags": ["frontend", "web", "ui"]}
-      ]
+      "repositories": []
     }

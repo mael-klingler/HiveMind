@@ -8,11 +8,5 @@
   "ollama_model_from_env": true,
   "max_related_files_per_repo": 5,
   "log_level": "INFO",
-  "repositories": [
-    {"name": "auth-service", "url": "https://YOUR_GITLAB_HOST/myorg/services/auth.git", "branch": "main", "description": "Authentication service.", "tags": ["backend", "auth", "service"]},
-    {"name": "api-gateway", "url": "https://YOUR_GITLAB_HOST/myorg/services/gateway.git", "branch": "main", "description": "API Gateway.", "tags": ["backend", "gateway", "api", "service"]},
-    {"name": "notification-service", "url": "https://YOUR_GITLAB_HOST/myorg/services/notification.git", "branch": "main", "description": "Notification service.", "tags": ["backend", "notifications", "service"]},
-    {"name": "frontend", "url": "https://YOUR_GITLAB_HOST/myorg/frontend.git", "branch": "main", "description": "Main frontend application.", "tags": ["frontend", "web", "ui"]},
-    {"name": "shared-libs", "url": "https://YOUR_GITLAB_HOST/myorg/shared-libs.git", "branch": "main", "description": "Shared libraries and utilities.", "tags": ["shared", "libraries", "utils"]}
-  ]
+  "repositories": []
 }
