@@ -1224,7 +1224,16 @@ def _resolve_pod_url(ticket_id: str) -> Optional[str]:
         return None
     pod_name = f"agent-worker-{ticket_id.lower()}"
     namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
-    return f"http://{pod_name}.agent-session.{namespace}.svc.cluster.local:4096"
+
+    # Try DNS first (works when hostname+subdomain are set in pod spec)
+    dns_url = f"http://{pod_name}.agent-session.{namespace}.svc.cluster.local:4096"
+
+    # Fallback: resolve pod IP via kubectl
+    rc, pod_ip, _ = _get_main()._kubectl(f"get pod {pod_name} -n {namespace} -o jsonpath='{{.status.podIP}}'")
+    if rc == 0 and pod_ip.strip():
+        return f"http://{pod_ip.strip()}:4096"
+
+    return dns_url
 
 
 async def _proxy_request(ticket_id: str, path: str, request: Request) -> Response:

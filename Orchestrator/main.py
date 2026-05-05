@@ -916,6 +916,8 @@ metadata:
     app.kubernetes.io/component: agent
     ticket-id: "{ticket.id}"
 spec:
+  hostname: {pod_name}
+  subdomain: agent-session
   restartPolicy: Never
   volumes:
     - name: workspace
