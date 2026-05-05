@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import traceback
@@ -416,12 +417,15 @@ async def handle_gitlab_mr(payload: Dict):
     mr_url = mr.get("url", "")
     source_branch = mr.get("source_branch", "")
 
-    # Find ticket from branch name (feature/PROJ-123 or feature/TICKET-123)
+    # Find ticket from branch name (feature/PROJ-123 or feature/TASK-123-slug)
     ticket_id = None
     cleaned = source_branch.replace("feature/", "")
     for prefix in ("PROJ-", "BUG-", "TASK-", "GL-"):
         if cleaned.startswith(prefix):
-            ticket_id = cleaned.split("/")[0]
+            idx = len(prefix)
+            while idx < len(cleaned) and cleaned[idx] != '-':
+                idx += 1
+            ticket_id = cleaned[:idx]
             break
     if not ticket_id:
         for part in cleaned.split("-"):
@@ -924,7 +928,9 @@ async def agent_pod_monitor():
                     if t.get("mr_url") or t.get("status") not in ("completed", "running"):
                         continue
                     ticket_id = t["id"]
-                    branch_name = f"feature/{ticket_id.lower()}"
+                    ticket_title = t.get("title", "")
+                    slug = re.sub(r'[^a-z0-9]+', '-', ticket_title.lower()).strip('-')[:40]
+                    branch_name = f"feature/{ticket_id.lower()}-{slug}" if slug else f"feature/{ticket_id.lower()}"
 
                     for repo in _get_worker().config.repositories:
                         encoded_path = repo.url.split("://")[-1].replace(".git", "").replace(":", "/") if "://" in repo.url else ""
@@ -1803,7 +1809,10 @@ async def gitlab_webhook(req: Request):
             cleaned = source_branch.replace("feature/", "")
             for prefix in ("PROJ-", "BUG-", "TASK-", "GL-"):
                 if cleaned.startswith(prefix):
-                    ticket_id = cleaned.split("/")[0]
+                    idx = len(prefix)
+                    while idx < len(cleaned) and cleaned[idx] != '-':
+                        idx += 1
+                    ticket_id = cleaned[:idx]
                     break
             if not ticket_id:
                 for part in cleaned.split("-"):

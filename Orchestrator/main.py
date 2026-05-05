@@ -21,6 +21,12 @@ from typing import Dict, List, Optional, Tuple
 
 from database import set_ticket_ai_planning, get_enabled_mcp_servers, get_enabled_agent_instructions, get_agent_mcp_servers, get_agent_assigned_instructions, get_enabled_plugin_names, get_agent_memory_as_markdown, get_setting
 
+
+def branch_name_for(ticket) -> str:
+    slug = re.sub(r'[^a-z0-9]+', '-', (ticket.title or "").lower()).strip('-')[:40]
+    return f"feature/{ticket.id}-{slug}" if slug else f"feature/{ticket.id}"
+
+
 # ── .env Loader ────────────────────────────────────────────────────
 
 def _load_dotenv(path: str = "/app/config/.env"):
@@ -501,6 +507,7 @@ def create_opencode_config(workspace_dir: Path, ticket: Ticket, selected: List[R
             "labels": ticket.labels,
             "issue_type": ticket.issue_type,
             "priority": ticket.priority,
+            "branch": branch_name_for(ticket),
         },
         "analysis": analysis,
         "repositories": repo_list,
@@ -533,8 +540,9 @@ bash "$(dirname "$0")/entrypoint.sh"
     entrypoint_sh.write_text("""#!/bin/bash
 set -e
 WORKSPACE="$(pwd)"
+BRANCH=$(jq -r '.ticket.branch // "feature/" + .ticket.id' $WORKSPACE/.opencode/config.json)
 echo "📋 Ticket:  $(jq -r '.ticket.id' $WORKSPACE/.opencode/config.json) – $(jq -r '.ticket.title' $WORKSPACE/.opencode/config.json)"
-echo "🌿 Branch:  feature/$(jq -r '.ticket.id' $WORKSPACE/.opencode/config.json)"
+echo "🌿 Branch:  $BRANCH"
 echo "🧪 Dry-Run: false"
 echo "🤖 Starting opencode with task..."
 export OPENCODE_MODEL="ollama/{OPENCODE_MODEL}"
@@ -549,7 +557,7 @@ for repo in $(jq -r '.repositories[].name' $WORKSPACE/.opencode/config.json); do
             echo "✅ Changes detected, creating commit..."
             git add -A
             git commit -m "Agent: $(jq -r '.ticket.title' $WORKSPACE/.opencode/config.json)"
-            git push origin HEAD:feature/$(jq -r '.ticket.id' $WORKSPACE/.opencode/config.json) || true
+            git push origin HEAD:"$BRANCH" || true
         else
             echo "📦 $repo: No changes, skipping."
         fi
@@ -582,7 +590,7 @@ def generate_assignment_prompt(ticket: Ticket, analysis: Dict, repos: List[RepoC
 ## ⚠️ Retry Context (Attempt {retry_count + 1})
 This ticket has already been processed, but there were issues that need to be fixed:
 
-IMPORTANT: Push your changes to the same existing branch `feature/{ticket.id}`. Do NOT create a new branch. The branch already exists on the remote.
+IMPORTANT: Push your changes to the same existing branch `{branch_name_for(ticket)}`. Do NOT create a new branch. The branch already exists on the remote.
 
 """
         if pipeline_status == "failed":
@@ -619,7 +627,7 @@ IMPORTANT: Push your changes to the same existing branch `feature/{ticket.id}`. 
 1. Make code changes in the repositories listed above.
 2. Add unit/integration tests.
 3. Commit with descriptive message (Conventional Commits).
-4. Push branch `feature/{ticket.id}` (force push if branch already exists).
+4. Push branch `{branch_name_for(ticket)}` (force push if branch already exists).
 5. Create or update merge request (title = ticket title, description = change summary).
 
 ## Acceptance Criteria
@@ -977,6 +985,21 @@ spec:
     - name: opencode-agent
       image: {AGENT_IMAGE}
       imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          echo "🚀 Starting opencode agent for ticket $TICKET_ID"
+          ORIG_CMD=$(cat /proc/1/cmdline 2>/dev/null || true)
+          exec /usr/local/bin/opencode-agent || true
+          RC=$?
+          echo "🛑 opencode exited with code $RC"
+          echo "📡 Notifying orchestrator of completion..."
+          AGENT_ID_VAL="${{AGENT_ID:-$TICKET_ID}}"
+          QUEUE_ID="${{QUEUE_ID:-}}"
+          curl -s -X POST "http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete" \
+            -H "Content-Type: application/json" \
+            -d '{{"agent_id": "'"$AGENT_ID_VAL"'", "ticket_id": "'"$TICKET_ID"'", "queue_id": "'"$QUEUE_ID"'"}}' || echo "⚠️ Failed to notify orchestrator"
+          echo "✅ Completion notification sent"
       volumeMounts:
         - name: workspace
           mountPath: /workspace
@@ -1001,6 +1024,8 @@ spec:
           value: "{OPENCODE_MODEL}"
         - name: OPENCODE_PLUGINS
           value: '{plugin_json}'
+        - name: QUEUE_ID
+          value: "{queue_id}"
 {ollama_env}
         - name: DRY_RUN
           value: "false"
@@ -1018,6 +1043,8 @@ spec:
           value: "{ticket.id}"
         - name: AGENT_ID
           value: "{agent_id or ''}"
+        - name: BRANCH
+          value: "{branch_name_for(ticket)}"
         - name: OPENCODE_SERVER_PASSWORD
           value: "{os.getenv('OPENCODE_SERVER_PASSWORD', '')}"
         - name: COMMENT_POLL_INTERVAL
