@@ -9,7 +9,4 @@ metadata:
 data:
   repos.json: |
     {
-      "auth-service": "git@YOUR_GITLAB_HOST:myorg/services/auth.git",
-      "api-gateway": "git@YOUR_GITLAB_HOST:myorg/services/gateway.git",
-      "frontend": "git@YOUR_GITLAB_HOST:myorg/frontend.git"
     }

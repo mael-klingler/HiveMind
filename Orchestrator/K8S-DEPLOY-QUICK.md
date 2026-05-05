@@ -64,7 +64,7 @@ Orchestrator/
 ## Variablen (alle in `.env` oder K8s Secrets)
 
 ```bash
-GIT_HOST=YOUR_GITLAB_HOST          # GitLab Domain
+GIT_HOST=$GITLAB_HOST                  # aus .env
 GIT_USER=gitlab-ci-token                 # Default GitLab CI Benutzer
 GIT_TOKEN=glciy-xxx                      # Personal Access Token
 

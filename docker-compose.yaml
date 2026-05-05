@@ -7,7 +7,7 @@ services:
     container_name: orchestrator-init
     command: ["init"]
     environment:
-      - GIT_HOST=${GITLAB_HOST:-YOUR_GITLAB_HOST}
+      - GIT_HOST=${GITLAB_HOST}
       - GIT_USER=gitlab-ci-token
       - GIT_TOKEN=${GITLAB_TOKEN}
       - ORCHESTRATOR_CONFIG=/app/config/orchestrator_config.json
@@ -28,7 +28,7 @@ services:
       - "process"
       - "/app/tickets/example_ticket.json"
     environment:
-      - GIT_HOST=${GITLAB_HOST:-YOUR_GITLAB_HOST}
+      - GIT_HOST=${GITLAB_HOST}
       - GIT_USER=gitlab-ci-token
       - GIT_TOKEN=${GITLAB_TOKEN}
       - ORCHESTRATOR_CONFIG=/app/config/orchestrator_config.json
@@ -49,7 +49,7 @@ services:
     container_name: hivemind-agent
     environment:
       - GITLAB_TOKEN=${GITLAB_TOKEN}
-      - GITLAB_HOST=${GITLAB_HOST:-YOUR_GITLAB_HOST}
+      - GITLAB_HOST=${GITLAB_HOST}
       - OPENCODE_MODEL=${OPENCODE_MODEL:-glm-5.1:cloud}
       - DRY_RUN=${DRY_RUN:-true}
       - GIT_SSH_COMMAND=ssh -i /root/.ssh/ssh-privatekey -o StrictHostKeyChecking=no -o IdentitiesOnly=yes

@@ -26,7 +26,7 @@ spec:
             - name: ORCHESTRATOR_CONFIG
               value: /app/config/orchestrator_config.json
             - name: GIT_HOST
-              value: "YOUR_GITLAB_HOST"
+              value: "{{ .Values.git.host }}"
             - name: GIT_USER
               value: "gitlab-ci-token"
             - name: GIT_TOKEN
@@ -40,7 +40,7 @@ spec:
             - name: OLLAMA_CLOUD_API_KEY
               value: "{{ .Values.ollamaCloud.apiKey }}"
             - name: TRACK_BRANCH
-              value: "main"
+              value: "development"
           volumeMounts:
             - name: config
               mountPath: /app/config
@@ -59,7 +59,7 @@ spec:
           - name: ORCHESTRATOR_CONFIG
             value: /app/config/orchestrator_config.json
           - name: GIT_HOST
-            value: "YOUR_GITLAB_HOST"
+            value: "{{ .Values.git.host }}"
             - name: GIT_USER
               value: "gitlab-ci-token"
             - name: GIT_TOKEN

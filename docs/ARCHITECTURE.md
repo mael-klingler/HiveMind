@@ -76,7 +76,7 @@ FROM node:22-slim
 ├── npm install -g @gitbeaker/rest  # GitLab API-Client
 ├── npm install -g opencode-ai      # opencode CLI
 ├── ssh-keyscan gitlab.com
-├── ssh-keyscan YOUR_GITLAB_HOST
+├── ssh-keyscan $GITLAB_HOST
 ├── COPY opencode.json /etc/agent/
 ├── COPY entrypoint.sh /scripts/
 └── ENTRYPOINT ["entrypoint.sh"]

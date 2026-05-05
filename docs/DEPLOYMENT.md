@@ -196,7 +196,7 @@ kubectl -n hivemind get pods -l app.kubernetes.io/component=agent
   "repositories": [
     {
       "name": "gateway",
-      "url": "git@YOUR_GITLAB_HOST:example-org/services/gateway.git",
+      "url": "git@${GITLAB_HOST}:example-org/services/gateway.git",
       "branch": "main",
       "description": "API-Gateway ...",
       "tags": ["backend", "gateway", "api", "routing"]

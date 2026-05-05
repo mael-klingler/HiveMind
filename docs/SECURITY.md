@@ -101,7 +101,7 @@ kubectl create secret generic gitlab-agent-credentials \
 ```bash
 kubectl create secret generic orchestrator-env \
   --from-literal=GITLAB_TOKEN=glpat-xxxxxxxx \
-  --from-literal=GITLAB_HOST=YOUR_GITLAB_HOST \
+  --from-literal=GITLAB_HOST=$GITLAB_HOST \
   --from-literal=OPENCODE_MODEL=opencode-go/deepseek-v4-pro \
   -n hivemind
 ```
