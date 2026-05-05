@@ -283,7 +283,11 @@
         </div>
         <div class="form-group">
           <label>Branch</label>
-          <input id="repoBranch" placeholder="main" value="main">
+          <div style="position:relative">
+            <input id="repoBranch" placeholder="main" value="main" list="repoBranchList" autocomplete="off">
+            <datalist id="repoBranchList"></datalist>
+            <div class="help">Type or select a branch — fetched from GitLab when URL is entered</div>
+          </div>
         </div>
         <div class="form-group">
           <label>Tags (comma-separated)</label>
@@ -318,7 +322,10 @@
         </div>
         <div class="form-group">
           <label>Branch</label>
-          <input id="editRepoBranch" placeholder="main">
+          <div style="position:relative">
+            <input id="editRepoBranch" placeholder="main" list="editRepoBranchList" autocomplete="off">
+            <datalist id="editRepoBranchList"></datalist>
+          </div>
         </div>
         <div class="form-group">
           <label>Tags (comma-separated)</label>
@@ -394,6 +401,47 @@
       }).join("");
     }
 
+    async function fetchBranches(repoName) {
+      try {
+        const data = await api(`/repos/${encodeURIComponent(repoName)}/branches`);
+        return data.branches || [];
+      } catch(e) {
+        return [];
+      }
+    }
+
+    function populateDatalist(datalistId, branches) {
+      const dl = document.getElementById(datalistId);
+      if (!dl) return;
+      dl.innerHTML = branches.map(b => `<option value="${b}">`).join("");
+    }
+
+    let addRepoBranchDebounce = null;
+    document.getElementById("repoUrl")?.addEventListener("input", () => {
+      clearTimeout(addRepoBranchDebounce);
+      addRepoBranchDebounce = setTimeout(async () => {
+        const url = document.getElementById("repoUrl").value.trim();
+        if (!url) return;
+        const name = document.getElementById("repoName").value.trim();
+        if (!name) {
+          try {
+            const u = new URL(url);
+            const inferred = u.pathname.replace(/^\/|\.git$/g, "").split("/").pop() || "";
+            if (inferred) document.getElementById("repoName").value = inferred;
+          } catch(e) {}
+        }
+        const repoName = document.getElementById("repoName").value.trim();
+        if (!repoName) return;
+        const existingRepos = await api("/repos").catch(() => []);
+        const match = existingRepos.find(r => r.url === url || r.name === repoName);
+        if (match) {
+          const branches = await fetchBranches(match.name);
+          populateDatalist("repoBranchList", branches);
+          document.getElementById("repoBranch").value = match.branch || defaultBranch;
+        }
+      }, 500);
+    });
+
     function openAddRepoModal() {
       document.getElementById("addRepoModal").classList.add("open");
       document.getElementById("repoName").value = "";
@@ -401,6 +449,7 @@
       document.getElementById("repoBranch").value = defaultBranch;
       document.getElementById("repoTags").value = "";
       document.getElementById("repoDesc").value = "";
+      document.getElementById("repoBranchList").innerHTML = "";
     }
     function closeAddRepoModal() { document.getElementById("addRepoModal").classList.remove("open"); }
     document.getElementById("addRepoModal").addEventListener("click", e => {
@@ -439,7 +488,7 @@
       }
     }
 
-    function openEditRepoModal(name) {
+    async function openEditRepoModal(name) {
       const repo = repos.find(r => r.name === name);
       if (!repo) return;
       document.getElementById("editRepoModal").classList.add("open");
@@ -448,6 +497,9 @@
       document.getElementById("editRepoBranch").value = repo.branch || defaultBranch;
       document.getElementById("editRepoTags").value = (repo.tags || []).join(", ");
       document.getElementById("editRepoDesc").value = repo.description || "";
+      document.getElementById("editRepoBranchList").innerHTML = "";
+      const branches = await fetchBranches(name);
+      populateDatalist("editRepoBranchList", branches);
     }
     function closeEditRepoModal() { document.getElementById("editRepoModal").classList.remove("open"); }
     document.getElementById("editRepoModal").addEventListener("click", e => {
@@ -475,12 +527,50 @@
       }
     }
 
-    function editBranch(name, currentBranch) {
-      const newBranch = prompt(`Change branch for "${name}":`, currentBranch);
-      if (newBranch === null || newBranch.trim() === currentBranch) return;
-      api(`/repos/${encodeURIComponent(name)}`, "PUT", { branch: newBranch.trim() })
+    async function editBranch(name, currentBranch) {
+      const branches = await fetchBranches(name);
+      const branchOptions = branches.length
+        ? branches.map(b => `<option value="${b}" ${b === currentBranch ? 'selected' : ''}>${b}</option>`).join("")
+        : `<option value="${currentBranch}" selected>${currentBranch}</option>`;
+      const branchSelect = `<select id="branchSelect" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.85rem">${branchOptions}<option value="__custom__">Other (type manually)...</option></select>`;
+      const customInput = `<input id="branchCustom" placeholder="Branch name" style="display:none;width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.85rem;margin-top:0.5rem">`;
+      const result = await showDialog(`Change branch for "${name}":`, branchSelect + customInput, "Save", "Cancel");
+      if (result === null) return;
+      let newBranch = document.getElementById("branchSelect")?.value === "__custom__"
+        ? (document.getElementById("branchCustom")?.value || "").trim()
+        : (document.getElementById("branchSelect")?.value || "").trim();
+      if (!newBranch || newBranch === currentBranch) return;
+      api(`/repos/${encodeURIComponent(name)}`, "PUT", { branch: newBranch })
         .then(() => { showToast("Branch updated"); loadRepos(); })
         .catch(e => showToast("Error: " + e.message, true));
+    }
+
+    function showDialog(title, bodyHtml, okText, cancelText) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.className = "modal-overlay open";
+        overlay.style.zIndex = "300";
+        overlay.innerHTML = `<div class="modal" style="max-width:400px">
+          <div class="modal-header"><h3>${title}</h3></div>
+          <div class="modal-body">${bodyHtml}</div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" id="dialogCancel">${cancelText}</button>
+            <button class="btn btn-primary" id="dialogOk">${okText}</button>
+          </div>
+        </div>`;
+        document.body.appendChild(overlay);
+        const selectEl = overlay.querySelector("#branchSelect");
+        const customEl = overlay.querySelector("#branchCustom");
+        if (selectEl && customEl) {
+          selectEl.addEventListener("change", () => {
+            customEl.style.display = selectEl.value === "__custom__" ? "block" : "none";
+            if (selectEl.value === "__custom__") customEl.focus();
+          });
+        }
+        overlay.querySelector("#dialogOk").onclick = () => { document.body.removeChild(overlay); resolve("ok"); };
+        overlay.querySelector("#dialogCancel").onclick = () => { document.body.removeChild(overlay); resolve(null); };
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) { document.body.removeChild(overlay); resolve(null); } });
+      });
     }
 
     function showToast(msg, isError=false) {

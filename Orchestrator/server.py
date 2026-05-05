@@ -1745,6 +1745,61 @@ def api_repo_names():
     return [r["name"] for r in get_all_repos()]
 
 
+@app.get("/api/repos/{name}/branches")
+async def api_repo_branches(name: str):
+    repo = get_repo(name)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+
+    branches = set()
+    default_branch = repo.get("branch", "main")
+
+    gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+    gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
+
+    if gitlab_token and gitlab_host:
+        url = repo.get("url", "")
+        project_path = ""
+        if "://" in url:
+            project_path = url.split("://")[-1].replace(".git", "")
+            if "/" in project_path and ":" in project_path.split("/")[0]:
+                project_path = "/".join(project_path.split("/")[1:])
+
+        if project_path:
+            encoded_path = project_path.replace("/", "%2F")
+            api_url = f"https://{gitlab_host}/api/v4/projects/{encoded_path}/repository/branches?per_page=100"
+            try:
+                req = urllib.request.Request(api_url, headers={"PRIVATE-TOKEN": gitlab_token})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    for b in json.loads(resp.read()):
+                        branches.add(b.get("name", ""))
+            except Exception:
+                pass
+
+    repo_dir = Path(_get_worker().config.pvc_mount_path) / name if _worker else None
+    if repo_dir and repo_dir.exists() and (repo_dir / ".git").exists():
+        try:
+            result = subprocess.run(
+                ["git", "branch", "-r", "--format=%(refname:strip=3)"],
+                capture_output=True, text=True, cwd=str(repo_dir), timeout=15
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    line = line.strip()
+                    if line and "HEAD" not in line:
+                        branches.add(line)
+        except Exception:
+            pass
+
+    if default_branch:
+        branches.add(default_branch)
+    for fb in ("main", "master", "develop", "development", "staging", "production"):
+        branches.add(fb)
+
+    branch_list = sorted(branches, key=lambda b: (b != default_branch, b.lower()))
+    return {"branches": branch_list, "default": default_branch}
+
+
 @app.post("/api/repos")
 async def api_add_repo(req: Request):
     data = await req.json()
