@@ -125,7 +125,7 @@ spec:
                   name: gitlab-agent-credentials
                   key: GITLAB_TOKEN
             - name: GITLAB_HOST
-              value: "gitlab.example.com"
+              value: "YOUR_GITLAB_HOST"
             - name: OPENCODE_MODEL
               valueFrom:
                 secretKeyRef:

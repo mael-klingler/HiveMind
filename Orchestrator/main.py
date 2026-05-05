@@ -6,6 +6,7 @@ Laedt .env aus /app/config/.env oder lokaler .env
 und konfiguriert Git-Token-Auth automatisch.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -54,7 +55,7 @@ OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "glm-5.1:cloud")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 AGENT_NAMESPACE = os.getenv("AGENT_NAMESPACE", "hivemind")
 AGENT_IMAGE = os.getenv("AGENT_IMAGE", "hivemind-opencode:latest")
-GITLAB_HOST = os.getenv("GITLAB_HOST", "gitlab.example.com")
+GITLAB_HOST = os.getenv("GITLAB_HOST") or ""
 GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
 OPENCODE_PORT = os.getenv("OPENCODE_PORT", "4096")
 OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
@@ -194,6 +195,10 @@ class RepoManager:
         except FileNotFoundError:
             return -100, "", "git nicht gefunden"
 
+    async def _arun(self, *cmd, cwd: Optional[str] = None) -> Tuple[int, str, str]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._run, *cmd, cwd)
+
     def ensure_repo(self, config: RepoConfig) -> RepoStatus:
         repo_dir = self.base_dir / config.name
         status = RepoStatus(config=config, local_path=repo_dir)
@@ -246,6 +251,10 @@ class RepoManager:
 
         return status
 
+    async def aensure_repo(self, config: RepoConfig) -> RepoStatus:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.ensure_repo, config)
+
     def init_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
         log.step("Repository Initialisierung")
         return [self.ensure_repo(r) for r in repos]
@@ -253,6 +262,18 @@ class RepoManager:
     def update_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
         log.step("Repository Update")
         return [self.ensure_repo(r) for r in repos]
+
+    async def ainit_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
+        log.step("Repository Initialisierung (async)")
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, self.ensure_repo, r) for r in repos]
+        return await asyncio.gather(*tasks)
+
+    async def aupdate_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
+        log.step("Repository Update (async)")
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, self.ensure_repo, r) for r in repos]
+        return await asyncio.gather(*tasks)
 
 
 # ── LeanKG Manager ────────────────────────────────────────────────
@@ -428,7 +449,7 @@ def configure_git_credentials():
     token = os.getenv("GITLAB_TOKEN") or os.getenv("GIT_TOKEN") or ""
     git_user = _gs("git_user") or os.getenv("GIT_USER", "gitlab-ci-token")
     hosts = set()
-    default_host = os.getenv("GITLAB_HOST", "gitlab.example.com")
+    default_host = os.getenv("GITLAB_HOST") or ""
     if default_host:
         hosts.add(default_host)
     try:
@@ -462,7 +483,7 @@ def create_opencode_config(workspace_dir: Path, ticket: Ticket, selected: List[R
     git_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
     repo_list = []
     for r in selected:
-        remote = r.url or f"https://{os.getenv('GITLAB_HOST', 'gitlab.example.com')}/{r.name}.git"
+        remote = r.url or f"https://{os.getenv('GITLAB_HOST') or ''}/{r.name}.git"
         repo_list.append({
             "url": remote,
             "name": r.name,
@@ -679,7 +700,7 @@ def spawn_agent_pod(ticket: Ticket, selected: List[RepoConfig], assignment_md: s
     repos_json = json.dumps({r.name: {"url": r.url, "branch": r.branch} for r in selected}, indent=2, ensure_ascii=False)
     escaped_assignment = assignment_md.replace("\\", "\\\\").replace('"', '\\"')
     GIT_USER = _sanitize_yaml_value(get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token"))
-    GITLAB_HOST_SAFE = _sanitize_yaml_value(get_setting("git_host") or os.getenv("GITLAB_HOST", "gitlab.example.com"))
+    GITLAB_HOST_SAFE = _sanitize_yaml_value(get_setting("git_host") or os.getenv("GITLAB_HOST") or "")
     GITLAB_TOKEN_SAFE = _sanitize_yaml_value(get_setting("git_token") or GITLAB_TOKEN)
 
     log.step("Agent-Pod erzeugen")

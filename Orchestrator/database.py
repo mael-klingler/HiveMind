@@ -795,7 +795,7 @@ def ensure_config_defaults():
     defaults = {
         "max_agents": os.getenv("MAX_AGENTS", "3"),
         "polling_interval_seconds": os.getenv("POLLING_INTERVAL_SECONDS", "5"),
-        "git_host": os.getenv("GITLAB_HOST", "gitlab.example.com"),
+        "git_host": os.getenv("GITLAB_HOST") or "",
         "git_user": os.getenv("GIT_USER", "gitlab-ci-token"),
         "git_token": os.getenv("GITLAB_TOKEN", ""),
         "ollama_host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),

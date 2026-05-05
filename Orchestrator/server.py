@@ -119,6 +119,15 @@ class WorkspaceBuilder:
                 self.leankg.index_all(self._statuses)
             self._init_done = True
 
+    async def _aensure_init(self):
+        if not self._init_done:
+            self._main.configure_git_credentials()
+            self._statuses = await self.git.aupdate_all(self.config.repositories)
+            if self.config.leankg_enabled:
+                loop = asyncio.get_event_loop()
+                self._statuses = await loop.run_in_executor(None, self.leankg.index_all, self._statuses)
+            self._init_done = True
+
     async def build_and_spawn(self, ticket):
         try:
             loop = asyncio.get_event_loop()
@@ -319,7 +328,7 @@ async def review_lifecycle_monitor():
     while True:
         try:
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
-            gitlab_host = os.getenv("GITLAB_HOST", "gitlab.example.com")
+            gitlab_host = os.getenv("GITLAB_HOST") or ""
             if not gitlab_token:
                 await asyncio.sleep(60)
                 continue
@@ -737,7 +746,7 @@ async def agent_pod_monitor():
 
             # MR-URL Discovery: Tickets ohne MR-URL aber mit Branch auf GitLab suchen
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
-            gitlab_host = os.getenv("GITLAB_HOST", "gitlab.example.com")
+            gitlab_host = os.getenv("GITLAB_HOST") or ""
             if gitlab_token:
                 all_tickets = get_tickets(status=None)
                 for t in all_tickets:
@@ -874,7 +883,7 @@ async def queue_processor():
                 if not ticket_data.get("ai_planning"):
                     try:
                         w = _get_worker()
-                        w._ensure_init()
+                        await w._aensure_init()
                         loop = asyncio.get_event_loop()
                         if w.llm.is_available():
                             _ticket = _get_main().Ticket(

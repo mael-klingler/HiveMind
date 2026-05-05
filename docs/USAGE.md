@@ -144,7 +144,7 @@ Writing webhook handler...
 Creating tests...
 ✅ opencode abgeschlossen
 📦 payment-service: Erstelle Branch, Commit, Push und MR...
-🔗 MR erstellt für payment-service: https://gitlab.example.com/.../-/merge_requests/42
+🔗 MR erstellt für payment-service: https://YOUR_GITLAB_HOST/.../-/merge_requests/42
 📦 gateway: Keine Änderungen, überspringe.
 🏁 Alle Repos verarbeitet.
 ```
@@ -166,7 +166,7 @@ kubectl -n hivemind describe pod agent-worker-proj-456
 ## Schritt 5: MR reviewen
 
 ```bash
-# In GitLab → https://gitlab.example.com/<>/-/merge_requests
+# In GitLab → https://YOUR_GITLAB_HOST/<>/-/merge_requests
 
 Der MR-Title: [PROJ-456] Payment webhook handler hinzufügen
 Target: development

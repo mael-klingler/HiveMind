@@ -34,17 +34,17 @@ config:
 
   repositories:
     - name: "auth-service"
-      url: "https://gitlab.example.com/myorg/services/auth.git"
+      url: "https://YOUR_GITLAB_HOST/myorg/services/auth.git"
       branch: "main"
       description: "Authentication service."
       tags: ["backend", "auth", "service"]
     - name: "api-gateway"
-      url: "https://gitlab.example.com/myorg/services/gateway.git"
+      url: "https://YOUR_GITLAB_HOST/myorg/services/gateway.git"
       branch: "main"
       description: "API Gateway."
       tags: ["backend", "gateway", "api", "service"]
     - name: "frontend"
-      url: "https://gitlab.example.com/myorg/frontend.git"
+      url: "https://YOUR_GITLAB_HOST/myorg/frontend.git"
       branch: "main"
       description: "Main frontend application."
       tags: ["frontend", "web", "ui"]
