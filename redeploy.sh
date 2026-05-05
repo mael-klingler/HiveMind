@@ -274,8 +274,10 @@ if ! $DOCKER_MODE; then
    GIT_USER=$(grep "^GIT_USER=" "$SCRIPT_DIR/.env" | cut -d= -f2- || echo "gitlab-ci-token")
    OLLAMA_HOST=$(grep "^OLLAMA_HOST=" "$SCRIPT_DIR/.env" | cut -d= -f2-)
    OLLAMA_BASE_URL=$(grep "^OLLAMA_BASE_URL=" "$SCRIPT_DIR/.env" | cut -d= -f2-)
-   OLLAMA_MODEL=$(grep "^OLLAMA_MODEL=" "$SCRIPT_DIR/.env" | cut -d= -f2-)
-   OPENCODE_MODEL=$(grep "^OPENCODE_MODEL=" "$SCRIPT_DIR/.env" | cut -d= -f2-)
+    OLLAMA_MODEL=$(grep "^OLLAMA_MODEL=" "$SCRIPT_DIR/.env" | cut -d= -f2-)
+    OPENCODE_MODEL=$(grep "^OPENCODE_MODEL=" "$SCRIPT_DIR/.env" | cut -d= -f2-)
+    BRANCH_FALLBACK_ORDER=$(grep "^BRANCH_FALLBACK_ORDER=" "$SCRIPT_DIR/.env" | cut -d= -f2- || echo "development,qa,main")
+    DRY_RUN=$(grep "^DRY_RUN=" "$SCRIPT_DIR/.env" | cut -d= -f2- || echo "false")
 
    if [[ -z "$OLLAMA_HOST" || -z "$OLLAMA_MODEL" || -z "$OPENCODE_MODEL" ]]; then
      echo "❌ Pflicht-Variablen fehlen in .env: OLLAMA_HOST, OLLAMA_MODEL, OPENCODE_MODEL"
@@ -286,7 +288,7 @@ if ! $DOCKER_MODE; then
    echo ""
    echo "--- Updating orchestrator-env secret ---"
     if kubectl get secret "orchestrator-env" -n "$NAMESPACE" >/dev/null 2>&1; then
-      SECRET_DATA="{\"stringData\":{\"AGENT_IMAGE\":\"hivemind-opencode:${NEW_VERSION}\",\"GIT_HOST\":\"${GIT_HOST}\",\"GIT_USER\":\"${GIT_USER}\",\"GIT_TOKEN\":\"${GIT_TOKEN}\",\"OLLAMA_HOST\":\"${OLLAMA_HOST}\",\"OLLAMA_BASE_URL\":\"${OLLAMA_BASE_URL}\",\"OLLAMA_MODEL\":\"${OLLAMA_MODEL}\",\"OPENCODE_MODEL\":\"${OPENCODE_MODEL}\""
+      SECRET_DATA="{\"stringData\":{\"AGENT_IMAGE\":\"hivemind-opencode:${NEW_VERSION}\",\"GIT_HOST\":\"${GIT_HOST}\",\"GIT_USER\":\"${GIT_USER}\",\"GIT_TOKEN\":\"${GIT_TOKEN}\",\"OLLAMA_HOST\":\"${OLLAMA_HOST}\",\"OLLAMA_BASE_URL\":\"${OLLAMA_BASE_URL}\",\"OLLAMA_MODEL\":\"${OLLAMA_MODEL}\",\"OPENCODE_MODEL\":\"${OPENCODE_MODEL}\",\"BRANCH_FALLBACK_ORDER\":\"${BRANCH_FALLBACK_ORDER}\",\"DRY_RUN\":\"${DRY_RUN}\""
       if [[ -n "$OLLAMA_CLOUD_API_KEY" ]]; then
         SECRET_DATA="${SECRET_DATA},\"OLLAMA_CLOUD_API_KEY\":\"${OLLAMA_CLOUD_API_KEY}\""
       fi
@@ -303,7 +305,9 @@ if ! $DOCKER_MODE; then
        --from-literal=OLLAMA_HOST="${OLLAMA_HOST}"
        --from-literal=OLLAMA_BASE_URL="${OLLAMA_BASE_URL}"
        --from-literal=OLLAMA_MODEL="${OLLAMA_MODEL}"
-       --from-literal=OPENCODE_MODEL="${OPENCODE_MODEL}"
+        --from-literal=OPENCODE_MODEL="${OPENCODE_MODEL}"
+        --from-literal=BRANCH_FALLBACK_ORDER="${BRANCH_FALLBACK_ORDER}"
+        --from-literal=DRY_RUN="${DRY_RUN}"
      )
      [[ -n "$OLLAMA_CLOUD_API_KEY" ]] && SECRET_ARGS+=(--from-literal=OLLAMA_CLOUD_API_KEY="${OLLAMA_CLOUD_API_KEY}")
      kubectl create secret generic orchestrator-env -n "$NAMESPACE" "${SECRET_ARGS[@]}"

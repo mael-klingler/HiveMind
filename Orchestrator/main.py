@@ -82,7 +82,7 @@ class RepoConfig:
         return cls(
             name=data["name"],
             url=data["url"],
-            branch=data.get("branch", "main"),
+            branch=data.get("branch", "development"),
             description=data.get("description", ""),
             tags=data.get("tags", []),
         )
@@ -93,6 +93,7 @@ class OrchestratorConfig:
     work_dir: str
     pvc_mount_path: str
     track_branch: str
+    branch_fallback_order: List[str]
     auto_pull_interval_minutes: int
     leankg_enabled: bool
     ollama_host: str
@@ -106,16 +107,19 @@ class OrchestratorConfig:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        from database import get_all_repos, import_repos_from_config
+        from database import get_all_repos, import_repos_from_config, get_setting
         import_repos_from_config(path)
 
         db_repos = get_all_repos()
         repositories = [RepoConfig.from_dict(r) for r in db_repos]
 
+        fallback_str = get_setting("branch_fallback_order") or data.get("branch_fallback_order", "development,qa,main")
+
         return cls(
             work_dir=data.get("work_dir", "/app/workspace"),
             pvc_mount_path=data.get("pvc_mount_path", "/app/workspace/repos"),
-            track_branch=data.get("track_branch", "main"),
+            track_branch=data.get("track_branch", "development"),
+            branch_fallback_order=[b.strip() for b in fallback_str.split(",") if b.strip()],
             auto_pull_interval_minutes=data.get("auto_pull_interval_minutes", 60),
             leankg_enabled=data.get("leankg_enabled", True),
             ollama_host=os.getenv("OLLAMA_HOST", data.get("ollama_host", "http://localhost:11434")),
@@ -190,9 +194,10 @@ log = Logger()
 # ── Git Manager ────────────────────────────────────────────────────
 
 class RepoManager:
-    def __init__(self, base_dir: str, default_branch: str):
+    def __init__(self, base_dir: str, default_branch: str, fallback_order: List[str] = None):
         self.base_dir = Path(base_dir)
         self.default_branch = default_branch
+        self.fallback_order = fallback_order or [default_branch]
 
     def _run(self, *cmd, cwd: Optional[str] = None) -> Tuple[int, str, str]:
         try:
@@ -243,10 +248,13 @@ class RepoManager:
                 url = re.sub(r"^(https?://)", rf"\1{git_user}:{token}@", url)
             rc, out, err = self._run("git", "clone", "--depth=100", "-b", str(branch), url, str(repo_dir))
             if rc != 0 and "not found in upstream" in err:
-                fallback_branch = self.default_branch
-                if fallback_branch != str(branch):
+                for fallback_branch in self.fallback_order:
+                    if fallback_branch == str(branch):
+                        continue
                     log.sub(f"{config.name}: branch '{branch}' not found, trying '{fallback_branch}'...")
-                    rc, out, err = self._run("git", "clone", "--depth=100", "-b", str(fallback_branch), url, str(repo_dir))
+                    rc, out, err = self._run("git", "clone", "--depth=100", "-b", fallback_branch, url, str(repo_dir))
+                    if rc == 0:
+                        break
             if rc != 0:
                 status.error = f"Clone failed: {err}"
                 log.error(f"{config.name}: clone failed")
@@ -495,7 +503,7 @@ def create_opencode_config(workspace_dir: Path, ticket: Ticket, selected: List[R
         repo_list.append({
             "url": remote,
             "name": r.name,
-            "branch": r.branch or "main",
+            "branch": r.branch or "development",
             "primary": r.name == analysis.get("primary_repo", ""),
         })
 
@@ -1090,7 +1098,7 @@ class Orchestrator:
     def __init__(self, config_path: str):
         self.config = OrchestratorConfig.from_file(config_path)
         Path(self.config.pvc_mount_path).mkdir(parents=True, exist_ok=True)
-        self.git = RepoManager(self.config.pvc_mount_path, self.config.track_branch)
+        self.git = RepoManager(self.config.pvc_mount_path, self.config.track_branch, self.config.branch_fallback_order)
         self.leankg = LeanKGManager(self.config)
         self.llm = OllamaClient(self.config.ollama_host, self.config.ollama_model)
         self._statuses: List[RepoStatus] = []
@@ -1237,7 +1245,7 @@ def main():
             if not name or name in existing:
                 continue
             url = p.get("http_url_to_repo", "")
-            branch = p.get("default_branch", "main")
+            branch = p.get("default_branch", "development")
             description = p.get("description", "")
             topics = p.get("topics", [])
             _add_repo(name=name, url=url, branch=branch, description=description, tags=topics)

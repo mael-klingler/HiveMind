@@ -363,7 +363,7 @@ def update_repo(name: str, **fields) -> bool:
 
 def add_repo(name: str, url: str, branch: str = "", description: str = "", tags: list = None) -> bool:
     if not branch:
-        branch = get_setting("default_branch") or "main"
+        branch = get_setting("default_branch") or "development"
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
@@ -405,7 +405,7 @@ def import_repos_from_config(config_path: str):
         add_repo(
             name=name,
             url=repo.get("url", ""),
-            branch=repo.get("branch", "main"),
+            branch=repo.get("branch", "development"),
             description=repo.get("description", ""),
             tags=repo.get("tags", []),
         )
@@ -813,7 +813,8 @@ def ensure_config_defaults():
         "ollama_model": os.getenv("OLLAMA_MODEL", "glm-5.1:cloud"),
         "opencode_model": os.getenv("OPENCODE_MODEL", "glm-5.1:cloud"),
         "auto_pull_enabled": "true",
-        "default_branch": "main",
+        "default_branch": "development",
+        "branch_fallback_order": "development,qa,main",
     }
     conn = get_db()
     c = conn.cursor()
@@ -858,6 +859,7 @@ def import_settings_from_env():
         "OLLAMA_HOST": "ollama_host",
         "OLLAMA_MODEL": "ollama_model",
         "TRACK_BRANCH": "default_branch",
+        "BRANCH_FALLBACK_ORDER": "branch_fallback_order",
     }
     for env_key, db_key in env_mapping.items():
         val = os.getenv(env_key)

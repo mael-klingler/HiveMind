@@ -94,6 +94,8 @@ OLLAMA_MODEL=$(prompt_val "OLLAMA_MODEL" "Ollama Model" "$(env_val OLLAMA_MODEL)
 OPENCODE_MODEL=$(prompt_val "OPENCODE_MODEL" "OpenCode Model" "$(env_val OPENCODE_MODEL)")
 OLLAMA_CLOUD_API_KEY=$(prompt_val "OLLAMA_CLOUD_API_KEY" "Ollama Cloud API Key (optional)" "$(env_val OLLAMA_CLOUD_API_KEY)" true)
 AGENT_IMAGE=$(prompt_val "AGENT_IMAGE" "Agent Image" "$(env_val AGENT_IMAGE)")
+BRANCH_FALLBACK_ORDER=$(prompt_val "BRANCH_FALLBACK_ORDER" "Branch Fallback Order" "$(env_val BRANCH_FALLBACK_ORDER)")
+DRY_RUN=$(prompt_val "DRY_RUN" "Dry Run (true/false)" "$(env_val DRY_RUN)")
 
 MISSING=""
 [[ -z "$GITLAB_HOST" ]] && MISSING="$MISSING GITLAB_HOST"
@@ -119,6 +121,8 @@ SECRET_ARGS=(
   --from-literal=OLLAMA_MODEL="$OLLAMA_MODEL"
   --from-literal=OPENCODE_MODEL="$OPENCODE_MODEL"
   --from-literal=AGENT_IMAGE="$AGENT_IMAGE"
+  --from-literal=BRANCH_FALLBACK_ORDER="$BRANCH_FALLBACK_ORDER"
+  --from-literal=DRY_RUN="$DRY_RUN"
 )
 
 if [[ -n "$OLLAMA_CLOUD_API_KEY" ]]; then
@@ -155,6 +159,8 @@ update_env_line "OLLAMA_MODEL" "$OLLAMA_MODEL"
 update_env_line "OPENCODE_MODEL" "$OPENCODE_MODEL"
 update_env_line "OLLAMA_CLOUD_API_KEY" "$OLLAMA_CLOUD_API_KEY"
 update_env_line "AGENT_IMAGE" "$AGENT_IMAGE"
+update_env_line "BRANCH_FALLBACK_ORDER" "$BRANCH_FALLBACK_ORDER"
+update_env_line "DRY_RUN" "$DRY_RUN"
 ok ".env aktualisiert"
 
 echo ""

@@ -225,7 +225,7 @@ class WorkspaceBuilder:
             self.config.ollama_model = db_ollama_model
 
         Path(self.config.pvc_mount_path).mkdir(parents=True, exist_ok=True)
-        self.git = self._main.RepoManager(self.config.pvc_mount_path, self.config.track_branch)
+        self.git = self._main.RepoManager(self.config.pvc_mount_path, self.config.track_branch, self.config.branch_fallback_order)
         self.leankg = self._main.LeanKGManager(self.config)
         self.llm = self._main.OllamaClient(self.config.ollama_host, self.config.ollama_model)
         self._statuses = []
@@ -676,7 +676,7 @@ def _ai_enrich_repo(repo_info: Dict) -> Dict:
     url = repo_info.get("url", "")
     existing_desc = repo_info.get("description", "")
     topics = repo_info.get("topics", [])
-    default_branch = repo_info.get("default_branch", "main")
+    default_branch = repo_info.get("default_branch", "development")
 
     context_parts = [f"Repository: {name}", f"URL: {url}", f"Branch: {default_branch}"]
     if existing_desc:
@@ -2177,7 +2177,7 @@ async def api_repo_branches(name: str):
         raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
 
     branches = set()
-    default_branch = repo.get("branch", "main")
+    default_branch = repo.get("branch", "development")
 
     gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
     gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
@@ -2223,7 +2223,7 @@ async def api_repo_branches(name: str):
 
     if default_branch:
         branches.add(default_branch)
-    for fb in ("main", "master", "develop", "development", "staging", "production"):
+    for fb in ("development", "qa", "main", "master", "staging", "production"):
         branches.add(fb)
 
     branch_list = sorted(branches, key=lambda b: (b != default_branch, b.lower()))
@@ -2238,7 +2238,7 @@ async def api_add_repo(req: Request):
     if not name or not url:
         raise HTTPException(status_code=400, detail="name and url are required")
 
-    branch = data.get("branch") or (get_setting("default_branch") or "main")
+    branch = data.get("branch") or (get_setting("default_branch") or "development")
     tags = data.get("tags", [])
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
@@ -2326,7 +2326,7 @@ async def api_init_repos_from_gitlab(req: Request):
         repo_info = {
             "name": name,
             "url": url,
-            "default_branch": p.get("default_branch", "main"),
+            "default_branch": p.get("default_branch", "development"),
             "description": p.get("description", ""),
             "topics": p.get("topics", []),
         }
@@ -2334,7 +2334,7 @@ async def api_init_repos_from_gitlab(req: Request):
         if use_ai:
             repo_info = _ai_enrich_repo(repo_info)
 
-        branch = repo_info.get("default_branch", "main")
+        branch = repo_info.get("default_branch", "development")
         description = repo_info.get("description", "")
         tags = repo_info.get("tags", repo_info.get("topics", []))
 

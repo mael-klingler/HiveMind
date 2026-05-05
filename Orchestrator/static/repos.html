@@ -284,7 +284,7 @@
         <div class="form-group">
           <label>Branch</label>
           <div style="position:relative">
-            <input id="repoBranch" placeholder="main" value="main" list="repoBranchList" autocomplete="off">
+            <input id="repoBranch" placeholder="development" value="development" list="repoBranchList" autocomplete="off">
             <datalist id="repoBranchList"></datalist>
             <div class="help">Type or select a branch — fetched from GitLab when URL is entered</div>
           </div>
@@ -323,7 +323,7 @@
         <div class="form-group">
           <label>Branch</label>
           <div style="position:relative">
-            <input id="editRepoBranch" placeholder="main" list="editRepoBranchList" autocomplete="off">
+            <input id="editRepoBranch" placeholder="development" list="editRepoBranchList" autocomplete="off">
             <datalist id="editRepoBranchList"></datalist>
           </div>
         </div>
@@ -347,7 +347,7 @@
 
   <script>
     let repos = [];
-    let defaultBranch = "main";
+    let defaultBranch = "development";
 
     async function loadDefaultBranch() {
       try {
@@ -382,7 +382,7 @@
       }
       el.innerHTML = repos.map(r => {
         const tags = (r.tags || []).map(t => `<span class="repo-tag">${t}</span>`).join("");
-        const branch = r.branch || "main";
+        const branch = r.branch || "development";
         return `<div class="repo-card">
           <div class="repo-card-top">
             <div>
