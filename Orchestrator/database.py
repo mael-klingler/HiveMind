@@ -62,6 +62,7 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "mr_project_path", "TEXT")
     _add_column_if_not_exists(c, "tickets", "mr_iid", "INTEGER")
     _add_column_if_not_exists(c, "tickets", "mr_conflict_status", "TEXT DEFAULT 'none'")
+    _add_column_if_not_exists(c, "tickets", "selected_repos", "TEXT")
 
     # Tickets table (with MR + Review Lifecycle)
     c.execute("""
@@ -94,6 +95,7 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "workspace_path", "TEXT")
     _add_column_if_not_exists(c, "tickets", "agent_id", "TEXT")
     _add_column_if_not_exists(c, "tickets", "ai_planning", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "selected_repos", "TEXT")
 
     # Agents table
     c.execute("""
@@ -415,13 +417,16 @@ def create_ticket(ticket: Dict[str, Any]) -> str:
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
+    selected_repos = ticket.get("selected_repos", [])
+    selected_repos_json = json.dumps(selected_repos) if selected_repos else None
     c.execute("""
-    INSERT INTO tickets (id, title, description, labels, issue_type, priority, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tickets (id, title, description, labels, issue_type, priority, status, created_at, updated_at, selected_repos)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         ticket["id"], ticket["title"], ticket.get("description", ""),
         json.dumps(ticket.get("labels", [])), ticket.get("issue_type", "Task"),
-        ticket.get("priority", "Medium"), "queued", now, now
+        ticket.get("priority", "Medium"), "queued", now, now,
+        selected_repos_json
     ))
     conn.commit()
 
@@ -464,6 +469,12 @@ def update_ticket_status(ticket_id: str, status: str):
     c.execute("UPDATE tickets SET status = ?, updated_at = ? WHERE id = ?",
               (status, datetime.now().isoformat(), ticket_id))
     conn.commit()
+    if status not in ("running", "queued"):
+        c.execute("SELECT agent_id FROM tickets WHERE id = ?", (ticket_id,))
+        row = c.fetchone()
+        if row and row["agent_id"]:
+            c.execute("UPDATE agents SET status = 'idle', current_ticket_id = NULL, progress = 0 WHERE id = ?", (row["agent_id"],))
+            conn.commit()
     conn.close()
 
 

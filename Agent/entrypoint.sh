@@ -614,6 +614,7 @@ post_progress "🏁 Ticket ${TICKET_ID} completed – All repos processed." "sys
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
   echo "👂 Starting comment polling (every ${COMMENT_POLL_INTERVAL}s)..."
   post_progress "👂 Waiting for comments/feedback..." "system"
+  LAST_SEEN_COMMENT_ID=0
 
   while true; do
     COMMENTS_JSON=$(curl -sS "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" 2>/dev/null || echo "[]")

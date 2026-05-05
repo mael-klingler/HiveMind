@@ -259,40 +259,57 @@ class WorkspaceBuilder:
     def _build_and_spawn_sync(self, ticket):
         self._ensure_init()
 
-        analysis = None
-        max_llm_retries = 3
-        retry_delays = [10, 30, 60]
+        manual_repos = getattr(ticket, 'selected_repos', None) or []
 
-        if self.llm.is_available():
-            for attempt in range(max_llm_retries):
-                try:
-                    analysis = self.llm.analyze_repos_for_ticket(
-                        ticket, self._statuses, self.leankg
-                    )
-                    if analysis:
-                        break
-                except RuntimeError as e:
-                    err_str = str(e)
-                    if attempt < max_llm_retries - 1:
-                        delay = retry_delays[attempt]
-                        print(f"  ⚠️  LLM analysis failed (attempt {attempt+1}/{max_llm_retries}): {e}")
-                        print(f"  ⏳ Retry in {delay}s...")
-                        import time
-                        time.sleep(delay)
-                    else:
-                        print(f"  ❌ LLM analysis failed after {max_llm_retries} attempts for ticket {ticket.id}: {e}")
+        if manual_repos:
+            print(f"  🎯 Ticket {ticket.id} has manual repo selection: {manual_repos} – skipping AI analysis")
+            selected_configs = [r for r in self.config.repositories if r.name in manual_repos]
+            if not selected_configs:
+                print(f"  ❌ Manual repo selection has no matching repositories – ticket {ticket.id}")
+                return "failed: no matching repositories", None, None
+            analysis = {
+                "selected_repos": manual_repos,
+                "primary_repo": manual_repos[0],
+                "complexity": "Medium",
+                "estimated_hours": 2,
+                "reasoning": "Repositories manually selected by user",
+            }
+            selected_names = set(manual_repos)
         else:
-            print(f"  ❌ Ollama not reachable ({self.llm.host}) – ticket {ticket.id} cannot be analyzed")
+            analysis = None
+            max_llm_retries = 3
+            retry_delays = [10, 30, 60]
 
-        if not analysis:
-            print(f"  ❌ No AI analysis available – ticket {ticket.id} will be marked as 'failed'")
-            return "failed: no llm analysis", None, None
+            if self.llm.is_available():
+                for attempt in range(max_llm_retries):
+                    try:
+                        analysis = self.llm.analyze_repos_for_ticket(
+                            ticket, self._statuses, self.leankg
+                        )
+                        if analysis:
+                            break
+                    except RuntimeError as e:
+                        err_str = str(e)
+                        if attempt < max_llm_retries - 1:
+                            delay = retry_delays[attempt]
+                            print(f"  ⚠️  LLM analysis failed (attempt {attempt+1}/{max_llm_retries}): {e}")
+                            print(f"  ⏳ Retry in {delay}s...")
+                            import time
+                            time.sleep(delay)
+                        else:
+                            print(f"  ❌ LLM analysis failed after {max_llm_retries} attempts for ticket {ticket.id}: {e}")
+            else:
+                print(f"  ❌ Ollama not reachable ({self.llm.host}) – ticket {ticket.id} cannot be analyzed")
 
-        selected_names = set(analysis.get("selected_repos", []))
-        selected_configs = [r for r in self.config.repositories if r.name in selected_names]
-        if not selected_configs:
-            print(f"  ❌ AI analysis selected no matching repositories – ticket {ticket.id}")
-            return "failed: no matching repositories", None, None
+            if not analysis:
+                print(f"  ❌ No AI analysis available – ticket {ticket.id} will be marked as 'failed'")
+                return "failed: no llm analysis", None, None
+
+            selected_names = set(analysis.get("selected_repos", []))
+            selected_configs = [r for r in self.config.repositories if r.name in selected_names]
+            if not selected_configs:
+                print(f"  ❌ AI analysis selected no matching repositories – ticket {ticket.id}")
+                return "failed: no matching repositories", None, None
 
         prompt = self._main.generate_assignment_prompt(ticket, analysis, selected_configs)
 
@@ -986,6 +1003,42 @@ async def agent_pod_monitor():
                     except (ValueError, TypeError):
                         pass
 
+            # Orphaned agent cleanup: agents marked "running" but their ticket is not "running"
+            all_agents = get_all_agents()
+            all_tickets = {t["id"]: t for t in get_tickets(status=None)}
+
+            # Deduplicate: only one agent per ticket (keep the agent that matches ticket.agent_id)
+            ticket_owners = {}
+            for a in all_agents:
+                if a["status"] != "running" or not a.get("current_ticket_id"):
+                    continue
+                tid = a["current_ticket_id"]
+                if tid in ticket_owners:
+                    ticket_data = all_tickets.get(tid)
+                    owner_id = ticket_data.get("agent_id", "") if ticket_data else ""
+                    if owner_id and a["id"] == owner_id:
+                        set_agent_status(ticket_owners[tid], "idle")
+                        log.info(f"Agent {ticket_owners[tid]}: duplicate assignment for {tid}, set idle (keeping owner {a['id']})", extra={"agent_id": ticket_owners[tid], "ticket_id": tid, "event": "agent_orphan_cleanup"})
+                        ticket_owners[tid] = a["id"]
+                    else:
+                        set_agent_status(a["id"], "idle")
+                        log.info(f"Agent {a['id']}: duplicate assignment for {tid}, set idle (keeping {ticket_owners[tid]})", extra={"agent_id": a["id"], "ticket_id": tid, "event": "agent_orphan_cleanup"})
+                else:
+                    ticket_owners[tid] = a["id"]
+
+            for a in all_agents:
+                if a["status"] != "running":
+                    continue
+                tid = a.get("current_ticket_id")
+                if not tid:
+                    set_agent_status(a["id"], "idle")
+                    log.info(f"Agent {a['id']}: no current_ticket_id, set idle", extra={"agent_id": a["id"], "event": "agent_orphan_cleanup"})
+                    continue
+                ticket = all_tickets.get(tid)
+                if not ticket or ticket.get("status") not in ("running", "queued"):
+                    set_agent_status(a["id"], "idle")
+                    log.info(f"Agent {a['id']}: ticket {tid} is '{ticket.get('status') if ticket else 'missing'}', set idle", extra={"agent_id": a["id"], "ticket_id": tid, "event": "agent_orphan_cleanup"})
+
             await asyncio.sleep(30)
         except Exception as e:
             log.error(f"Agent pod monitor error: {e}", exc_info=True)
@@ -1034,7 +1087,7 @@ async def queue_processor():
             primary_repo = ""
             if ticket_data:
                 # Phase 1: AI analysis if not yet available
-                if not ticket_data.get("ai_planning"):
+                if not ticket_data.get("ai_planning") and not ticket_data.get("selected_repos"):
                     try:
                         w = _get_worker()
                         await w._aensure_init()
@@ -1048,6 +1101,7 @@ async def queue_processor():
                                 issue_type=ticket_data.get("issue_type", "Task"),
                                 priority=ticket_data.get("priority", "Medium"),
                                 agent_id=ticket_data.get("agent_id", ""),
+                                selected_repos=json.loads(ticket_data.get("selected_repos", "[]")) if ticket_data.get("selected_repos") else [],
                             )
                             analysis = await loop.run_in_executor(None, w.llm.analyze_repos_for_ticket, _ticket, w._statuses, w.leankg)
                             if analysis:
@@ -1083,6 +1137,20 @@ async def queue_processor():
 
             best_agent_id = find_best_agent_for_repo(primary_repo, idle) if primary_repo else None
             agent = next((a for a in idle if a["id"] == best_agent_id), idle[0]) if best_agent_id else idle[0]
+
+            # Re-verify agent is still idle (may have changed during async AI analysis)
+            fresh_idle = get_idle_agents()
+            if not any(a["id"] == agent["id"] for a in fresh_idle):
+                log.warning(f"Agent {agent['id']} is no longer idle after analysis, skipping", extra={"agent_id": agent["id"], "event": "agent_no_longer_idle"})
+                await asyncio.sleep(2)
+                continue
+
+            # Re-verify ticket is still queued (may have been assigned by another loop iteration)
+            fresh_item = get_next_queue_item()
+            if not fresh_item or fresh_item["ticket_id"] != next_item["ticket_id"]:
+                log.warning(f"Ticket {next_item['ticket_id']} is no longer next in queue, skipping", extra={"ticket_id": next_item["ticket_id"], "event": "ticket_no_longer_next"})
+                continue
+
             success = assign_queue_item(next_item["id"], agent["id"])
             if not success:
                 await asyncio.sleep(2)
@@ -1113,6 +1181,7 @@ async def queue_processor():
                     issue_type=ticket_data.get("issue_type", "Task"),
                     priority=ticket_data.get("priority", "Medium"),
                     agent_id=ticket_data.get("agent_id", ""),
+                    selected_repos=json.loads(ticket_data.get("selected_repos", "[]")) if ticket_data.get("selected_repos") else [],
                 )
                 print(f"🚀 Spawning agent pod for ticket {ticket.id}...")
                 w = _get_worker()
@@ -1278,22 +1347,42 @@ async def _proxy_request(ticket_id: str, path: str, request: Request) -> Respons
 
     if "text/html" in content_type:
         html = content.decode("utf-8", errors="replace")
-        html = html.replace('src="/', f'src="{prefix}/')
         html = html.replace('href="/', f'href="{prefix}/')
-        html = html.replace("src='/", f"src='{prefix}/")
+        html = html.replace('src="/', f'src="{prefix}/')
         html = html.replace("href='/", f"href='{prefix}/")
-        html = html.replace('="/favicon', f'="{prefix}/favicon')
-        html = html.replace('="/assets/', f'="{prefix}/assets/')
-        html = html.replace('="/site.webmanifest"', f'="{prefix}/site.webmanifest"')
+        html = html.replace("src='/", f"src='{prefix}/")
+        html = html.replace('content="/', f'content="{prefix}/')
+        html = html.replace('action="/', f'action="{prefix}/')
+        proxy_script = (
+            f'<script>(function(){{'
+            f'var P="{prefix}";'
+            f'var _f=window.fetch;'
+            f'window.fetch=function(input,init){{'
+            f'if(typeof input==="string"){{'
+            f'if(input.startsWith("/")&&!input.startsWith(P))input=P+input;'
+            f'}} else if(input instanceof Request){{'
+            f'var nu=new URL(input.url,location.origin);'
+            f'if(nu.pathname.startsWith("/")&&!nu.pathname.startsWith(P)){{'
+            f'nu.pathname=P+nu.pathname;'
+            f'input=new Request(nu.toString(),input);'
+            f'}}}}'
+            f'return _f.call(this,input,init);'
+            f'}};'
+            f'var _WS=window.WebSocket;'
+            f'window.WebSocket=function(url,protocols){{'
+            f'var a=new URL(url,location.origin);'
+            f'if(a.pathname.startsWith("/")&&!a.pathname.startsWith(P))a.pathname=P+a.pathname;'
+            f'return new _WS(a.toString(),protocols);'
+            f'}};'
+            f'window.WebSocket.prototype=_WS.prototype;'
+            f'window.WebSocket.CONNECTING=_WS.CONNECTING;'
+            f'window.WebSocket.OPEN=_WS.OPEN;'
+            f'window.WebSocket.CLOSING=_WS.CLOSING;'
+            f'window.WebSocket.CLOSED=_WS.CLOSED;'
+            f'}})()</script>'
+        )
+        html = html.replace("</head>", f"{proxy_script}</head>")
         content = html.encode("utf-8")
-        response_headers["content-length"] = str(len(content))
-    elif "javascript" in content_type or "text/css" in content_type:
-        text = content.decode("utf-8", errors="replace")
-        text = text.replace('="/api/', f'="{prefix}/api/')
-        text = text.replace("='/api/", f"'{prefix}/api/")
-        text = text.replace('"/socket', f'"{prefix}/socket')
-        text = text.replace("'*/socket", f"'{prefix}/socket")
-        content = text.encode("utf-8")
         response_headers["content-length"] = str(len(content))
 
     return Response(

@@ -261,6 +261,14 @@
       opacity: 0; pointer-events: none; transition: opacity 0.25s ease; z-index: 300;
     }
     .toast.show { opacity: 1; }
+
+    .repo-check {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.3rem 0.25rem; border-radius: 4px;
+      font-size: 0.82rem; cursor: pointer; transition: background var(--transition);
+    }
+    .repo-check:hover { background: var(--border); }
+    .repo-check input { accent-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -383,6 +391,13 @@
         <div style="margin-bottom:0.75rem">
           <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Labels</label>
           <input id="newTicketLabels" placeholder="backend, api" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem">
+        </div>
+        <div style="margin-bottom:0.75rem">
+          <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Repositories</label>
+          <div id="repoPicker" style="margin-top:0.2rem;max-height:140px;overflow-y:auto;background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:0.4rem 0.5rem">
+            <div style="color:var(--muted2);font-size:0.78rem">Loading repos...</div>
+          </div>
+          <div style="font-size:0.62rem;color:var(--muted);margin-top:0.25rem">Select repos manually to skip AI auto-matching</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -511,8 +526,9 @@
         </div>
         <div class="detail-field"><label>Labels</label><div class="val">${labels.join(", ") || "—"}</div></div>
         <div class="detail-field"><label>Description</label><div class="val" style="color:var(--text2);white-space:pre-wrap">${t.description || "—"}</div></div>
+        ${(() => { try { const sr = JSON.parse(t.selected_repos || "[]"); return sr.length ? `<div class="detail-field"><label>Manual Repos</label><div class="val" style="color:var(--accent)">${sr.join(", ")}</div></div>` : ""; } catch(e) { return ""; } })()}
         ${t.mr_url ? `<div class="section-block green"><h4>Merge Request</h4><a href="${t.mr_url}" target="_blank" style="font-size:0.8rem">${t.mr_url}</a>${pipelineBadge(t.mr_pipeline_status)}</div>` : ""}
-        ${t.ai_planning ? (() => { try { const p = typeof t.ai_planning === "string" ? JSON.parse(t.ai_planning) : t.ai_planning; const cx = p.complexity === "High" ? "critical" : p.complexity === "Medium" ? "high" : "low"; return `<div class="section-block accent"><h4>AI Analysis</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem"><div class="detail-field"><label>Primary Repo</label><div class="val" style="color:var(--accent)">${p.primary_repo || "—"}</div></div><div class="detail-field"><label>Complexity</label><span class="badge badge-priority-${cx}">${p.complexity}</span></div><div class="detail-field"><label>Selected Repos</label><div class="val">${(p.selected_repos||[]).join(", ") || "—"}</div></div><div class="detail-field"><label>Estimated Time</label><div class="val">~${p.estimated_hours || "?"}h</div></div></div>${p.reasoning ? `<div style="margin-top:0.5rem"><label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Reasoning</label><div class="notes-box">${p.reasoning}</div></div>` : ""}</div>`; } catch(e) { return ""; } })() : ""}
+        ${t.ai_planning ? (() => { try { const p = typeof t.ai_planning === "string" ? JSON.parse(t.ai_planning) : t.ai_planning; const cx = p.complexity === "High" ? "critical" : p.complexity === "Medium" ? "high" : "low"; const isManual = p.reasoning === "Repositories manually selected by user"; const hdr = isManual ? "Manual Repo Selection" : "AI Analysis"; return `<div class="section-block accent"><h4>${hdr}</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem"><div class="detail-field"><label>Primary Repo</label><div class="val" style="color:var(--accent)">${p.primary_repo || "—"}</div></div><div class="detail-field"><label>Complexity</label><span class="badge badge-priority-${cx}">${p.complexity}</span></div><div class="detail-field"><label>Selected Repos</label><div class="val">${(p.selected_repos||[]).join(", ") || "—"}</div></div><div class="detail-field"><label>Estimated Time</label><div class="val">~${p.estimated_hours || "?"}h</div></div></div>${p.reasoning ? `<div style="margin-top:0.5rem"><label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Reasoning</label><div class="notes-box">${p.reasoning}</div></div>` : ""}</div>`; } catch(e) { return ""; } })() : ""}
         ${t.review_notes ? `<div class="detail-field" style="margin-top:0.5rem"><label>Review Notes</label><div class="notes-box">${t.review_notes}</div></div>` : ""}
         ${t.retry_count > 0 ? `<div class="detail-field" style="margin-top:0.5rem"><label>Retry History</label><div class="val" style="color:var(--yellow)">${t.retry_count}x rejected</div></div>` : ""}
         <div class="section-block" style="margin-top:0.75rem">
@@ -612,27 +628,52 @@
       } catch(e) { toast("Error: " + e.message, true); }
     }
 
-    function openNewTicketModal() { document.getElementById("newModal").classList.add("open"); }
+    function openNewTicketModal() {
+      document.getElementById("newModal").classList.add("open");
+      loadRepoPicker();
+    }
     function closeNewModal() { document.getElementById("newModal").classList.remove("open"); }
     document.getElementById("newModal").addEventListener("click", e => {
       if (e.target === document.getElementById("newModal")) closeNewModal();
     });
 
+    let cachedRepos = [];
+
+    async function loadRepoPicker() {
+      try {
+        const repos = await api("/repo-names");
+        cachedRepos = repos || [];
+        const container = document.getElementById("repoPicker");
+        if (!cachedRepos.length) {
+          container.innerHTML = '<div style="color:var(--muted2);font-size:0.78rem">No repos configured</div>';
+          return;
+        }
+        container.innerHTML = cachedRepos.map(r =>
+          `<label class="repo-check"><input type="checkbox" value="${r}" class="repo-check-input">${r}</label>`
+        ).join("");
+      } catch(e) {
+        document.getElementById("repoPicker").innerHTML = '<div style="color:var(--red);font-size:0.78rem">Error loading repos</div>';
+      }
+    }
+
     async function createTicket() {
       const id = document.getElementById("newTicketId").value || "TASK-" + Date.now();
       const title = document.getElementById("newTicketTitle").value;
       if (!title) { alert("Please enter a title"); return; }
+      const selectedRepos = Array.from(document.querySelectorAll(".repo-check-input:checked")).map(cb => cb.value);
       await api("/tickets", "POST", {
         id, title,
         description: document.getElementById("newTicketDesc").value,
         issue_type: document.getElementById("newTicketType").value,
         priority: document.getElementById("newTicketPriority").value,
         labels: document.getElementById("newTicketLabels").value.split(",").map(s => s.trim()).filter(Boolean),
+        selected_repos: selectedRepos,
       });
       closeNewModal();
       document.getElementById("newTicketId").value = "";
       document.getElementById("newTicketTitle").value = "";
       document.getElementById("newTicketDesc").value = "";
+      document.querySelectorAll(".repo-check-input").forEach(cb => cb.checked = false);
       showToast("Ticket created!");
       await loadTickets();
     }

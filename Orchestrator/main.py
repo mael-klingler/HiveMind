@@ -140,6 +140,7 @@ class Ticket:
     issue_type: str = "Task"
     priority: str = "Medium"
     agent_id: str = ""
+    selected_repos: List[str] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, path: str) -> "Ticket":
@@ -152,6 +153,7 @@ class Ticket:
             labels=data.get("labels", []),
             issue_type=data.get("issue_type", data.get("type", "Task")),
             priority=data.get("priority", "Medium"),
+            selected_repos=data.get("selected_repos", []),
         )
 
 
