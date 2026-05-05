@@ -1271,8 +1271,33 @@ async def _proxy_request(ticket_id: str, path: str, request: Request) -> Respons
         if key.lower() not in ("transfer-encoding", "content-encoding", "connection"):
             response_headers[key] = value
 
+    content = resp.content
+    content_type = resp.headers.get("content-type", "")
+
+    prefix = f"/agent-session/{ticket_id}"
+
+    if "text/html" in content_type:
+        html = content.decode("utf-8", errors="replace")
+        html = html.replace('src="/', f'src="{prefix}/')
+        html = html.replace('href="/', f'href="{prefix}/')
+        html = html.replace("src='/", f"src='{prefix}/")
+        html = html.replace("href='/", f"href='{prefix}/")
+        html = html.replace('="/favicon', f'="{prefix}/favicon')
+        html = html.replace('="/assets/', f'="{prefix}/assets/')
+        html = html.replace('="/site.webmanifest"', f'="{prefix}/site.webmanifest"')
+        content = html.encode("utf-8")
+        response_headers["content-length"] = str(len(content))
+    elif "javascript" in content_type or "text/css" in content_type:
+        text = content.decode("utf-8", errors="replace")
+        text = text.replace('="/api/', f'="{prefix}/api/')
+        text = text.replace("='/api/", f"'{prefix}/api/")
+        text = text.replace('"/socket', f'"{prefix}/socket')
+        text = text.replace("'*/socket", f"'{prefix}/socket")
+        content = text.encode("utf-8")
+        response_headers["content-length"] = str(len(content))
+
     return Response(
-        content=resp.content,
+        content=content,
         status_code=resp.status_code,
         headers=response_headers,
     )
