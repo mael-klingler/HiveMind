@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @gitbeaker/rest
-RUN npm install -g opencode-ai@1.14.28
+RUN npm install -g opencode-ai@1.14.37
 ENV NODE_PATH=/usr/local/lib/node_modules
 
 # Copy LeanKG binary from builder

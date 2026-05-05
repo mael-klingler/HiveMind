@@ -996,7 +996,7 @@ spec:
         - name: AGENT_ID
           value: "{agent_id or ''}"
         - name: OPENCODE_SERVER_PASSWORD
-          value: "{os.getenv('OPENCODE_SERVER_PASSWORD', 'changeme')}"
+          value: "{os.getenv('OPENCODE_SERVER_PASSWORD', '')}"
         - name: COMMENT_POLL_INTERVAL
           value: "{os.getenv('COMMENT_POLL_INTERVAL', '30')}"
       ports:
