@@ -15,6 +15,7 @@ import sys
 import traceback
 import urllib.request
 import urllib.error
+import uuid as _uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
