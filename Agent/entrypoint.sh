@@ -25,8 +25,15 @@ fi
 
 FIRST_LINE=$(head -1 "$TASK_FILE")
 
-TICKET_ID=$(echo "$FIRST_LINE" | sed -n 's/^# .*Aufgabe: \([^ ]*\).*/\1/p')
-TICKET_TITLE=$(echo "$FIRST_LINE" | sed -n 's/^# .*Aufgabe: [^ ]* – //p')
+TICKET_ID=$(echo "$FIRST_LINE" | sed -n 's/^# .*Task: \([^ ]*\).*/\1/p')
+TICKET_TITLE=$(echo "$FIRST_LINE" | sed -n 's/^# .*Task: [^ ]* – //p')
+
+if [ -z "$TICKET_ID" ]; then
+  TICKET_ID=$(echo "$FIRST_LINE" | sed -n 's/^# .*Aufgabe: \([^ ]*\).*/\1/p')
+fi
+if [ -z "$TICKET_TITLE" ]; then
+  TICKET_TITLE=$(echo "$FIRST_LINE" | sed -n 's/^# .*Aufgabe: [^ ]* – //p')
+fi
 
 if [ -z "$TICKET_ID" ]; then
   TICKET_ID=$(echo "$FIRST_LINE" | sed -n 's/^# Auftrag: \([^ ]*\).*/\1/p')
@@ -40,6 +47,9 @@ if [ -z "$TICKET_ID" ]; then
 fi
 
 if [ -z "$TICKET_TITLE" ]; then
+  TICKET_TITLE=$(echo "$FIRST_LINE" | sed 's/^# .*Task: [^ ]*[-–] //')
+fi
+if [ -z "$TICKET_TITLE" ]; then
   TICKET_TITLE=$(echo "$FIRST_LINE" | sed 's/^# .*Aufgabe: [^ ]*[-–] //')
 fi
 if [ -z "$TICKET_TITLE" ]; then
@@ -47,6 +57,9 @@ if [ -z "$TICKET_TITLE" ]; then
 fi
 if [ -z "$TICKET_TITLE" ]; then
   TICKET_TITLE=$(echo "$FIRST_LINE" | sed 's/^# //')
+fi
+if [ -z "$TICKET_TITLE" ] || [ "$TICKET_TITLE" = "$FIRST_LINE" ]; then
+  TICKET_TITLE=$(grep -m1 -A1 "## Description" "$TASK_FILE" | tail -1 | xargs)
 fi
 if [ -z "$TICKET_TITLE" ] || [ "$TICKET_TITLE" = "$FIRST_LINE" ]; then
   TICKET_TITLE=$(grep -m1 -A1 "## Beschreibung" "$TASK_FILE" | tail -1 | xargs)
@@ -667,6 +680,18 @@ Commit and push the changes to the same branch."
     sleep "$COMMENT_POLL_INTERVAL"
   done &
   COMMENT_POLL_PID=$!
+fi
+
+# ── Memory Sync-Back ──────────────────────────────────────────────
+if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/root/.config/opencode/memory" ]; then
+  echo "📝 Syncing memory blocks back to orchestrator..."
+  SYNC_BODY=$(jq -n --arg dir "/root/.config/opencode/memory" --arg repo "" '{memory_dir: $dir, repo_name: $repo}')
+  curl -sS -X POST \
+    -H "Content-Type: application/json" \
+    -d "$SYNC_BODY" \
+    "${ORCHESTRATOR_URL}/api/agent-memory/${AGENT_ID}/sync-filesystem" \
+    >/dev/null 2>&1 || echo "⚠️ Memory sync-back failed"
+  echo "✅ Memory sync-back complete"
 fi
 
 # opencode web is already running (started before opencode run --attach)

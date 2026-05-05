@@ -19,6 +19,102 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+import logging
+import time as _time
+import threading as _threading
+
+class Metrics:
+    def __init__(self):
+        self._lock = _threading.Lock()
+        self._counters = {}
+        self._gauges = {}
+        self._histograms = {}
+
+    def inc(self, name: str, labels: dict = None, value: float = 1):
+        key = self._key(name, labels)
+        with self._lock:
+            self._counters[key] = self._counters.get(key, 0) + value
+
+    def set(self, name: str, value: float, labels: dict = None):
+        key = self._key(name, labels)
+        with self._lock:
+            self._gauges[key] = value
+
+    def observe(self, name: str, value: float, labels: dict = None):
+        key = self._key(name, labels)
+        with self._lock:
+            if key not in self._histograms:
+                self._histograms[key] = []
+            self._histograms[key].append(value)
+
+    def _key(self, name, labels):
+        if not labels:
+            return name
+        parts = [f'{k}="{v}"' for k, v in sorted(labels.items())]
+        return f'{name}{{{",".join(parts)}}}'
+
+    def render(self) -> str:
+        lines = []
+        with self._lock:
+            seen = set()
+            for key, value in sorted(self._counters.items()):
+                base = key.split("{")[0] if "{" in key else key
+                if base not in seen:
+                    lines.append(f"# TYPE {base} counter")
+                    seen.add(base)
+                lines.append(f"{key} {value}")
+            for key, value in sorted(self._gauges.items()):
+                base = key.split("{")[0] if "{" in key else key
+                if base not in seen:
+                    lines.append(f"# TYPE {base} gauge")
+                    seen.add(base)
+                lines.append(f"{key} {value}")
+            for key, values in sorted(self._histograms.items()):
+                base = key.split("{")[0] if "{" in key else key
+                if base not in seen:
+                    lines.append(f"# TYPE {base} summary")
+                    seen.add(base)
+                sorted_vals = sorted(values)
+                for quantile in (0.5, 0.9, 0.99):
+                    idx = min(int(len(sorted_vals) * quantile), len(sorted_vals) - 1)
+                    lines.append(f'{key}{{quantile="{quantile}"}} {sorted_vals[idx]}')
+                lines.append(f"{key}_count {len(values)}")
+                lines.append(f"{key}_sum {sum(values)}")
+        return "\n".join(lines) + "\n"
+
+metrics = Metrics()
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_entry = {
+            "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%S%z", _time.localtime(record.created)),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+        }
+        for key in ("ticket_id", "agent_id", "pod_name", "event", "correlation_id"):
+            val = getattr(record, key, None)
+            if val:
+                log_entry[key] = val
+        if record.exc_info and record.exc_info[0]:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry, ensure_ascii=False)
+
+def setup_logging():
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+log = logging.getLogger("hivemind")
+
+_webhook_dedup: Dict[str, float] = {}
+_WEBHOOK_DEDUP_TTL = 300
+_webhook_dedup_lock = asyncio.Lock()
+
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,6 +180,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-ID", str(_uuid.uuid4()))
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
 
 # ── Health Checks ──────────────────────────────────────────────────
 
@@ -230,6 +333,17 @@ def verify_gitlab_webhook(body: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+def _is_duplicate_webhook(event_id: str) -> bool:
+    now = _time.time()
+    if event_id in _webhook_dedup:
+        return True
+    expired = [k for k, v in _webhook_dedup.items() if now - v > _WEBHOOK_DEDUP_TTL]
+    for k in expired:
+        del _webhook_dedup[k]
+    _webhook_dedup[event_id] = now
+    return False
+
+
 async def handle_gitlab_issue(payload: Dict):
     """Processes GitLab Issue webhook: creates ticket + queue entry."""
     issue = payload.get("object_attributes", {})
@@ -317,6 +431,7 @@ async def handle_gitlab_mr(payload: Dict):
             _kubectl = _get_main()._kubectl
             _kubectl(f"delete pod {agent_pod} -n {os.getenv('AGENT_NAMESPACE', 'hivemind')} --grace-period=0 --force")
             print(f"🗑️  Agent pod {agent_pod} deleted")
+        _cleanup_agent_resources(ticket_id)
 
     # MR updated (new commits, review changes)
     elif action == "update" and state == "opened":
@@ -333,6 +448,16 @@ async def handle_gitlab_mr(payload: Dict):
         await broadcast_event("ticket_queued", {"ticket_id": ticket_id, "mr_url": mr_url})
 
     return {"ok": True, "ticket_id": ticket_id, "action": action}
+
+
+def _cleanup_agent_resources(ticket_id: str):
+    """Delete ConfigMaps created for an agent pod."""
+    pod_name = f"agent-worker-{ticket_id.lower()}"
+    namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+    for suffix in ("repos", "assignment", "opencode", "memory"):
+        cm_name = f"{pod_name}-{suffix}"
+        _get_main()._kubectl(f"delete configmap {cm_name} -n {namespace} --ignore-not-found=true 2>/dev/null")
+    print(f"🧹 ConfigMaps cleaned up for {pod_name}")
 
 
 async def review_lifecycle_monitor():
@@ -368,6 +493,7 @@ async def review_lifecycle_monitor():
                     # MR merged → complete ticket
                     if mr_state == "merged":
                         update_ticket_status(ticket_id, "completed")
+                        _cleanup_agent_resources(ticket_id)
                         update_ticket_review(ticket_id, "approved", "", mr_url)
                         add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Ticket completed: MR was merged.")
                         print(f"✅ Ticket {ticket_id}: MR merged")
@@ -382,6 +508,8 @@ async def review_lifecycle_monitor():
                             await broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "MR closed"})
                         else:
                             update_ticket_status(ticket_id, "failed")
+                            metrics.inc("hivemind_tickets_failed_total")
+                            _cleanup_agent_resources(ticket_id)
                             print(f"❌ Ticket {ticket_id}: MR closed → failed (max retries)")
                         continue
 
@@ -419,6 +547,8 @@ async def review_lifecycle_monitor():
                                     await broadcast_event("queue_updated", get_queue())
                                 else:
                                     update_ticket_status(ticket_id, "failed")
+                                    metrics.inc("hivemind_tickets_failed_total")
+                                    _cleanup_agent_resources(ticket_id)
                                     print(f"❌ Ticket {ticket_id}: Merge conflict → failed (max retries)")
                                 continue
                         elif merge_status == "can_be_merged":
@@ -453,8 +583,7 @@ async def review_lifecycle_monitor():
 
             await asyncio.sleep(60)
         except Exception as e:
-            print(f"Review Monitor Error: {e}")
-            traceback.print_exc()
+            log.error(f"Review monitor error: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 
@@ -640,6 +769,8 @@ async def _check_mr_comments(ticket_id, ticket, mr_url, project_path, mr_iid, gi
                 await broadcast_event("queue_updated", get_queue())
             else:
                 update_ticket_status(ticket_id, "failed")
+                metrics.inc("hivemind_tickets_failed_total")
+                _cleanup_agent_resources(ticket_id)
                 print(f"❌ Ticket {ticket_id}: Changes requested → failed (max retries)")
             return
 
@@ -676,6 +807,8 @@ async def agent_pod_monitor():
                 if rc != 0:
                     if ticket_id.lower() in completed_pod_ids or ticket_id in completed_pod_ids:
                         update_ticket_status(ticket_id, "completed")
+                        metrics.inc("hivemind_tickets_completed_total")
+                        _cleanup_agent_resources(ticket_id)
                         set_agent_status(t.get("agent_id", "") or ticket_id.lower(), "idle")
                         add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Agent pod completed. Ticket was marked as completed.")
                         print(f"✅ Ticket {ticket_id}: Pod completed → 'completed'")
@@ -695,6 +828,8 @@ async def agent_pod_monitor():
                         else:
                             print(f"❌ Ticket {ticket_id}: Pod not found, max retries reached → failed")
                             update_ticket_status(ticket_id, "failed")
+                            metrics.inc("hivemind_tickets_failed_total")
+                            _cleanup_agent_resources(ticket_id)
                             set_agent_status(agent_id, "idle")
                             add_ticket_comment(ticket_id, author="system", comment_type="system", content="Agent pod not found and max retries reached.")
                             await broadcast_event("ticket_failed", {"ticket_id": ticket_id})
@@ -704,9 +839,11 @@ async def agent_pod_monitor():
 
                 if phase in ("Succeeded", "Completed"):
                     update_ticket_status(ticket_id, "completed")
+                    metrics.inc("hivemind_tickets_completed_total")
+                    _cleanup_agent_resources(ticket_id)
                     set_agent_status(t.get("agent_id", "") or ticket_id.lower(), "idle")
                     add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Agent pod status: {phase}. Ticket was marked as completed.")
-                    print(f"✅ Ticket {ticket_id}: Pod {phase} → 'completed'")
+                    log.info(f"Ticket {ticket_id}: pod {phase}, marking completed", extra={"ticket_id": ticket_id, "event": "ticket_completed"})
                     await broadcast_event("ticket_completed", {"ticket_id": ticket_id})
                     await broadcast_event("queue_updated", get_queue())
                     # Cleanup: delete pod after completion
@@ -736,13 +873,13 @@ async def agent_pod_monitor():
                             pass
 
                     if retry_count >= AGENT_MAX_RETRIES:
-                        print(f"❌ Ticket {ticket_id}: Max retries ({AGENT_MAX_RETRIES}) reached – stays 'failed'")
+                        log.error(f"Ticket {ticket_id}: max retries ({AGENT_MAX_RETRIES}) reached, staying failed", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
                         continue
 
                     success = requeue_ticket(ticket_id, AGENT_MAX_RETRIES)
                     if success:
                         new_retry = retry_count + 1
-                        print(f"🔄 Ticket {ticket_id}: Re-queued (retry #{new_retry}/{AGENT_MAX_RETRIES})")
+                        log.info(f"Ticket {ticket_id}: re-queued (retry {new_retry}/{AGENT_MAX_RETRIES})", extra={"ticket_id": ticket_id, "event": "ticket_requeued", "agent_id": agent_id})
                         await broadcast_event("ticket_requeued", {
                             "ticket_id": ticket_id,
                             "retry_count": new_retry,
@@ -758,6 +895,7 @@ async def agent_pod_monitor():
                         print(f"🗑️  Pod {pod_name} deleted (failed)")
                     except Exception:
                         pass
+                    _cleanup_agent_resources(ticket_id)
 
             # MR-URL Discovery: Find tickets without MR-URL but with branch on GitLab
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
@@ -832,6 +970,7 @@ async def agent_pod_monitor():
                         elapsed = (datetime.now(_tz.utc) - updated_dt).total_seconds()
                         if elapsed > stale_threshold:
                             update_ticket_status(ticket_id, "completed")
+                            _cleanup_agent_resources(ticket_id)
                             agent_id = t.get("agent_id", "") or f"agent-{ticket_id.lower()}"
                             set_agent_status(agent_id, "idle")
                             add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Pod disappeared (>30min). Ticket automatically marked as completed.")
@@ -848,8 +987,7 @@ async def agent_pod_monitor():
 
             await asyncio.sleep(30)
         except Exception as e:
-            print(f"Agent Pod Monitor Error: {e}")
-            traceback.print_exc()
+            log.error(f"Agent pod monitor error: {e}", exc_info=True)
             await asyncio.sleep(30)
 
 
@@ -959,8 +1097,9 @@ async def queue_processor():
                 status="running",
                 detail=f"Agent {agent['name']} is processing ticket"
             )
+            metrics.inc("hivemind_tickets_assigned_total", labels={"agent_id": agent["id"]})
             affinity_msg = f" (repo affinity: {primary_repo})" if best_agent_id else ""
-            print(f"🎫 Ticket {next_item['ticket_id']} → Agent {agent['name']}{affinity_msg}")
+            log.info(f"Ticket {next_item['ticket_id']} assigned to agent {agent['name']}{affinity_msg}", extra={"ticket_id": next_item['ticket_id'], "agent_id": agent['id'], "event": "ticket_assigned"})
 
             # Spawn K8s agent pod
             if ticket_data:
@@ -1002,6 +1141,7 @@ async def queue_processor():
                     fail_queue_item(next_item["id"], status)
                     set_agent_status(agent["id"], "idle")
                     update_ticket_status(next_item["ticket_id"], "failed")
+                    metrics.inc("hivemind_tickets_failed_total")
                     await broadcast_event("queue_updated", get_queue())
 
             await broadcast_event("queue_updated", get_queue())
@@ -1013,8 +1153,7 @@ async def queue_processor():
 
             await asyncio.sleep(2)
         except Exception as e:
-            print(f"Queue Processor Error: {e}")
-            traceback.print_exc()
+            log.error(f"Queue processor error: {e}", exc_info=True)
             await asyncio.sleep(5)
 
 
@@ -1115,6 +1254,8 @@ async def _proxy_request(ticket_id: str, path: str, request: Request) -> Respons
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         raise HTTPException(status_code=502, detail=f"Agent pod not reachable: {e}")
 
+    metrics.inc("hivemind_proxy_requests_total", labels={"method": request.method})
+
     response_headers = {}
     for key, value in resp.headers.items():
         if key.lower() not in ("transfer-encoding", "content-encoding", "connection"):
@@ -1136,6 +1277,8 @@ async def agent_session_proxy(ticket_id: str, path: str, request: Request):
 
 @app.get("/agent-session/{ticket_id}")
 async def agent_session_root(ticket_id: str, request: Request):
+    if not _verify_proxy_auth(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
     return await _proxy_request(ticket_id, "", request)
 
 
@@ -1159,6 +1302,18 @@ def api_agent_sessions():
 
 @app.websocket("/agent-session/{ticket_id}/ws")
 async def agent_session_ws(websocket: WebSocket, ticket_id: str):
+    if PROXY_PASSWORD:
+        pw = websocket.query_params.get("password", "")
+        if pw != PROXY_PASSWORD:
+            for cookie_name, cookie_value in websocket.cookies.items():
+                if cookie_name == "opencode_password" and cookie_value == PROXY_PASSWORD:
+                    break
+            else:
+                auth_header = websocket.headers.get("authorization", "")
+                if not (auth_header.startswith("Bearer ") and auth_header[7:] == PROXY_PASSWORD):
+                    await websocket.close(code=4001, reason="Authentication required")
+                    return
+
     base_url = _resolve_pod_url(ticket_id)
     if not base_url:
         await websocket.close(code=4040, reason=f"No active agent for ticket {ticket_id}")
@@ -1260,6 +1415,7 @@ async def api_stop_ticket(ticket_id: str):
         except Exception:
             pass
 
+    _cleanup_agent_resources(ticket_id)
     add_ticket_comment(ticket_id, author="user", comment_type="system", content="Ticket manually stopped.")
     await broadcast_event("ticket_stopped", {"ticket_id": ticket_id})
     await broadcast_event("queue_updated", get_queue())
@@ -1270,6 +1426,7 @@ async def api_stop_ticket(ticket_id: str):
 async def api_create_ticket(req: Request, background_tasks: BackgroundTasks):
     data = await req.json()
     ticket_id = create_ticket(data)
+    metrics.inc("hivemind_tickets_created_total")
 
     await broadcast_event("ticket_created", {"ticket_id": ticket_id, "title": data.get("title", "")})
     await broadcast_event("queue_updated", get_queue())
@@ -1491,6 +1648,15 @@ async def gitlab_webhook(req: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    metrics.inc("hivemind_webhooks_received_total", labels={"event_type": event_type})
+
+    event_uuid = req.headers.get("X-Gitlab-Event-UUID", "")
+    if event_uuid:
+        async with _webhook_dedup_lock:
+            is_dup = _is_duplicate_webhook(event_uuid)
+        if is_dup:
+            return {"ok": True, "status": "duplicate"}
+
     # Issue Webhook
     if "issue" in event_type:
         return await handle_gitlab_issue(payload)
@@ -1620,6 +1786,18 @@ def tickets_page():
 
 
 # ── SSE Live Stream ──────────────────────────────────────────────
+
+@app.get("/metrics")
+def api_metrics():
+    from fastapi.responses import PlainTextResponse
+    metrics.set("hivemind_agents_idle", len(get_idle_agents()))
+    metrics.set("hivemind_queue_length", len(get_queue()))
+    all_tickets = get_tickets(status=None)
+    for status in ("queued", "running", "completed", "failed", "merged", "stopped"):
+        count = sum(1 for t in all_tickets if t.get("status") == status)
+        metrics.set("hivemind_tickets", count, labels={"status": status})
+    return PlainTextResponse(content=metrics.render(), media_type="text/plain")
+
 
 @app.get("/api/stream")
 def api_stream():
@@ -1770,6 +1948,77 @@ def api_delete_agent_memory(agent_id: str, block_id: int):
 def api_seed_agent_memory(agent_id: str):
     seed_default_memory_blocks(agent_id)
     return {"ok": True, "agent_id": agent_id}
+
+
+@app.post("/api/agent-memory/{agent_id}/sync")
+async def api_agent_memory_sync(agent_id: str, req: Request):
+    data = await req.json()
+    blocks = data.get("blocks", [])
+    if not blocks:
+        return {"ok": True, "synced": 0}
+    synced = 0
+    for block in blocks:
+        label = block.get("label", "")
+        content = block.get("content", "")
+        if not label or not content:
+            continue
+        repo_name = block.get("repo_name", "_global")
+        description = block.get("description", "")
+        block_limit = block.get("block_limit", 5000)
+        read_only = block.get("read_only", False)
+        set_agent_memory_block(
+            agent_id, repo_name, label, content,
+            description=description, block_limit=block_limit, read_only=read_only
+        )
+        synced += 1
+    print(f"📝 Agent {agent_id}: {synced} memory blocks synced back")
+    return {"ok": True, "synced": synced}
+
+
+@app.post("/api/agent-memory/{agent_id}/sync-filesystem")
+async def api_agent_memory_sync_filesystem(agent_id: str, req: Request):
+    data = await req.json()
+    memory_dir = data.get("memory_dir", "/root/.config/opencode/memory")
+    repo_name = data.get("repo_name", "_global")
+    synced = 0
+    import glob as _glob
+    for md_file in _glob.glob(f"{memory_dir}/*.md"):
+        try:
+            content = Path(md_file).read_text(encoding="utf-8")
+            lines = content.split("\n")
+            label = Path(md_file).stem
+            description = ""
+            block_limit = 5000
+            read_only = False
+            if lines[0].strip() == "---":
+                end_front = next((i for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), -1)
+                if end_front > 0:
+                    for fl in lines[1:end_front]:
+                        if ":" in fl:
+                            fk, fv = fl.split(":", 1)
+                            fk = fk.strip().lower()
+                            fv = fv.strip()
+                            if fk == "label":
+                                label = fv
+                            elif fk == "description":
+                                description = fv
+                            elif fk == "limit":
+                                try:
+                                    block_limit = int(fv)
+                                except ValueError:
+                                    pass
+                            elif fk == "read_only":
+                                read_only = fv.lower() in ("true", "yes", "1")
+                    content = "\n".join(lines[end_front + 1:])
+            set_agent_memory_block(
+                agent_id, repo_name, label, content,
+                description=description, block_limit=block_limit, read_only=read_only
+            )
+            synced += 1
+        except Exception as e:
+            print(f"⚠️ Memory sync failed for {md_file}: {e}")
+    print(f"📝 Agent {agent_id}: {synced} memory blocks synced from filesystem")
+    return {"ok": True, "synced": synced}
 
 
 # ── REST API: Repos ─────────────────────────────────────────────────
@@ -2005,6 +2254,7 @@ async def api_ticket_logs(ticket_id: str):
 
 @app.on_event("startup")
 def startup_event():
+    setup_logging()
     import_repos_from_config(os.getenv("ORCHESTRATOR_CONFIG", "/app/config/orchestrator_config.json"))
     ensure_agent_pool()
     asyncio.create_task(queue_processor())
