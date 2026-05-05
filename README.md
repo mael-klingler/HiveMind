@@ -30,35 +30,35 @@ Local coding agents (Cursor, Copilot, opencode) sit inside one person's editor a
                    ├── Selects 1-4 relevant repositories
                    ├── Generates assignment prompt
                    │
-                   ├── kubectl apply ──────────────────────────┐
-                   │   ConfigMaps: repos, assignment,           │
-                   │              opencode.json, memory        │
-                   │   Secret: gitlab-agent-credentials         │
-                   │                                              │  Agent Pod
-                   │                                              │  (restartPolicy: Never)
-                   │   Init Container ◄─────────────────────────┤
-                   │     git clone + leankg index                │
-                   │                                              │
-                   │   Main Container ◄──────────────────────────┤
-                   │     opencode web (port 4096)                │
-                   │     opencode run (task prompt)              │
-                   │     git commit + push                        │
-                   │     create GitLab Merge Request ──────┐     │
-                   │                                        │     │
-                   │     comment polling ◄──────────────────┤     │
-                   │       (wait for human feedback)        │     │
-                   │       follow-up opencode run ──────────┤     │
-                   │                                        │     │
-                   ├── Review Lifecycle Monitor             │     │
+                   ├── kubectl apply ──────────────────────────────┐
+                   │   ConfigMaps: repos, assignment,              │
+                   │              opencode.json, memory            │
+                   │   Secret: gitlab-agent-credentials            │
+                   │                                               │  Agent Pod
+                   │                                               │  (restartPolicy: Never)
+                   │   Init Container ◄────────────────────────────┤
+                   │     git clone + leankg index                  │
+                   │                                               │
+                   │   Main Container ◄────────────────────────────┤
+                   │     opencode web (port 4096)                  │
+                   │     opencode run (task prompt)                │
+                   │     git commit + push                         │
+                   │     create GitLab Merge Request ────────┐     │
+                   │                                         │     │
+                   │     comment polling ◄───────────────────┤     │
+                   │       (wait for human feedback)         │     │
+                   │       follow-up opencode run ───────────┤     │
+                   │                                         │     │
+                   ├── Review Lifecycle Monitor              │     │
                    │     watches MR state via GitLab API ◄───┘     │
-                   │     pipeline failure → re-queue                 │
-                   │     merge conflict → re-queue                    │
-                   │     MR merged → mark completed, delete pod       │
-                   │                                                    │
-                   └── Agent Pod Monitor                                │
-                         pod failed → re-queue (with delay)             │
-                         pod succeeded → completed                     │
-                         pod stale (>60 min) → auto-complete             │
+                   │     pipeline failure → re-queue               │
+                   │     merge conflict → re-queue                 │
+                   │     MR merged → mark completed, delete pod    │
+                   │                                               │
+                   └── Agent Pod Monitor                           │
+                         pod failed → re-queue (with delay)        │
+                         pod succeeded → completed                 │
+                         pod stale (>60 min) → auto-complete       │
 ```
 
 ### Key Components
