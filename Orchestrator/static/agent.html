@@ -95,6 +95,15 @@
     .checkbox-list{max-height:200px;overflow-y:auto;border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:.5rem}
     .checkbox-item{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;font-size:.85rem}
     .checkbox-item input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+    .mem-block{padding:1rem 1.25rem;border-bottom:1px solid var(--border);transition:background var(--transition)}
+    .mem-block:last-child{border-bottom:none}
+    .mem-block:hover{background:var(--card-hover)}
+    .mem-header{display:flex;align-items:center;gap:.75rem;margin-bottom:.35rem}
+    .mem-label{font-weight:600;font-size:.9rem;color:var(--accent)}
+    .mem-repo{font-family:"SF Mono","Fira Code",monospace;font-size:.7rem;color:var(--purple);background:var(--purple-glow);padding:.1rem .4rem;border-radius:4px}
+    .mem-desc{font-size:.75rem;color:var(--muted);margin-bottom:.35rem}
+    .mem-content{font-size:.82rem;color:var(--text2);white-space:pre-wrap;max-height:150px;overflow:hidden;position:relative;font-family:"SF Mono","Fira Code",monospace}
+    .mem-content.expanded{max-height:none}
   </style>
 </head>
 <body>
@@ -116,6 +125,7 @@
         <div class="tab active" data-tab="agents">Agents</div>
         <div class="tab" data-tab="tools">MCP Tools</div>
         <div class="tab" data-tab="instructions">Instructions</div>
+        <div class="tab" data-tab="memory">Memory</div>
         <div class="tab" data-tab="plugins">Plugins</div>
         <div class="tab" data-tab="model">Model</div>
       </div>
@@ -155,6 +165,24 @@
           </div>
           <div class="panel-body" id="instructionList" style="padding:0">
             <div class="placeholder">Loading instructions...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Memory -->
+      <div class="tab-content" id="tab-memory">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Agent Memory Blocks</h2>
+            <div style="display:flex;gap:.5rem;align-items:center">
+              <select id="memoryAgentSelect" style="background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:.3rem .5rem;border-radius:var(--radius-sm);font-size:.8rem" onchange="loadMemoryBlocks()">
+                <option value="">Select agent...</option>
+              </select>
+              <button class="btn btn-primary btn-sm" onclick="openMemoryBlockModal()">+ Add Block</button>
+            </div>
+          </div>
+          <div class="panel-body" id="memoryList" style="padding:0">
+            <div class="placeholder">Select an agent to view its memory</div>
           </div>
         </div>
       </div>
@@ -295,6 +323,23 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closePluginModal()">Cancel</button>
         <button class="btn btn-primary" onclick="savePlugin()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Memory Block Modal -->
+  <div class="modal-overlay" id="memoryModal">
+    <div class="modal">
+      <div class="modal-header"><h3 id="memoryModalTitle">Add Memory Block</h3><button class="modal-close" onclick="closeMemoryModal()">&times;</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label>Label</label><input id="mem-label" placeholder="persona"></div>
+        <div class="form-group"><label>Repo Name (empty = global)</label><input id="mem-repo" placeholder="_global"></div>
+        <div class="form-group"><label>Description</label><input id="mem-desc" placeholder="Agent identity and behavior"></div>
+        <div class="form-group"><label>Content (Markdown)</label><textarea id="mem-content" rows="8" placeholder="You are an autonomous developer..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeMemoryModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveMemoryBlock()">Save</button>
       </div>
     </div>
   </div>
@@ -540,6 +585,86 @@
     async function deletePlugin(name){if(!confirm(`Really delete plugin "${name}"?`))return;await api(`/plugins/${name}`,"DELETE");await refreshData();showToast("Deleted!")}
     function editPlugin(name){openPluginModal(name)}
 
+    // ── Memory ──
+    let memoryBlocks=[], editingMemId=null;
+
+    function populateMemoryAgentSelect(){
+      const sel=document.getElementById("memoryAgentSelect");
+      if(!sel)return;
+      const cur=sel.value;
+      sel.innerHTML='<option value="">Select agent...</option>'+agentProfiles.map(a=>`<option value="${a.id}">${a.name} (${a.id})</option>`).join("");
+      if(cur)sel.value=cur;
+    }
+
+    async function loadMemoryBlocks(){
+      const agentId=document.getElementById("memoryAgentSelect").value;
+      const el=document.getElementById("memoryList");
+      if(!agentId){el.innerHTML='<div class="placeholder">Select an agent to view its memory</div>';memoryBlocks=[];return}
+      try{
+        memoryBlocks=await api(`/agent-memory/${agentId}`);
+        renderMemoryBlocks();
+      }catch(e){el.innerHTML=`<div class="placeholder">Error: ${e.message}</div>`}
+    }
+
+    function renderMemoryBlocks(){
+      const el=document.getElementById("memoryList");
+      if(!memoryBlocks.length){el.innerHTML='<div class="placeholder">No memory blocks — agent has not learned anything yet</div>';return}
+      el.innerHTML=memoryBlocks.map(b=>{
+        const content=b.content||"";
+        const truncated=content.length>300;
+        return `<div class="mem-block">
+          <div class="mem-header">
+            <span class="mem-label">${b.label}</span>
+            <span class="mem-repo">${b.repo_name}</span>
+            ${b.read_only?'<span class="tag" style="background:var(--yellow-glow);color:var(--yellow)">read-only</span>':''}
+            <div style="margin-left:auto;display:flex;gap:.3rem">
+              <button class="btn btn-secondary btn-sm" onclick="editMemoryBlock(${b.id})">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteMemoryBlock(${b.id})">Delete</button>
+            </div>
+          </div>
+          ${b.description?`<div class="mem-desc">${b.description}</div>`:""}
+          <div class="mem-content" onclick="this.classList.toggle('expanded')">${truncated?content.substring(0,300)+"...":content}</div>
+          ${b.updated_at?`<div style="font-size:.65rem;color:var(--muted2);margin-top:.35rem">Updated: ${new Date(b.updated_at).toLocaleString()}</div>`:""}
+        </div>`}).join("");
+    }
+
+    function openMemoryBlockModal(blockId=null){
+      editingMemId=blockId;
+      if(blockId){
+        const b=memoryBlocks.find(x=>x.id===blockId);if(!b)return;
+        document.getElementById("memoryModalTitle").textContent="Edit Memory Block";
+        document.getElementById("mem-label").value=b.label||"";
+        document.getElementById("mem-repo").value=b.repo_name||"_global";
+        document.getElementById("mem-desc").value=b.description||"";
+        document.getElementById("mem-content").value=b.content||"";
+      }else{
+        document.getElementById("memoryModalTitle").textContent="Add Memory Block";
+        document.getElementById("mem-label").value="";
+        document.getElementById("mem-repo").value="_global";
+        document.getElementById("mem-desc").value="";
+        document.getElementById("mem-content").value="";
+      }
+      document.getElementById("memoryModal").classList.add("open");
+    }
+    function closeMemoryModal(){document.getElementById("memoryModal").classList.remove("open");editingMemId=null}
+    function editMemoryBlock(id){openMemoryBlockModal(id)}
+
+    async function saveMemoryBlock(){
+      const agentId=document.getElementById("memoryAgentSelect").value;
+      if(!agentId){showToast("Select an agent first");return}
+      const data={label:document.getElementById("mem-label").value.trim(),repo_name:document.getElementById("mem-repo").value.trim()||"_global",description:document.getElementById("mem-desc").value.trim(),content:document.getElementById("mem-content").value};
+      if(!data.label){showToast("Label is required");return}
+      await api(`/agent-memory/${agentId}`,"POST",data);
+      closeMemoryModal();await loadMemoryBlocks();showToast(editingMemId?"Updated!":"Added!");
+    }
+
+    async function deleteMemoryBlock(blockId){
+      if(!confirm("Really delete this memory block?"))return;
+      const agentId=document.getElementById("memoryAgentSelect").value;
+      await api(`/agent-memory/${agentId}/${blockId}`,"DELETE");
+      await loadMemoryBlocks();showToast("Deleted!");
+    }
+
     async function refreshData(){
       try{
         [agentProfiles,mcpServers,instructions,plugins]=await Promise.all([
@@ -548,7 +673,7 @@
           api("/agent-instructions"),
           api("/plugins")
         ]);
-        renderAgents();renderMcp();renderInstructions();renderPlugins();
+        renderAgents();renderMcp();renderInstructions();renderPlugins();populateMemoryAgentSelect();
       }catch(e){console.error("Refresh error:",e)}
     }
 
@@ -559,6 +684,7 @@
     document.getElementById("mcpModal").addEventListener("click",e=>{if(e.target===document.getElementById("mcpModal"))closeMcpModal()});
     document.getElementById("instructionModal").addEventListener("click",e=>{if(e.target===document.getElementById("instructionModal"))closeInstructionModal()});
     document.getElementById("pluginModal").addEventListener("click",e=>{if(e.target===document.getElementById("pluginModal"))closePluginModal()});
+    document.getElementById("memoryModal").addEventListener("click",e=>{if(e.target===document.getElementById("memoryModal"))closeMemoryModal()});
 
     async function loadVersion() {
       try {

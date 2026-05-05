@@ -539,6 +539,10 @@
             <button class="btn btn-primary" onclick="postComment('${t.id}')">Send</button>
           </div>
         </div>
+        <div class="section-block" style="margin-top:0.75rem;border-color:var(--purple)">
+          <h4>&#129504; Agent Memory</h4>
+          <div id="ticketMemoryList" style="max-height:250px;overflow-y:auto;font-size:0.8rem;color:var(--text2)">Loading...</div>
+        </div>
       `;
 
       const ft = document.getElementById("modalFooter");
@@ -557,6 +561,7 @@
       ft.innerHTML = ftHtml;
       document.getElementById("detailModal").classList.add("open");
       loadComments(t.id);
+      loadTicketMemory(t);
     }
 
     async function loadComments(ticketId) {
@@ -594,6 +599,28 @@
       await api(`/tickets/${ticketId}/comments`, "POST", { author: "user", content });
       input.value = "";
       await loadComments(ticketId);
+    }
+
+    async function loadTicketMemory(ticket) {
+      const el = document.getElementById("ticketMemoryList");
+      if (!el) return;
+      const agentId = ticket.agent_id;
+      if (!agentId) { el.innerHTML = '<div style="color:var(--muted)">No agent assigned yet</div>'; return; }
+      try {
+        const blocks = await api(`/agent-memory/${agentId}`);
+        if (!blocks.length) { el.innerHTML = '<div style="color:var(--muted)">No memory blocks — agent hasn\'t learned anything yet</div>'; return; }
+        el.innerHTML = blocks.map(b => {
+          const content = (b.content || "").substring(0, 200);
+          return `<div style="padding:0.5rem 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.2rem">
+              <span style="font-weight:600;color:var(--accent)">${b.label}</span>
+              <span style="font-size:0.65rem;color:var(--purple);background:var(--purple-glow,rgba(152,103,226,.12));padding:0.05rem 0.3rem;border-radius:3px">${b.repo_name}</span>
+            </div>
+            ${b.description ? `<div style="font-size:0.7rem;color:var(--muted);margin-bottom:0.15rem">${b.description}</div>` : ""}
+            <div style="font-family:&quot;SF Mono&quot;,&quot;Fira Code&quot;,monospace;font-size:0.75rem;white-space:pre-wrap;color:var(--text2)">${content}${(b.content||"").length > 200 ? "..." : ""}</div>
+          </div>`;
+        }).join("");
+      } catch(e) { el.innerHTML = '<div style="color:var(--muted)">Memory unavailable</div>'; }
     }
 
     function closeDetailModal() {

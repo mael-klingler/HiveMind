@@ -692,7 +692,7 @@ fi
 # ── Memory Sync-Back ──────────────────────────────────────────────
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/root/.config/opencode/memory" ]; then
   echo "📝 Syncing memory blocks back to orchestrator..."
-  SYNC_BODY=$(jq -n --arg dir "/root/.config/opencode/memory" --arg repo "" '{memory_dir: $dir, repo_name: $repo}')
+  SYNC_BODY=$(jq -n --arg dir "/root/.config/opencode/memory" --arg repo "_global" '{memory_dir: $dir, repo_name: $repo}')
   curl -sS -X POST \
     -H "Content-Type: application/json" \
     -d "$SYNC_BODY" \
