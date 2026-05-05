@@ -85,6 +85,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Health Checks ──────────────────────────────────────────────────
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+@app.get("/readyz")
+def readyz():
+    try:
+        get_db()
+        return {"status": "ok"}
+    except Exception:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content={"status": "not ready"})
+
 
 # ── Workspace Builder ──────────────────────────────────────────────
 
@@ -125,7 +140,7 @@ class WorkspaceBuilder:
             self._statuses = await self.git.aupdate_all(self.config.repositories)
             if self.config.leankg_enabled:
                 loop = asyncio.get_event_loop()
-                self._statuses = await loop.run_in_executor(None, self.leankg.index_all, self._statuses)
+                await loop.run_in_executor(None, self.leankg.index_all, self._statuses)
             self._init_done = True
 
     async def build_and_spawn(self, ticket):
@@ -1036,6 +1051,22 @@ async def sse_generator() -> AsyncGenerator[str, None]:
 
 # ── Agent Session Proxy ─────────────────────────────────────────────
 
+PROXY_PASSWORD = os.getenv("OPENCODE_SERVER_PASSWORD", "")
+
+
+def _verify_proxy_auth(request: Request) -> bool:
+    if not PROXY_PASSWORD:
+        return True
+    if request.query_params.get("password") == PROXY_PASSWORD:
+        return True
+    if request.cookies.get("opencode_password") == PROXY_PASSWORD:
+        return True
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer ") and auth_header[7:] == PROXY_PASSWORD:
+        return True
+    return False
+
+
 AGENT_SESSION_TIMEOUT = 30
 _agent_http_client: Optional[httpx.AsyncClient] = None
 
@@ -1098,6 +1129,8 @@ async def _proxy_request(ticket_id: str, path: str, request: Request) -> Respons
 
 @app.api_route("/agent-session/{ticket_id}/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 async def agent_session_proxy(ticket_id: str, path: str, request: Request):
+    if not _verify_proxy_auth(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
     return await _proxy_request(ticket_id, path, request)
 
 
@@ -1978,6 +2011,13 @@ def startup_event():
     asyncio.create_task(review_lifecycle_monitor())
     asyncio.create_task(agent_pod_monitor())
     print(f"🔑 GitLab Webhook Secret: {'enabled' if GITLAB_WEBHOOK_SECRET else 'disabled (insecure)'}")
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    global _running
+    _running = False
+    print("🛑 Graceful shutdown: stopping queue processor")
 
 
 if __name__ == "__main__":
