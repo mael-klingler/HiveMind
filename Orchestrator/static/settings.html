@@ -226,6 +226,11 @@
             <div class="help">Basis-URL des GitLab-Servers</div>
           </div>
           <div class="form-row">
+            <label>GIT_USER</label>
+            <input id="git_user" placeholder="gitlab-ci-token">
+            <div class="help">Git-Benutzername fuer Clone-Authentifizierung (z.B. oauth2, gitlab-ci-token, username)</div>
+          </div>
+          <div class="form-row">
             <label>GITLAB_TOKEN</label>
             <div class="input-with-toggle">
               <input id="gitlab_token" type="password" placeholder="glpat-xxx">
@@ -244,6 +249,11 @@
               <input id="ssh_key_path" placeholder="/root/.ssh/id_rsa">
               <div class="help">Pfad zum SSH-Key im Container</div>
             </div>
+          </div>
+          <div class="form-row">
+            <label>DEFAULT_BRANCH</label>
+            <input id="default_branch" placeholder="main">
+            <div class="help">Standard-Branch fuer neue Repositories</div>
           </div>
         </div>
       </div>
@@ -387,7 +397,7 @@
 
     async function saveSettings() {
       const keys = [
-        "gitlab_host", "gitlab_token", "gitlab_ssh_key_base64", "ssh_key_path",
+        "gitlab_host", "git_user", "gitlab_token", "gitlab_ssh_key_base64", "ssh_key_path", "default_branch",
         "opencode_model", "opencode_port",
         "ollama_host", "ollama_base_url", "ollama_model", "ollama_timeout", "ollama_cloud_api_key",
         "agent_image", "agent_retry_delay", "agent_max_retries", "max_agents", "dry_run"

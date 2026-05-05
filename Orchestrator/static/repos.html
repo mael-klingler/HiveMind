@@ -283,7 +283,7 @@
         </div>
         <div class="form-group">
           <label>Branch</label>
-          <input id="repoBranch" placeholder="development" value="development">
+          <input id="repoBranch" placeholder="main" value="main">
         </div>
         <div class="form-group">
           <label>Tags (kommagetrennt)</label>
@@ -301,10 +301,54 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="editRepoModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Repository bearbeiten</h3>
+        <button class="modal-close" onclick="closeEditRepoModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Name</label>
+          <input id="editRepoName" disabled style="opacity:0.5">
+        </div>
+        <div class="form-group">
+          <label>URL</label>
+          <input id="editRepoUrl" placeholder="https://gitlab.example.com/group/repo.git">
+        </div>
+        <div class="form-group">
+          <label>Branch</label>
+          <input id="editRepoBranch" placeholder="main">
+        </div>
+        <div class="form-group">
+          <label>Tags (kommagetrennt)</label>
+          <input id="editRepoTags" placeholder="backend, api, service">
+        </div>
+        <div class="form-group">
+          <label>Beschreibung</label>
+          <textarea id="editRepoDesc" rows="2" placeholder="Kurze Beschreibung" style="resize:vertical"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeEditRepoModal()">Abbrechen</button>
+        <button class="btn btn-primary" onclick="saveEditRepo()">Speichern</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script>
     let repos = [];
+    let defaultBranch = "main";
+
+    async function loadDefaultBranch() {
+      try {
+        const settings = await fetch("/api/settings").then(r => r.json());
+        const s = settings.find(x => x.key === "default_branch");
+        if (s && s.value) defaultBranch = s.value;
+      } catch(e) {}
+    }
 
     async function api(path, method="GET", body=null) {
       const opts = { method };
@@ -331,14 +375,15 @@
       }
       el.innerHTML = repos.map(r => {
         const tags = (r.tags || []).map(t => `<span class="repo-tag">${t}</span>`).join("");
-        const branch = r.branch || "development";
+        const branch = r.branch || "main";
         return `<div class="repo-card">
           <div class="repo-card-top">
             <div>
               <span class="repo-name">${r.name}</span>
-              <span class="repo-branch">${branch}</span>
+              <span class="repo-branch" style="cursor:pointer" onclick="editBranch('${r.name}','${branch}')" title="Branch bearbeiten">${branch}</span>
             </div>
             <div class="repo-actions">
+              <button class="btn btn-secondary btn-sm" onclick="openEditRepoModal('${r.name}')">Bearbeiten</button>
               <button class="btn btn-danger btn-sm" onclick="deleteRepo('${r.name}')">Entfernen</button>
             </div>
           </div>
@@ -353,7 +398,7 @@
       document.getElementById("addRepoModal").classList.add("open");
       document.getElementById("repoName").value = "";
       document.getElementById("repoUrl").value = "";
-      document.getElementById("repoBranch").value = "development";
+      document.getElementById("repoBranch").value = defaultBranch;
       document.getElementById("repoTags").value = "";
       document.getElementById("repoDesc").value = "";
     }
@@ -369,7 +414,7 @@
       const data = {
         name,
         url,
-        branch: document.getElementById("repoBranch").value.trim() || "development",
+        branch: document.getElementById("repoBranch").value.trim() || defaultBranch,
         tags: document.getElementById("repoTags").value.split(",").map(s => s.trim()).filter(Boolean),
         description: document.getElementById("repoDesc").value.trim(),
       };
@@ -392,6 +437,50 @@
       } catch(e) {
         showToast("Fehler: " + e.message, true);
       }
+    }
+
+    function openEditRepoModal(name) {
+      const repo = repos.find(r => r.name === name);
+      if (!repo) return;
+      document.getElementById("editRepoModal").classList.add("open");
+      document.getElementById("editRepoName").value = repo.name;
+      document.getElementById("editRepoUrl").value = repo.url || "";
+      document.getElementById("editRepoBranch").value = repo.branch || defaultBranch;
+      document.getElementById("editRepoTags").value = (repo.tags || []).join(", ");
+      document.getElementById("editRepoDesc").value = repo.description || "";
+    }
+    function closeEditRepoModal() { document.getElementById("editRepoModal").classList.remove("open"); }
+    document.getElementById("editRepoModal").addEventListener("click", e => {
+      if (e.target === document.getElementById("editRepoModal")) closeEditRepoModal();
+    });
+
+    async function saveEditRepo() {
+      const name = document.getElementById("editRepoName").value.trim();
+      const data = {};
+      const url = document.getElementById("editRepoUrl").value.trim();
+      const branch = document.getElementById("editRepoBranch").value.trim();
+      const tags = document.getElementById("editRepoTags").value.split(",").map(s => s.trim()).filter(Boolean);
+      const description = document.getElementById("editRepoDesc").value.trim();
+      if (url) data.url = url;
+      if (branch) data.branch = branch;
+      data.tags = tags;
+      data.description = description;
+      try {
+        await api(`/repos/${encodeURIComponent(name)}`, "PUT", data);
+        closeEditRepoModal();
+        showToast("Repository aktualisiert!");
+        await loadRepos();
+      } catch(e) {
+        showToast("Fehler: " + e.message, true);
+      }
+    }
+
+    function editBranch(name, currentBranch) {
+      const newBranch = prompt(`Branch fuer "${name}" aendern:`, currentBranch);
+      if (newBranch === null || newBranch.trim() === currentBranch) return;
+      api(`/repos/${encodeURIComponent(name)}`, "PUT", { branch: newBranch.trim() })
+        .then(() => { showToast("Branch aktualisiert"); loadRepos(); })
+        .catch(e => showToast("Fehler: " + e.message, true));
     }
 
     function showToast(msg, isError=false) {
@@ -439,6 +528,7 @@
       }
     }
 
+    loadDefaultBranch();
     loadRepos();
     connectSSE();
     updateTicketBadge();

@@ -56,7 +56,7 @@ from database import (
     get_agent_memory_blocks, set_agent_memory_block, get_agent_memory_as_markdown,
     delete_agent_memory_block, seed_default_memory_blocks,
     get_all_repos, get_repo, add_repo as db_add_repo, delete_repo as db_delete_repo,
-    import_repos_from_config,
+    update_repo as db_update_repo, import_repos_from_config,
     stop_ticket,
 )
 
@@ -1633,7 +1633,7 @@ async def api_add_repo(req: Request):
     if not name or not url:
         raise HTTPException(status_code=400, detail="name and url are required")
 
-    branch.*"main"
+    branch = data.get("branch") or (get_setting("default_branch") or "main")
     tags = data.get("tags", [])
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
@@ -1662,6 +1662,28 @@ def api_delete_repo(name: str):
     _worker = None
 
     return {"ok": True, "deleted": name}
+
+
+@app.put("/api/repos/{name}")
+async def api_update_repo(name: str, req: Request):
+    if not get_repo(name):
+        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+    data = await req.json()
+    fields = {}
+    for key in ("url", "branch", "description", "tags"):
+        if key in data:
+            if key == "tags" and isinstance(data[key], str):
+                fields[key] = [t.strip() for t in data[key].split(",") if t.strip()]
+            else:
+                fields[key] = data[key]
+    ok = db_update_repo(name, **fields)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to update repository")
+
+    global _worker
+    _worker = None
+
+    return {"ok": True, "name": name}
 
 
 @app.post("/api/repos/init-from-gitlab")

@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from database import set_ticket_ai_planning, get_enabled_mcp_servers, get_enabled_agent_instructions, get_agent_mcp_servers, get_agent_assigned_instructions, get_enabled_plugin_names, get_agent_memory_as_markdown
+from database import set_ticket_ai_planning, get_enabled_mcp_servers, get_enabled_agent_instructions, get_agent_mcp_servers, get_agent_assigned_instructions, get_enabled_plugin_names, get_agent_memory_as_markdown, get_setting
 
 # ── .env Loader ────────────────────────────────────────────────────
 
@@ -224,11 +224,10 @@ class RepoManager:
             status.exists = True
         else:
             url = config.url
-            if url.startswith("https://") and "gitlab" in url and "gitlab-ci-token:" not in url:
-                token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
-                if token:
-                    host_part = url.split("//")[1].split("/")[0]
-                    url = f"https://gitlab-ci-token:{token}@{url.split('//')[1]}"
+            token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+            if re.match(r"^https?://", url) and token and "@" not in url.split("://")[1].split("/")[0]:
+                git_user = get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token")
+                url = re.sub(r"^(https?://)", rf"\1{git_user}:{token}@", url)
             rc, out, err = self._run("git", "clone", "--depth=100", "-b", str(branch), url, str(repo_dir))
             if rc != 0 and "not found in upstream" in err:
                 fallback_branch = self.default_branch
@@ -425,15 +424,30 @@ class OllamaClient:
 # ── Helper: Git Credentials ──────────────────────────────────────
 
 def configure_git_credentials():
+    from database import get_all_repos, get_setting as _gs
     token = os.getenv("GITLAB_TOKEN") or os.getenv("GIT_TOKEN") or ""
-    host = os.getenv("GITLAB_HOST", "gitlab.example.com")
+    git_user = _gs("git_user") or os.getenv("GIT_USER", "gitlab-ci-token")
+    hosts = set()
+    default_host = os.getenv("GITLAB_HOST", "gitlab.example.com")
+    if default_host:
+        hosts.add(default_host)
+    try:
+        repos = get_all_repos()
+        for r in repos:
+            url = r.get("url", "") if isinstance(r, dict) else getattr(r, "url", "")
+            if url and "://" in url:
+                host = url.split("://")[1].split("/")[0].split(":")[0]
+                hosts.add(host)
+    except Exception:
+        pass
     git_dir = Path.home() / ".git-credentials"
-    if token and host:
-        git_dir.write_text(f"https://gitlab-ci-token:{token}@{host}\n", encoding="utf-8")
+    if token and hosts:
+        lines = [f"https://{git_user}:{token}@{h}\n" for h in sorted(hosts)]
+        git_dir.write_text("".join(lines), encoding="utf-8")
         subprocess.run(["git", "config", "--global", "credential.helper", "store"], check=False)
         subprocess.run(["git", "config", "--global", "user.email", "hivemind-agents@example.com"], check=False)
         subprocess.run(["git", "config", "--global", "user.name", "HiveMind"], check=False)
-        log.ok(f"Git-Credentials fuer {host} gesetzt")
+        log.ok(f"Git-Credentials fuer {', '.join(sorted(hosts))} gesetzt")
     else:
         log.warn("GITLAB_TOKEN nicht gesetzt – ggf. Clone-Fehler")
 
@@ -444,6 +458,8 @@ def create_opencode_config(workspace_dir: Path, ticket: Ticket, selected: List[R
                            analysis: Dict, assignment_md: str):
     """Erzeugt .opencode/opencode.json fuer den Agent."""
 
+    git_user = get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token")
+    git_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
     repo_list = []
     for r in selected:
         remote = r.url or f"https://{os.getenv('GITLAB_HOST', 'gitlab.example.com')}/{r.name}.git"
@@ -654,10 +670,17 @@ stringData:
     return True
 
 
+def _sanitize_yaml_value(val: str) -> str:
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', str(val))
+
+
 def spawn_agent_pod(ticket: Ticket, selected: List[RepoConfig], assignment_md: str, analysis: Dict):
     pod_name = f"agent-worker-{ticket.id.lower()}"
     repos_json = json.dumps({r.name: {"url": r.url, "branch": r.branch} for r in selected}, indent=2, ensure_ascii=False)
     escaped_assignment = assignment_md.replace("\\", "\\\\").replace('"', '\\"')
+    GIT_USER = _sanitize_yaml_value(get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token"))
+    GITLAB_HOST_SAFE = _sanitize_yaml_value(get_setting("git_host") or os.getenv("GITLAB_HOST", "gitlab.example.com"))
+    GITLAB_TOKEN_SAFE = _sanitize_yaml_value(get_setting("git_token") or GITLAB_TOKEN)
 
     log.step("Agent-Pod erzeugen")
 
@@ -685,6 +708,7 @@ data:
 {chr(10).join('    ' + line for line in repos_json.splitlines())}
 """
     repos_path = Path("/tmp/agent-cm-repos.yaml")
+    repos_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', repos_cm_yaml)
     repos_path.write_text(repos_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {repos_path}")
     if rc != 0:
@@ -705,6 +729,7 @@ data:
 {chr(10).join('    ' + line for line in assignment_md.splitlines())}
 """
     assignment_path = Path("/tmp/agent-cm-assignment.yaml")
+    assignment_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', assignment_cm_yaml)
     assignment_path.write_text(assignment_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {assignment_path}")
     if rc != 0:
@@ -723,7 +748,7 @@ data:
     mcp_entries = {}
     for srv in mcp_servers:
         cmd = srv.get("command", "").split()
-        entry = {"type": srv.get("server_type", "local"), "command": cmd}
+        entry = {"type": srv.get("server_type", "local"), "command": cmd, "enabled": True}
         args_raw = srv.get("args", "[]")
         if isinstance(args_raw, str):
             try:
@@ -737,13 +762,44 @@ data:
             try:
                 env_dict = json.loads(env_raw)
                 if env_dict:
-                    entry["env"] = env_dict
+                    entry["environment"] = env_dict
             except (json.JSONDecodeError, TypeError):
                 pass
         mcp_entries[srv["name"]] = entry
 
     plugin_names = get_enabled_plugin_names()
     plugin_json = json.dumps(plugin_names)
+
+    mcp_servers_json = json.dumps(mcp_entries) if mcp_entries else "{}"
+
+    opencode_config = {
+        "$schema": "https://opencode.ai/config.json",
+        "model": f"ollama/{OPENCODE_MODEL}",
+        "small_model": f"ollama/{OPENCODE_MODEL}",
+        "autoupdate": False,
+        "share": "disabled",
+        "plugin": plugin_names,
+        "provider": {
+            "ollama": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama",
+                "options": {
+                    "baseURL": OLLAMA_BASE_URL
+                },
+                "models": {
+                    OPENCODE_MODEL: {
+                        "name": OPENCODE_MODEL,
+                        "options": {
+                            "num_ctx": 32768
+                        }
+                    }
+                }
+            }
+        },
+        "mcp": mcp_entries if mcp_entries else {}
+    }
+    opencode_json_str = json.dumps(opencode_config, indent=2, ensure_ascii=False)
+    opencode_indented = chr(10).join("    " + line for line in opencode_json_str.splitlines())
 
     opencode_cm_yaml = f"""apiVersion: v1
 kind: ConfigMap
@@ -754,39 +810,10 @@ metadata:
     ticket-id: "{ticket.id}"
 data:
   opencode.json: |
-    {{
-      "$schema": "https://opencode.ai/config.json",
-      "model": "ollama/{OPENCODE_MODEL}",
-      "small_model": "ollama/{OPENCODE_MODEL}",
-      "autoupdate": false,
-      "share": "disabled",
-      "plugin": {plugin_json},
-      "provider": {{
-        "ollama": {{
-          "npm": "@ai-sdk/openai-compatible",
-          "name": "Ollama",
-          "options": {{
-            "baseURL": "{OLLAMA_BASE_URL}"
-          }},
-          "models": {{
-            "{OPENCODE_MODEL}": {{
-              "name": "{OPENCODE_MODEL}",
-              "options": {{
-                "num_ctx": 32768
-              }}
-            }}
-          }}
-        }}
-      }},
-      "mcp": {{
-        "servers": {{
-          "enabled": true{chr(44).join(f''',
-          "{name}": {json.dumps(entry)}''' for name, entry in mcp_entries.items())}
-        }}
-      }}
-    }}
+{opencode_indented}
 """
     opencode_path = Path("/tmp/agent-cm-opencode.yaml")
+    opencode_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', opencode_cm_yaml)
     opencode_path.write_text(opencode_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {opencode_path}")
     if rc != 0:
@@ -839,6 +866,7 @@ data:
 {chr(10).join('    ' + line for line in memory_md.splitlines())}
 """
     memory_path = Path("/tmp/agent-cm-memory.yaml")
+    memory_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', memory_cm_yaml)
     memory_path.write_text(memory_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {memory_path}")
     if rc != 0:
@@ -897,9 +925,11 @@ spec:
           mountPath: /config
       env:
         - name: GITLAB_HOST
-          value: "{GITLAB_HOST}"
+          value: "{GITLAB_HOST_SAFE}"
         - name: GITLAB_TOKEN
-          value: "{GITLAB_TOKEN}"
+          value: "{GITLAB_TOKEN_SAFE}"
+        - name: GIT_USER
+          value: "{GIT_USER}"
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -907,18 +937,18 @@ spec:
           for repo in $(jq -r 'keys[]' /config/repos.json); do
             url=$(jq -r --arg r "$repo" '.[$r].url' /config/repos.json)
             branch=$(jq -r --arg r "$repo" '.[$r].branch' /config/repos.json)
-            if echo "$url" | grep -q "^https://"; then
-              url=$(echo "$url" | sed "s|https://|https://gitlab-ci-token:{GITLAB_TOKEN}@|")
+            if echo "$url" | grep -qE "^https?://"; then
+              url=$(echo "$url" | sed -E "s|^(https?://)|\\1${{GIT_USER}}:${{GITLAB_TOKEN}}@|")
             fi
-            echo "⬇️  Klone $repo (Branch: $branch) ..."
+            echo "Cloning $repo (Branch: $branch) ..."
             git clone -b "$branch" --single-branch "$url" "/workspace/$repo"
-            echo "📦 leankg init $repo ..."
+            echo "Init leankg $repo ..."
             cd "/workspace/$repo"
             leankg init
-            echo "🔍 leankg index $repo ..."
+            echo "Index leankg $repo ..."
             leankg index .
           done
-          echo "✅ Alle Repos verarbeitet:"
+          echo "All repos processed"
 
   containers:
     - name: opencode-agent
@@ -935,9 +965,13 @@ spec:
           mountPath: /mnt/memory-blocks
       env:
         - name: GITLAB_TOKEN
-          value: "{GITLAB_TOKEN}"
+          value: "{GITLAB_TOKEN_SAFE}"
         - name: GITLAB_HOST
-          value: "{GITLAB_HOST}"
+          value: "{GITLAB_HOST_SAFE}"
+        - name: GIT_USER
+          value: "{GIT_USER}"
+        - name: GITLAB_USER
+          value: "{GIT_USER}"
         - name: OLLAMA_BASE_URL
           value: "{OLLAMA_BASE_URL}"
         - name: OPENCODE_MODEL
@@ -962,7 +996,9 @@ spec:
         - name: AGENT_ID
           value: "{agent_id or ''}"
         - name: OPENCODE_SERVER_PASSWORD
-          value: "{os.getenv('OPENCODE_SERVER_PASSWORD', 'swarm')}"
+          value: "{os.getenv('OPENCODE_SERVER_PASSWORD', 'changeme')}"
+        - name: COMMENT_POLL_INTERVAL
+          value: "{os.getenv('COMMENT_POLL_INTERVAL', '30')}"
       ports:
         - name: opencode
           containerPort: 4096
@@ -976,7 +1012,16 @@ spec:
 """
 
     pod_path = Path("/tmp/agent-pod.yaml")
-    pod_path.write_text(pod_yaml, encoding="utf-8")
+    pod_yaml_clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', pod_yaml)
+    pod_path.write_text(pod_yaml_clean, encoding="utf-8")
+
+    # Delete existing pod if it exists (spec changes are not allowed)
+    rc_del, _, _ = _kubectl(f"delete pod {pod_name} -n {AGENT_NAMESPACE} --force --grace-period=0 2>/dev/null")
+    if rc_del == 0:
+        log.info(f"Bestehenden Pod {pod_name} gelöscht, erstelle neuen...")
+        import time
+        time.sleep(2)
+
     rc, out, err = _kubectl(f"apply -f {pod_path}")
     if rc != 0:
         raise RuntimeError(f"Agent-Pod konnte nicht gestartet werden: {err}")

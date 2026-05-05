@@ -9,19 +9,7 @@ metadata:
 data:
   repos.json: |
     {
-      "web-app": "git@gitlab.com:swarm/web-app.git",
-      "ui-components": "git@gitlab.com:swarm/ui-components.git",
-      "api-gateway": "git@gitlab.com:swarm/api-gateway.git",
-      "core-service": "git@gitlab.com:swarm/core-service.git",
-      "mobile-app": "git@gitlab.com:swarm/mobile-app.git",
-      "observability": "git@gitlab.com:swarm/observability.git",
-      "auth-service": "git@gitlab.com:swarm/auth-service.git",
-      "payment-service": "git@gitlab.com:swarm/payment-service.git",
-      "notification-service": "git@gitlab.com:swarm/notification-service.git",
-      "infra-terraform": "git@gitlab.com:swarm/infra-terraform.git",
-      "infra-k8s": "git@gitlab.com:swarm/infra-k8s.git",
-      "infra-pipelines": "git@gitlab.com:swarm/infra-pipelines.git",
-      "infra-db": "git@gitlab.com:swarm/infra-db.git",
-      "mobile-app-android": "git@gitlab.com:swarm/mobile-app-android.git",
-      "mobile-app-ios": "git@gitlab.com:swarm/mobile-app-ios.git"
+      "auth-service": "git@gitlab.example.com:myorg/services/auth.git",
+      "api-gateway": "git@gitlab.example.com:myorg/services/gateway.git",
+      "frontend": "git@gitlab.example.com:myorg/frontend.git"
     }

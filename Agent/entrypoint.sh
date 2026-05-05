@@ -2,8 +2,10 @@
 set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
+COMMENT_POLL_INTERVAL="${COMMENT_POLL_INTERVAL:-30}"
 GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN muss gesetzt sein}"
 GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST muss gesetzt sein}"
+GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
 
 TASK_FILE="${1:-}"
 
@@ -283,12 +285,24 @@ done
 
 # ── Phase 1: Run opencode in primary repo ────────────────────────────────
 PRIMARY_REPO=""
-for dir in /workspace/*/; do
-  if [ -d "$dir/.git" ]; then
-    PRIMARY_REPO="${dir%/}"
-    break
-  fi
-done
+if [ -f /mnt/opencode-config/opencode.json ]; then
+  PRIMARY_REPO=$(jq -r '.repositories[] | select(.primary == true) | .name' /mnt/opencode-config/opencode.json 2>/dev/null | head -1 || true)
+fi
+if [ -n "$PRIMARY_REPO" ] && [ -d "/workspace/$PRIMARY_REPO/.git" ]; then
+  PRIMARY_REPO="/workspace/$PRIMARY_REPO"
+  echo "📂 Primaeres Repository aus Config: $PRIMARY_REPO"
+elif [ -n "$PRIMARY_REPO" ]; then
+  echo "⚠️  Primaeres Repository '$PRIMARY_REPO' nicht in /workspace gefunden, suche Fallback..."
+  PRIMARY_REPO=""
+fi
+if [ -z "$PRIMARY_REPO" ]; then
+  for dir in /workspace/*/; do
+    if [ -d "$dir/.git" ]; then
+      PRIMARY_REPO="${dir%/}"
+      break
+    fi
+  done
+fi
 if [ -z "$PRIMARY_REPO" ]; then
   echo "❌ Kein Git-Repository in /workspace gefunden"
   exit 1
@@ -321,7 +335,6 @@ inject_git_credentials() {
   done
 }
 
-GITLAB_USER="hivemind"
 echo "https://${GITLAB_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}" > /root/.git-credentials
 chmod 600 /root/.git-credentials
 
@@ -332,8 +345,11 @@ TASK_PROMPT="$(cat "$TASK_FILE")"
 # ── Fortschritts-Reporting an Orchestrator ──────────────────────────
 post_progress() {
   local content="$1"
-  local comment_type="${2:-progress}"
+  local comment_type="${2:-system}"
   if [ -z "${ORCHESTRATOR_URL:-}" ] || [ -z "${TICKET_ID:-}" ]; then
+    return
+  fi
+  if [ "$comment_type" = "progress" ]; then
     return
   fi
   local timestamp
@@ -351,38 +367,6 @@ post_progress() {
     >/dev/null 2>&1 || true
 }
 
-LAST_PROGRESS_FILE="/tmp/.last_progress_md5"
-PROGRESS_INTERVAL=30
-last_progress_time=0
-
-should_post_progress() {
-  local now
-  now=$(date +%s)
-  if [ $((now - last_progress_time)) -ge $PROGRESS_INTERVAL ]; then
-    last_progress_time=$now
-    return 0
-  fi
-  return 1
-}
-
-post_todos_if_changed() {
-  local todo_file="$1"
-  if [ ! -f "$todo_file" ]; then return; fi
-  local current_md5
-  current_md5=$(md5sum "$todo_file" | cut -d' ' -f1)
-  local last_md5=""
-  if [ -f "$LAST_PROGRESS_FILE" ]; then
-    last_md5=$(cat "$LAST_PROGRESS_FILE")
-  fi
-  if [ "$current_md5" != "$last_md5" ]; then
-    echo "$current_md5" > "$LAST_PROGRESS_FILE"
-    local todos
-    todos=$(cat "$todo_file")
-    post_progress "# Todos\n$todos" "progress"
-  fi
-}
-
-# Monitor opencode output for progress
 PROGRESS_FIFO="/tmp/opencode_progress_fifo"
 mkfifo "$PROGRESS_FIFO" 2>/dev/null || true
 
@@ -390,7 +374,6 @@ progress_monitor() {
   local todo_buffer=""
   local in_todos=false
   while IFS= read -r line; do
-    # Detect todo-style lines: [ ] or [x] or - [ ] or - [x]
     if echo "$line" | grep -qE '^\s*[-*]?\s*\[[ x]\]'; then
       if ! $in_todos; then
         in_todos=true
@@ -400,33 +383,12 @@ progress_monitor() {
     else
       if $in_todos && [ -n "$todo_buffer" ]; then
         in_todos=false
-        local tmp_file="/tmp/current_todos.txt"
-        echo "$todo_buffer" > "$tmp_file"
-        if should_post_progress; then
-          post_todos_if_changed "$tmp_file"
-        fi
-      fi
-    fi
-
-    # Detect significant tool calls for milestone reporting
-    if echo "$line" | grep -qiE '(writing|editing|creating|committing|pushing)'; then
-      if should_post_progress; then
-        post_progress "$line" "progress"
       fi
     fi
   done
-  # Final flush
-  if $in_todos && [ -n "$todo_buffer" ]; then
-    local tmp_file="/tmp/current_todos.txt"
-    echo "$todo_buffer" > "$tmp_file"
-    post_todos_if_changed "$tmp_file"
-  fi
 }
 
 post_progress "Agent startet — Ticket ${TICKET_ID}: ${TICKET_TITLE}" "system"
-
-# OPENCODE_SERVER_PASSWORD causes "Session not found" error in opencode run
-# Save it for opencode web later, then unset for opencode run
 OPENCODE_WEB_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
 
 echo "🤖 Starte opencode run..."
@@ -451,7 +413,7 @@ if [ -n "${ORCHESTRATOR_URL:-}" ]; then
     ${OPENCODE_WEB_PASSWORD:+--password "$OPENCODE_WEB_PASSWORD"} \
     --title "[${TICKET_ID}] ${TICKET_TITLE}" \
     --dangerously-skip-permissions \
-    "$TASK_PROMPT" 2>&1 | tee "$PROGRESS_FIFO" | progress_monitor &
+    "$TASK_PROMPT" 2>&1 | progress_monitor &
   MONITOR_PID=$!
 else
   opencode run \
@@ -463,21 +425,11 @@ else
   MONITOR_PID=$!
 fi
 
-# Wait briefly for opencode log to appear, then tail it
+# Wait briefly for opencode to start
 sleep 5
-OPENCODE_LOG_DIR="/root/.local/share/opencode/log"
-OPENCODE_LOG=$(ls -t "$OPENCODE_LOG_DIR"/*.log 2>/dev/null | head -1)
-if [ -n "$OPENCODE_LOG" ]; then
-  tail -f "$OPENCODE_LOG" 2>/dev/null &
-  TAIL_PID=$!
-fi
 
 wait $MONITOR_PID 2>/dev/null || true
 OPENCODE_EXIT=$?
-
-if [ -n "${TAIL_PID:-}" ]; then
-  kill "$TAIL_PID" 2>/dev/null || true
-fi
 
 if [ "$OPENCODE_EXIT" -ne 0 ]; then
   echo "❌ opencode run fehlgeschlagen (Exit: $OPENCODE_EXIT)"

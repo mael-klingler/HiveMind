@@ -336,7 +336,32 @@ def get_repo(name: str) -> Optional[Dict]:
     }
 
 
-def add_repo(name: str, url: str, branch: str = "main", description: str = "", tags: list = None) -> bool:
+def update_repo(name: str, **fields) -> bool:
+    conn = get_db()
+    c = conn.cursor()
+    allowed = {"url", "branch", "description", "tags"}
+    updates = {}
+    for k, v in fields.items():
+        if k in allowed:
+            if k == "tags":
+                v = json.dumps(v if v else [])
+            updates[k] = v
+    if not updates:
+        conn.close()
+        return False
+    now = datetime.now().isoformat()
+    updates["updated_at"] = now
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    c.execute(f"UPDATE repos SET {set_clause} WHERE name = ?", (*updates.values(), name))
+    ok = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def add_repo(name: str, url: str, branch: str = "", description: str = "", tags: list = None) -> bool:
+    if not branch:
+        branch = get_setting("default_branch") or "main"
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
@@ -378,7 +403,7 @@ def import_repos_from_config(config_path: str):
         add_repo(
             name=name,
             url=repo.get("url", ""),
-            branch.*"main"),
+            branch=repo.get("branch", "main"),
             description=repo.get("description", ""),
             tags=repo.get("tags", []),
         )
@@ -771,7 +796,7 @@ def ensure_config_defaults():
         "max_agents": os.getenv("MAX_AGENTS", "3"),
         "polling_interval_seconds": os.getenv("POLLING_INTERVAL_SECONDS", "5"),
         "git_host": os.getenv("GITLAB_HOST", "gitlab.example.com"),
-        "git_user": "gitlab-ci-token",
+        "git_user": os.getenv("GIT_USER", "gitlab-ci-token"),
         "git_token": os.getenv("GITLAB_TOKEN", ""),
         "ollama_host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
         "ollama_model": os.getenv("OLLAMA_MODEL", "glm-5.1:cloud"),
