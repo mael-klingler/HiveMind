@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -69,11 +69,9 @@
     .sidebar-link.active { background: var(--accent-glow); color: var(--accent); }
     .sidebar-link .icon { font-size: 1.1rem; width: 22px; text-align: center; }
     .sidebar-link .badge-sidebar {
-      margin-left: auto;
-      background: var(--accent); color: #fff;
-      font-size: 0.65rem; font-weight: 700;
-      padding: 0.1rem 0.45rem; border-radius: 10px;
-      min-width: 20px; text-align: center;
+      margin-left: auto; background: var(--accent); color: #fff;
+      font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.45rem;
+      border-radius: 10px; min-width: 20px; text-align: center;
     }
     .sidebar-footer {
       padding: 1rem 1.5rem 0;
@@ -287,13 +285,13 @@
           <span class="icon">&#128193;</span> Repositories
         </a>
         <a href="/settings" class="sidebar-link">
-          <span class="icon">&#9881;</span> Einstellungen
+          <span class="icon">&#9881;</span> Settings
         </a>
       </nav>
       <div class="sidebar-footer">
         <small style="color:var(--muted);font-size:0.7rem">
           <span class="status-dot" id="connStatus"></span>
-          <span id="connLabel">Verbunden</span>
+          <span id="connLabel">Connected</span>
         </small>
       </div>
     </aside>
@@ -302,35 +300,35 @@
       <div class="page-header">
         <h2>Kanban Board</h2>
         <div class="page-header-actions">
-          <input type="text" class="search-box" id="searchInput" placeholder="Suche nach ID, Titel, Label...">
-          <button class="btn btn-primary" onclick="openNewTicketModal()">+ Neues Ticket</button>
+          <input type="text" class="search-box" id="searchInput" placeholder="Search by ID, title, label...">
+          <button class="btn btn-primary" onclick="openNewTicketModal()">+ New Ticket</button>
         </div>
       </div>
 
       <div class="kanban" id="kanban">
         <div class="kanban-col col-queued">
           <div class="kanban-col-header">Queued <span class="col-count" id="count-queued">0</span></div>
-          <div class="kanban-col-body" id="col-queued"><div class="placeholder-col">Keine Tickets</div></div>
+          <div class="kanban-col-body" id="col-queued"><div class="placeholder-col">No tickets</div></div>
         </div>
         <div class="kanban-col col-running">
           <div class="kanban-col-header">Running <span class="col-count" id="count-running">0</span></div>
-          <div class="kanban-col-body" id="col-running"><div class="placeholder-col">Keine Tickets</div></div>
+          <div class="kanban-col-body" id="col-running"><div class="placeholder-col">No tickets</div></div>
         </div>
         <div class="kanban-col col-review">
           <div class="kanban-col-header">Review <span class="col-count" id="count-review">0</span></div>
-          <div class="kanban-col-body" id="col-review"><div class="placeholder-col">Keine Tickets</div></div>
+          <div class="kanban-col-body" id="col-review"><div class="placeholder-col">No tickets</div></div>
         </div>
         <div class="kanban-col col-completed">
           <div class="kanban-col-header">Completed <span class="col-count" id="count-completed">0</span></div>
-          <div class="kanban-col-body" id="col-completed"><div class="placeholder-col">Keine Tickets</div></div>
+          <div class="kanban-col-body" id="col-completed"><div class="placeholder-col">No tickets</div></div>
         </div>
         <div class="kanban-col col-failed">
           <div class="kanban-col-header">Failed <span class="col-count" id="count-failed">0</span></div>
-          <div class="kanban-col-body" id="col-failed"><div class="placeholder-col">Keine Tickets</div></div>
+          <div class="kanban-col-body" id="col-failed"><div class="placeholder-col">No tickets</div></div>
         </div>
         <div class="kanban-col col-stopped">
           <div class="kanban-col-header">Stopped <span class="col-count" id="count-stopped">0</span></div>
-          <div class="kanban-col-body" id="col-stopped"><div class="placeholder-col">Keine Tickets</div></div>
+          <div class="kanban-col-body" id="col-stopped"><div class="placeholder-col">No tickets</div></div>
         </div>
       </div>
     </main>
@@ -350,7 +348,7 @@
   <div class="modal-overlay" id="newModal">
     <div class="modal">
       <div class="modal-header">
-        <h3>Neues Ticket</h3>
+        <h3>New Ticket</h3>
         <button class="modal-close" onclick="closeNewModal()">&times;</button>
       </div>
       <div class="modal-body">
@@ -360,23 +358,23 @@
             <input id="newTicketId" placeholder="PROJ-123" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem">
           </div>
           <div style="margin-bottom:0.75rem">
-            <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Titel</label>
-            <input id="newTicketTitle" placeholder="Login-Button" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem">
+            <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Title</label>
+            <input id="newTicketTitle" placeholder="Login button" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem">
           </div>
         </div>
         <div style="margin-bottom:0.75rem">
-          <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Beschreibung</label>
+          <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Description</label>
           <textarea id="newTicketDesc" rows="3" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem;font-family:inherit"></textarea>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
           <div style="margin-bottom:0.75rem">
-            <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Typ</label>
+            <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Type</label>
             <select id="newTicketType" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem">
               <option>Task</option><option>Bug</option><option>Feature</option>
             </select>
           </div>
           <div style="margin-bottom:0.75rem">
-            <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Prioritaet</label>
+            <label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Priority</label>
             <select id="newTicketPriority" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);margin-top:0.2rem">
               <option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option>
             </select>
@@ -388,8 +386,8 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeNewModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="createTicket()">Erstellen</button>
+        <button class="btn btn-secondary" onclick="closeNewModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createTicket()">Create</button>
       </div>
     </div>
   </div>
@@ -413,7 +411,7 @@
       const now = new Date();
       const d = new Date(dateStr);
       const diff = Math.floor((now - d) / 1000);
-      if (diff < 60) return "gerade eben";
+      if (diff < 60) return "just now";
       if (diff < 3600) return Math.floor(diff / 60) + "m ago";
       if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
       return Math.floor(diff / 86400) + "d ago";
@@ -484,7 +482,7 @@
         const countEl = document.getElementById("count-" + col);
         countEl.textContent = tickets.length;
         if (!tickets.length) {
-          el.innerHTML = `<div class="placeholder-col">Keine Tickets</div>`;
+          el.innerHTML = `<div class="placeholder-col">No tickets</div>`;
         } else {
           el.innerHTML = tickets.map(renderCard).join("");
         }
@@ -507,38 +505,38 @@
       document.getElementById("modalBody").innerHTML = `
         <div class="detail-grid">
           <div class="detail-field"><label>Status</label><span class="badge badge-priority-${({queued:"medium",running:"high",completed:"low",merged:"low",failed:"critical"})[t.status] || "medium"}">${t.status}</span></div>
-          <div class="detail-field"><label>Prioritaet</label>${priorityBadge(t.priority)}</div>
-          <div class="detail-field"><label>Typ</label><div class="val">${t.issue_type || "Task"}</div></div>
-          <div class="detail-field"><label>Erstellt</label><div class="val">${new Date(t.created_at).toLocaleString()}</div></div>
+          <div class="detail-field"><label>Priority</label>${priorityBadge(t.priority)}</div>
+          <div class="detail-field"><label>Type</label><div class="val">${t.issue_type || "Task"}</div></div>
+          <div class="detail-field"><label>Created</label><div class="val">${new Date(t.created_at).toLocaleString()}</div></div>
         </div>
         <div class="detail-field"><label>Labels</label><div class="val">${labels.join(", ") || "—"}</div></div>
-        <div class="detail-field"><label>Beschreibung</label><div class="val" style="color:var(--text2);white-space:pre-wrap">${t.description || "—"}</div></div>
+        <div class="detail-field"><label>Description</label><div class="val" style="color:var(--text2);white-space:pre-wrap">${t.description || "—"}</div></div>
         ${t.mr_url ? `<div class="section-block green"><h4>Merge Request</h4><a href="${t.mr_url}" target="_blank" style="font-size:0.8rem">${t.mr_url}</a>${pipelineBadge(t.mr_pipeline_status)}</div>` : ""}
-        ${t.ai_planning ? (() => { try { const p = typeof t.ai_planning === "string" ? JSON.parse(t.ai_planning) : t.ai_planning; const cx = p.complexity === "High" ? "critical" : p.complexity === "Medium" ? "high" : "low"; return `<div class="section-block accent"><h4>KI-Analyse</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem"><div class="detail-field"><label>Primaeres Repo</label><div class="val" style="color:var(--accent)">${p.primary_repo || "—"}</div></div><div class="detail-field"><label>Komplexitaet</label><span class="badge badge-priority-${cx}">${p.complexity}</span></div><div class="detail-field"><label>Ausgewaehlte Repos</label><div class="val">${(p.selected_repos||[]).join(", ") || "—"}</div></div><div class="detail-field"><label>Geschaetzte Zeit</label><div class="val">~${p.estimated_hours || "?"}h</div></div></div>${p.reasoning ? `<div style="margin-top:0.5rem"><label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Begruendung</label><div class="notes-box">${p.reasoning}</div></div>` : ""}</div>`; } catch(e) { return ""; } })() : ""}
-        ${t.review_notes ? `<div class="detail-field" style="margin-top:0.5rem"><label>Review-Notizen</label><div class="notes-box">${t.review_notes}</div></div>` : ""}
-        ${t.retry_count > 0 ? `<div class="detail-field" style="margin-top:0.5rem"><label>Retry-Verlauf</label><div class="val" style="color:var(--yellow)">${t.retry_count}x zurueckgewiesen</div></div>` : ""}
+        ${t.ai_planning ? (() => { try { const p = typeof t.ai_planning === "string" ? JSON.parse(t.ai_planning) : t.ai_planning; const cx = p.complexity === "High" ? "critical" : p.complexity === "Medium" ? "high" : "low"; return `<div class="section-block accent"><h4>AI Analysis</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem"><div class="detail-field"><label>Primary Repo</label><div class="val" style="color:var(--accent)">${p.primary_repo || "—"}</div></div><div class="detail-field"><label>Complexity</label><span class="badge badge-priority-${cx}">${p.complexity}</span></div><div class="detail-field"><label>Selected Repos</label><div class="val">${(p.selected_repos||[]).join(", ") || "—"}</div></div><div class="detail-field"><label>Estimated Time</label><div class="val">~${p.estimated_hours || "?"}h</div></div></div>${p.reasoning ? `<div style="margin-top:0.5rem"><label style="font-size:0.68rem;font-weight:600;color:var(--muted);text-transform:uppercase">Reasoning</label><div class="notes-box">${p.reasoning}</div></div>` : ""}</div>`; } catch(e) { return ""; } })() : ""}
+        ${t.review_notes ? `<div class="detail-field" style="margin-top:0.5rem"><label>Review Notes</label><div class="notes-box">${t.review_notes}</div></div>` : ""}
+        ${t.retry_count > 0 ? `<div class="detail-field" style="margin-top:0.5rem"><label>Retry History</label><div class="val" style="color:var(--yellow)">${t.retry_count}x rejected</div></div>` : ""}
         <div class="section-block" style="margin-top:0.75rem">
-          <h4>&#128172; Kommentare</h4>
-          <div id="commentsList" style="max-height:300px;overflow-y:auto">Lade...</div>
+          <h4>&#128172; Comments</h4>
+          <div id="commentsList" style="max-height:300px;overflow-y:auto">Loading...</div>
           <div style="margin-top:0.75rem;display:flex;gap:0.5rem">
-            <input id="newComment" placeholder="Kommentar schreiben..." style="flex:1;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.8rem;font-family:inherit;outline:none" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-light)'">
-            <button class="btn btn-primary" onclick="postComment('${t.id}')">Senden</button>
+            <input id="newComment" placeholder="Write a comment..." style="flex:1;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.8rem;font-family:inherit;outline:none" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-light)'">
+            <button class="btn btn-primary" onclick="postComment('${t.id}')">Send</button>
           </div>
         </div>
       `;
 
       const ft = document.getElementById("modalFooter");
-      let ftHtml = `<button class="btn btn-secondary" onclick="closeDetailModal()">Schliessen</button>`;
+      let ftHtml = `<button class="btn btn-secondary" onclick="closeDetailModal()">Close</button>`;
       if (t.status === "running" || t.status === "queued") {
-        ftHtml += ` <button class="btn btn-danger" onclick="stopTicket('${t.id}')">&#9724; Stoppen</button>`;
+        ftHtml += ` <button class="btn btn-danger" onclick="stopTicket('${t.id}')">&#9724; Stop</button>`;
         ftHtml += ` <button class="btn btn-primary" onclick="loadLiveLogs('${t.id}')">&#128210; Live Logs</button>`;
         ftHtml += ` <a href="/agent-session/${t.id}/" target="_blank" class="btn btn-primary" style="text-decoration:none;display:inline-flex;align-items:center;gap:0.3rem">&#127760; Agent Session</a>`;
       }
       if (t.status === "completed" || t.mr_status === "open") {
-        ftHtml = `<div style="flex:1"><input id="reviewNotes" placeholder="Review-Notizen (optional)" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.45rem;border-radius:var(--radius-sm);font-size:0.8rem"></div><button class="btn btn-danger" onclick="reviewTicket('${t.id}','changes_requested')">Changes Requested</button><button class="btn btn-success" onclick="reviewTicket('${t.id}','approved')">Approve</button>`;
+        ftHtml = `<div style="flex:1"><input id="reviewNotes" placeholder="Review notes (optional)" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.45rem;border-radius:var(--radius-sm);font-size:0.8rem"></div><button class="btn btn-danger" onclick="reviewTicket('${t.id}','changes_requested')">Changes Requested</button><button class="btn btn-success" onclick="reviewTicket('${t.id}','approved')">Approve</button>`;
       }
       if (t.status === "completed" || t.status === "failed" || t.status === "merged" || t.status === "stopped") {
-        ftHtml += ` <button class="btn btn-primary" onclick="reopenTicket('${t.id}')">&#128260; Wiedereroeffnen</button>`;
+        ftHtml += ` <button class="btn btn-primary" onclick="reopenTicket('${t.id}')">&#128260; Reopen</button>`;
       }
       ft.innerHTML = ftHtml;
       document.getElementById("detailModal").classList.add("open");
@@ -551,14 +549,14 @@
       try {
         const comments = await api(`/tickets/${ticketId}/comments`);
         if (!comments.length) {
-          el.innerHTML = '<div style="color:var(--muted2);font-size:0.8rem;padding:0.5rem 0">Noch keine Kommentare</div>';
+          el.innerHTML = '<div style="color:var(--muted2);font-size:0.8rem;padding:0.5rem 0">No comments yet</div>';
           return;
         }
         el.innerHTML = comments.map(c => {
-          const time = c.created_at ? new Date(c.created_at).toLocaleString("de-DE", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
+          const time = c.created_at ? new Date(c.created_at).toLocaleString("en-US", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
           const typeIcon = c.comment_type === "mr_created" ? "&#128279;" : c.comment_type === "summary" ? "&#9989;" : c.comment_type === "system" ? "&#9881;" : "&#128172;";
           const typeBadge = c.comment_type === "mr_created" ? '<span style="background:var(--green-glow);color:var(--green);padding:0.05rem 0.35rem;border-radius:4px;font-size:0.6rem;font-weight:600">MR</span>' :
-                            c.comment_type === "summary" ? '<span style="background:var(--accent-glow);color:var(--accent);padding:0.05rem 0.35rem;border-radius:4px;font-size:0.6rem;font-weight:600">Abschluss</span>' :
+                            c.comment_type === "summary" ? '<span style="background:var(--accent-glow);color:var(--accent);padding:0.05rem 0.35rem;border-radius:4px;font-size:0.6rem;font-weight:600">Summary</span>' :
                             c.comment_type === "system" ? '<span style="background:rgba(255,255,255,0.05);color:var(--muted);padding:0.05rem 0.35rem;border-radius:4px;font-size:0.6rem">System</span>' : '';
           return `<div style="padding:0.5rem 0;border-bottom:1px solid var(--border)">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.2rem">
@@ -569,7 +567,7 @@
           </div>`;
         }).join("");
       } catch(e) {
-        el.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Fehler beim Laden</div>';
+        el.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Error loading</div>';
       }
     }
 
@@ -598,20 +596,20 @@
     }
 
     async function reopenTicket(ticketId) {
-      if (!confirm("Ticket wirklich wiedereroeffnen?")) return;
+      if (!confirm("Really reopen this ticket?")) return;
       await api(`/tickets/${ticketId}/reopen`, "POST");
       closeDetailModal();
       await loadTickets();
     }
 
     async function stopTicket(ticketId) {
-      if (!confirm("Ticket wirklich stoppen? Der laufende Agent wird beendet.")) return;
+      if (!confirm("Really stop this ticket? The running agent will be terminated.")) return;
       try {
         await api(`/tickets/${ticketId}/stop`, "POST");
         closeDetailModal();
-        toast("Ticket gestoppt");
+        toast("Ticket stopped");
         await loadTickets();
-      } catch(e) { toast("Fehler: " + e.message, true); }
+      } catch(e) { toast("Error: " + e.message, true); }
     }
 
     function openNewTicketModal() { document.getElementById("newModal").classList.add("open"); }
@@ -623,7 +621,7 @@
     async function createTicket() {
       const id = document.getElementById("newTicketId").value || "TASK-" + Date.now();
       const title = document.getElementById("newTicketTitle").value;
-      if (!title) { alert("Bitte einen Titel eingeben"); return; }
+      if (!title) { alert("Please enter a title"); return; }
       await api("/tickets", "POST", {
         id, title,
         description: document.getElementById("newTicketDesc").value,
@@ -635,7 +633,7 @@
       document.getElementById("newTicketId").value = "";
       document.getElementById("newTicketTitle").value = "";
       document.getElementById("newTicketDesc").value = "";
-      showToast("Ticket erstellt!");
+      showToast("Ticket created!");
       await loadTickets();
     }
 
@@ -656,11 +654,11 @@
       es = new EventSource("/api/stream");
       es.onopen = () => {
         document.getElementById("connStatus").classList.remove("offline");
-        document.getElementById("connLabel").textContent = "Verbunden";
+        document.getElementById("connLabel").textContent = "Connected";
       };
       es.onerror = () => {
         document.getElementById("connStatus").classList.add("offline");
-        document.getElementById("connLabel").textContent = "Verbindung verloren";
+        document.getElementById("connLabel").textContent = "Connection lost";
         es.close();
         setTimeout(connectSSE, 5000);
       };
@@ -676,18 +674,18 @@
         const box = document.createElement("div");
         box.id = "liveLogBox";
         box.style.marginTop = "0.75rem";
-        box.innerHTML = `<div class="log-toolbar"><label>&#128210; Agent Logs</label><span id="logStatus" style="font-size:0.65rem;color:var(--muted);margin-left:auto">laden...</span><button class="btn" style="font-size:0.65rem;padding:0.2rem 0.5rem" onclick="closeLiveLogs()">&#10005;</button><button class="btn" style="font-size:0.65rem;padding:0.2rem 0.5rem" onclick="refreshLiveLogs('${ticketId}')">&#128260;</button></div><div class="log-box" id="logContent">Lade Logs...</div>`;
+        box.innerHTML = `<div class="log-toolbar"><label>&#128210; Agent Logs</label><span id="logStatus" style="font-size:0.65rem;color:var(--muted);margin-left:auto">loading...</span><button class="btn" style="font-size:0.65rem;padding:0.2rem 0.5rem" onclick="closeLiveLogs()">&#10005;</button><button class="btn" style="font-size:0.65rem;padding:0.2rem 0.5rem" onclick="refreshLiveLogs('${ticketId}')">&#128260;</button></div><div class="log-box" id="logContent">Loading logs...</div>`;
         document.getElementById("modalBody").appendChild(box);
       }
       try {
         const data = await api(`/tickets/${ticketId}/logs?tail=150`);
         const lc = document.getElementById("logContent");
-        if (lc) { lc.textContent = data.logs || "(keine Logs)"; document.getElementById("logStatus").textContent = data.status === "ok" ? data.pod : data.status; }
+        if (lc) { lc.textContent = data.logs || "(no logs)"; document.getElementById("logStatus").textContent = data.status === "ok" ? data.pod : data.status; }
         const lb = document.getElementById("logContent");
         if (lb) lb.scrollTop = lb.scrollHeight;
       } catch(e) {
         const lc = document.getElementById("logContent");
-        if (lc) lc.textContent = "Fehler: " + e.message;
+        if (lc) lc.textContent = "Error: " + e.message;
       }
     }
     function closeLiveLogs() {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -232,13 +232,13 @@
           <span class="icon">&#128193;</span> Repositories
         </a>
         <a href="/settings" class="sidebar-link">
-          <span class="icon">&#9881;</span> Einstellungen
+          <span class="icon">&#9881;</span> Settings
         </a>
       </nav>
       <div class="sidebar-footer">
         <small style="color:var(--muted);font-size:0.7rem">
           <span class="status-dot" id="connStatus"></span>
-          <span id="connLabel">Verbunden</span>
+          <span id="connLabel">Connected</span>
         </small>
       </div>
     </aside>
@@ -247,18 +247,18 @@
       <div class="page-header">
         <h2>Repositories</h2>
         <div style="display:flex;gap:0.5rem">
-          <button class="btn btn-secondary" onclick="initFromGitlab()">&#128270; Von GitLab importieren</button>
-          <button class="btn btn-primary" onclick="openAddRepoModal()">+ Repository hinzufuegen</button>
+          <button class="btn btn-secondary" onclick="initFromGitlab()">&#128270; Import from GitLab</button>
+          <button class="btn btn-primary" onclick="openAddRepoModal()">+ Add Repository</button>
         </div>
       </div>
 
       <div class="panel">
         <div class="panel-header">
-          <h3>Konfigurierte Repositories</h3>
-          <button class="btn btn-secondary btn-sm" onclick="loadRepos()">&#128260; Aktualisieren</button>
+          <h3>Configured Repositories</h3>
+          <button class="btn btn-secondary btn-sm" onclick="loadRepos()">&#128260; Refresh</button>
         </div>
         <div class="panel-body" id="reposList">
-          <div class="placeholder">Lade Repositories...</div>
+          <div class="placeholder">Loading repositories...</div>
         </div>
       </div>
     </main>
@@ -267,36 +267,36 @@
   <div class="modal-overlay" id="addRepoModal">
     <div class="modal">
       <div class="modal-header">
-        <h3>Repository hinzufuegen</h3>
+        <h3>Add Repository</h3>
         <button class="modal-close" onclick="closeAddRepoModal()">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
           <label>Name</label>
           <input id="repoName" placeholder="auth">
-          <div class="help">Eindeutiger Name fuer das Repository</div>
+          <div class="help">Unique name for the repository</div>
         </div>
         <div class="form-group">
           <label>URL</label>
           <input id="repoUrl" placeholder="https://YOUR_GITLAB_HOST/group/repo.git">
-          <div class="help">Git-Clone-URL (HTTPS)</div>
+          <div class="help">Git clone URL (HTTPS)</div>
         </div>
         <div class="form-group">
           <label>Branch</label>
           <input id="repoBranch" placeholder="main" value="main">
         </div>
         <div class="form-group">
-          <label>Tags (kommagetrennt)</label>
+          <label>Tags (comma-separated)</label>
           <input id="repoTags" placeholder="backend, api, service">
         </div>
         <div class="form-group">
-          <label>Beschreibung</label>
-          <textarea id="repoDesc" rows="2" placeholder="Kurze Beschreibung des Repositories" style="resize:vertical"></textarea>
+          <label>Description</label>
+          <textarea id="repoDesc" rows="2" placeholder="Short description of the repository" style="resize:vertical"></textarea>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeAddRepoModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="addRepo()">Hinzufuegen</button>
+        <button class="btn btn-secondary" onclick="closeAddRepoModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="addRepo()">Add</button>
       </div>
     </div>
   </div>
@@ -304,7 +304,7 @@
   <div class="modal-overlay" id="editRepoModal">
     <div class="modal">
       <div class="modal-header">
-        <h3>Repository bearbeiten</h3>
+        <h3>Edit Repository</h3>
         <button class="modal-close" onclick="closeEditRepoModal()">&times;</button>
       </div>
       <div class="modal-body">
@@ -321,17 +321,17 @@
           <input id="editRepoBranch" placeholder="main">
         </div>
         <div class="form-group">
-          <label>Tags (kommagetrennt)</label>
+          <label>Tags (comma-separated)</label>
           <input id="editRepoTags" placeholder="backend, api, service">
         </div>
         <div class="form-group">
-          <label>Beschreibung</label>
-          <textarea id="editRepoDesc" rows="2" placeholder="Kurze Beschreibung" style="resize:vertical"></textarea>
+          <label>Description</label>
+          <textarea id="editRepoDesc" rows="2" placeholder="Short description" style="resize:vertical"></textarea>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeEditRepoModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="saveEditRepo()">Speichern</button>
+        <button class="btn btn-secondary" onclick="closeEditRepoModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditRepo()">Save</button>
       </div>
     </div>
   </div>
@@ -363,14 +363,14 @@
         repos = await api("/repos");
         renderRepos();
       } catch(e) {
-        document.getElementById("reposList").innerHTML = `<div class="placeholder">Fehler: ${e.message}</div>`;
+        document.getElementById("reposList").innerHTML = `<div class="placeholder">Error: ${e.message}</div>`;
       }
     }
 
     function renderRepos() {
       const el = document.getElementById("reposList");
       if (!repos.length) {
-        el.innerHTML = `<div class="placeholder">Keine Repositories konfiguriert</div>`;
+        el.innerHTML = `<div class="placeholder">No repositories configured</div>`;
         return;
       }
       el.innerHTML = repos.map(r => {
@@ -380,11 +380,11 @@
           <div class="repo-card-top">
             <div>
               <span class="repo-name">${r.name}</span>
-              <span class="repo-branch" style="cursor:pointer" onclick="editBranch('${r.name}','${branch}')" title="Branch bearbeiten">${branch}</span>
+              <span class="repo-branch" style="cursor:pointer" onclick="editBranch('${r.name}','${branch}')" title="Edit branch">${branch}</span>
             </div>
             <div class="repo-actions">
-              <button class="btn btn-secondary btn-sm" onclick="openEditRepoModal('${r.name}')">Bearbeiten</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteRepo('${r.name}')">Entfernen</button>
+              <button class="btn btn-secondary btn-sm" onclick="openEditRepoModal('${r.name}')">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteRepo('${r.name}')">Remove</button>
             </div>
           </div>
           <div class="repo-url">${r.url}</div>
@@ -410,7 +410,7 @@
     async function addRepo() {
       const name = document.getElementById("repoName").value.trim();
       const url = document.getElementById("repoUrl").value.trim();
-      if (!name || !url) { showToast("Name und URL sind Pflichtfelder", true); return; }
+      if (!name || !url) { showToast("Name and URL are required", true); return; }
       const data = {
         name,
         url,
@@ -421,21 +421,21 @@
       try {
         await api("/repos", "POST", data);
         closeAddRepoModal();
-        showToast("Repository hinzugefuegt!");
+        showToast("Repository added!");
         await loadRepos();
       } catch(e) {
-        showToast("Fehler: " + e.message, true);
+        showToast("Error: " + e.message, true);
       }
     }
 
     async function deleteRepo(name) {
-      if (!confirm(`Repository "${name}" wirklich entfernen?`)) return;
+      if (!confirm(`Really remove repository "${name}"?`)) return;
       try {
         await api(`/repos/${encodeURIComponent(name)}`, "DELETE");
-        showToast("Repository entfernt");
+        showToast("Repository removed");
         await loadRepos();
       } catch(e) {
-        showToast("Fehler: " + e.message, true);
+        showToast("Error: " + e.message, true);
       }
     }
 
@@ -468,19 +468,19 @@
       try {
         await api(`/repos/${encodeURIComponent(name)}`, "PUT", data);
         closeEditRepoModal();
-        showToast("Repository aktualisiert!");
+        showToast("Repository updated!");
         await loadRepos();
       } catch(e) {
-        showToast("Fehler: " + e.message, true);
+        showToast("Error: " + e.message, true);
       }
     }
 
     function editBranch(name, currentBranch) {
-      const newBranch = prompt(`Branch fuer "${name}" aendern:`, currentBranch);
+      const newBranch = prompt(`Change branch for "${name}":`, currentBranch);
       if (newBranch === null || newBranch.trim() === currentBranch) return;
       api(`/repos/${encodeURIComponent(name)}`, "PUT", { branch: newBranch.trim() })
-        .then(() => { showToast("Branch aktualisiert"); loadRepos(); })
-        .catch(e => showToast("Fehler: " + e.message, true));
+        .then(() => { showToast("Branch updated"); loadRepos(); })
+        .catch(e => showToast("Error: " + e.message, true));
     }
 
     function showToast(msg, isError=false) {
@@ -496,11 +496,11 @@
       es = new EventSource("/api/stream");
       es.onopen = () => {
         document.getElementById("connStatus").classList.remove("offline");
-        document.getElementById("connLabel").textContent = "Verbunden";
+        document.getElementById("connLabel").textContent = "Connected";
       };
       es.onerror = () => {
         document.getElementById("connStatus").classList.add("offline");
-        document.getElementById("connLabel").textContent = "Verbindung verloren";
+        document.getElementById("connLabel").textContent = "Connection lost";
         es.close();
         setTimeout(connectSSE, 5000);
       };
@@ -515,16 +515,16 @@
     }
 
     async function initFromGitlab() {
-      if (!confirm("Alle erreichbaren GitLab-Projekte importieren?\nKI generiert Tags und Beschreibungen.")) return;
-      showToast("Importiere von GitLab...");
+      if (!confirm("Import all accessible GitLab projects?\nAI will generate tags and descriptions.")) return;
+      showToast("Importing from GitLab...");
       try {
         const result = await api("/repos/init-from-gitlab", "POST", { use_ai: true });
-        const msg = `${result.added.length} Repos importiert` +
-          (result.skipped.length ? `, ${result.skipped.length} bereits vorhanden` : "");
+        const msg = `${result.added.length} repos imported` +
+          (result.skipped.length ? `, ${result.skipped.length} already exist` : "");
         showToast(msg);
         await loadRepos();
       } catch(e) {
-        showToast("Fehler: " + e.message, true);
+        showToast("Error: " + e.message, true);
       }
     }
 

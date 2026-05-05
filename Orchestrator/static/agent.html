@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -106,29 +106,29 @@
         <a href="/tickets" class="sidebar-link"><span class="icon">&#128195;</span> Kanban</a>
         <a href="/agent" class="sidebar-link active"><span class="icon">&#129302;</span> Agent</a>
         <a href="/repos" class="sidebar-link"><span class="icon">&#128193;</span> Repositories</a>
-        <a href="/settings" class="sidebar-link"><span class="icon">&#9881;</span> Einstellungen</a>
+        <a href="/settings" class="sidebar-link"><span class="icon">&#9881;</span> Settings</a>
       </nav>
-      <div class="sidebar-footer"><small><span class="status-dot" id="connStatus"></span><span id="connLabel">Verbunden</span></small></div>
+      <div class="sidebar-footer"><small><span class="status-dot" id="connStatus"></span><span id="connLabel">Connected</span></small></div>
     </aside>
     <main class="main">
-      <h1 class="page-title">&#129302; Agent-Konfiguration</h1>
+      <h1 class="page-title">&#129302; Agent Configuration</h1>
       <div class="tabs">
-        <div class="tab active" data-tab="agents">Agenten</div>
-        <div class="tab" data-tab="tools">MCP-Tools</div>
-        <div class="tab" data-tab="instructions">Anweisungen</div>
+        <div class="tab active" data-tab="agents">Agents</div>
+        <div class="tab" data-tab="tools">MCP Tools</div>
+        <div class="tab" data-tab="instructions">Instructions</div>
         <div class="tab" data-tab="plugins">Plugins</div>
-        <div class="tab" data-tab="model">Modell</div>
+        <div class="tab" data-tab="model">Model</div>
       </div>
 
       <!-- Tab: Agents -->
       <div class="tab-content active" id="tab-agents">
         <div class="panel">
           <div class="panel-header">
-            <h2>Agenten-Profilen</h2>
-            <button class="btn btn-primary btn-sm" onclick="openAgentModal()">+ Agent erstellen</button>
+            <h2>Agent Profiles</h2>
+            <button class="btn btn-primary btn-sm" onclick="openAgentModal()">+ Create Agent</button>
           </div>
           <div class="panel-body" id="agentList" style="padding:0">
-            <div class="placeholder">Lade Agenten...</div>
+            <div class="placeholder">Loading agents...</div>
           </div>
         </div>
       </div>
@@ -137,11 +137,11 @@
       <div class="tab-content" id="tab-tools">
         <div class="panel">
           <div class="panel-header">
-            <h2>MCP-Server (Tools & Skills)</h2>
-            <button class="btn btn-primary btn-sm" onclick="openMcpModal()">+ Hinzuf&uuml;gen</button>
+            <h2>MCP Servers (Tools & Skills)</h2>
+            <button class="btn btn-primary btn-sm" onclick="openMcpModal()">+ Add</button>
           </div>
           <div class="panel-body" id="mcpList" style="padding:0">
-            <div class="placeholder">Lade MCP-Server...</div>
+            <div class="placeholder">Loading MCP servers...</div>
           </div>
         </div>
       </div>
@@ -150,11 +150,11 @@
       <div class="tab-content" id="tab-instructions">
         <div class="panel">
           <div class="panel-header">
-            <h2>Agent-Anweisungen (AGENTS.md)</h2>
-            <button class="btn btn-primary btn-sm" onclick="openInstructionModal()">+ Hinzuf&uuml;gen</button>
+            <h2>Agent Instructions (AGENTS.md)</h2>
+            <button class="btn btn-primary btn-sm" onclick="openInstructionModal()">+ Add</button>
           </div>
           <div class="panel-body" id="instructionList" style="padding:0">
-            <div class="placeholder">Lade Anweisungen...</div>
+            <div class="placeholder">Loading instructions...</div>
           </div>
         </div>
       </div>
@@ -164,19 +164,19 @@
         <div class="panel">
           <div class="panel-header">
             <h2>OpenCode Plugins</h2>
-            <button class="btn btn-primary btn-sm" onclick="openPluginModal()">+ Hinzuf&uuml;gen</button>
+            <button class="btn btn-primary btn-sm" onclick="openPluginModal()">+ Add</button>
           </div>
           <div class="panel-body" id="pluginList" style="padding:0">
-            <div class="placeholder">Lade Plugins...</div>
+            <div class="placeholder">Loading plugins...</div>
           </div>
         </div>
         <div class="panel" style="margin-top:1rem">
-          <div class="panel-header"><h2>Plugin-Details</h2></div>
+          <div class="panel-header"><h2>Plugin Details</h2></div>
           <div class="panel-body" style="font-size:.85rem;color:var(--text2)">
             <table style="width:100%;border-collapse:collapse">
-              <tr style="border-bottom:1px solid var(--border)"><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-snip</td><td style="padding:.5rem">Komprimiert Shell-Output (60-97% Token-Ersparnis). Erfordert <code>snip</code> Binary im Agent-Image.</td></tr>
-              <tr style="border-bottom:1px solid var(--border)"><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-agent-memory</td><td style="padding:.5rem">Persistente Memory-Bloecke (Letta-inspiriert). Agent kann eigene Erinnerungen verwalten.</td></tr>
-              <tr><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-handoff</td><td style="padding:.5rem">Session-Handoff bei Retries. Generiert fokussierten Kontext fuer naechste Session.</td></tr>
+              <tr style="border-bottom:1px solid var(--border)"><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-snip</td><td style="padding:.5rem">Compresses shell output (60-97% token savings). Requires <code>snip</code> binary in the agent image.</td></tr>
+              <tr style="border-bottom:1px solid var(--border)"><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-agent-memory</td><td style="padding:.5rem">Persistent memory blocks (Letta-inspired). Agent can manage its own memories.</td></tr>
+              <tr><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-handoff</td><td style="padding:.5rem">Session handoff on retries. Generates focused context for the next session.</td></tr>
             </table>
           </div>
         </div>
@@ -185,7 +185,7 @@
       <!-- Tab: Model -->
       <div class="tab-content" id="tab-model">
         <div class="panel">
-          <div class="panel-header"><h2>Modell-Konfiguration</h2></div>
+          <div class="panel-header"><h2>Model Configuration</h2></div>
           <div class="panel-body">
             <div class="form-row-2">
               <div class="form-group"><label>OPENCODE_MODEL</label><input id="cfg-opencode-model" placeholder="glm-5.1:cloud"></div>
@@ -202,10 +202,10 @@
             <div class="form-row-2">
               <div class="form-group"><label>AGENT_IMAGE</label><input id="cfg-agent-image" placeholder="hivemind-opencode:0.1.37"></div>
               <div class="form-group"><label>DRY_RUN</label>
-                <select id="cfg-dry-run"><option value="false">Nein</option><option value="true">Ja</option></select>
+                <select id="cfg-dry-run"><option value="false">No</option><option value="true">Yes</option></select>
               </div>
             </div>
-            <div style="margin-top:1rem"><button class="btn btn-primary" onclick="saveModelSettings()">Speichern</button></div>
+            <div style="margin-top:1rem"><button class="btn btn-primary" onclick="saveModelSettings()">Save</button></div>
           </div>
         </div>
       </div>
@@ -215,26 +215,26 @@
   <!-- Agent Modal -->
   <div class="modal-overlay" id="agentModal">
     <div class="modal">
-      <div class="modal-header"><h3 id="agentModalTitle">Agent erstellen</h3><button class="modal-close" onclick="closeAgentModal()">&times;</button></div>
+      <div class="modal-header"><h3 id="agentModalTitle">Create Agent</h3><button class="modal-close" onclick="closeAgentModal()">&times;</button></div>
       <div class="modal-body">
         <div class="form-row-2">
-          <div class="form-group"><label>Agent-ID</label><input id="ag-id" placeholder="agent-4"></div>
+          <div class="form-group"><label>Agent ID</label><input id="ag-id" placeholder="agent-4"></div>
           <div class="form-group"><label>Name</label><input id="ag-name" placeholder="Frontend Specialist"></div>
         </div>
-        <div class="form-group"><label>Modell (optional, leer = Standard)</label><input id="ag-model" placeholder="glm-5.1:cloud"></div>
-        <div class="form-group"><label>MCP-Tools (Skills)</label>
-          <div class="checkbox-list" id="ag-skills-list"><div class="placeholder">Lade...</div></div>
+        <div class="form-group"><label>Model (optional, empty = default)</label><input id="ag-model" placeholder="glm-5.1:cloud"></div>
+        <div class="form-group"><label>MCP Tools (Skills)</label>
+          <div class="checkbox-list" id="ag-skills-list"><div class="placeholder">Loading...</div></div>
         </div>
-        <div class="form-group"><label>Anweisungen</label>
-          <div class="checkbox-list" id="ag-instrs-list"><div class="placeholder">Lade...</div></div>
+        <div class="form-group"><label>Instructions</label>
+          <div class="checkbox-list" id="ag-instrs-list"><div class="placeholder">Loading...</div></div>
         </div>
-        <div class="form-group"><label>Repo-Zuordnung (Affinitaet)</label>
-          <div class="checkbox-list" id="ag-repos-list"><div class="placeholder">Lade...</div></div>
+        <div class="form-group"><label>Repo Assignment (Affinity)</label>
+          <div class="checkbox-list" id="ag-repos-list"><div class="placeholder">Loading...</div></div>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeAgentModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="saveAgent()">Speichern</button>
+        <button class="btn btn-secondary" onclick="closeAgentModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveAgent()">Save</button>
       </div>
     </div>
   </div>
@@ -242,21 +242,21 @@
   <!-- MCP Modal -->
   <div class="modal-overlay" id="mcpModal">
     <div class="modal">
-      <div class="modal-header"><h3 id="mcpModalTitle">MCP-Server hinzuf&uuml;gen</h3><button class="modal-close" onclick="closeMcpModal()">&times;</button></div>
+      <div class="modal-header"><h3 id="mcpModalTitle">Add MCP Server</h3><button class="modal-close" onclick="closeMcpModal()">&times;</button></div>
       <div class="modal-body">
         <div class="form-group"><label>Name</label><input id="mcp-name" placeholder="my-tool"></div>
         <div class="form-row-2">
-          <div class="form-group"><label>Typ</label><select id="mcp-type"><option value="local">local</option><option value="remote">remote</option></select></div>
-          <div class="form-group"><label>Aktiviert</label><select id="mcp-enabled"><option value="1">Ja</option><option value="0">Nein</option></select></div>
+          <div class="form-group"><label>Type</label><select id="mcp-type"><option value="local">local</option><option value="remote">remote</option></select></div>
+          <div class="form-group"><label>Enabled</label><select id="mcp-enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
         </div>
         <div class="form-group"><label>Command</label><input id="mcp-command" placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp"></div>
-        <div class="form-group"><label>Args (JSON-Array, optional)</label><input id="mcp-args" placeholder='["--port", "3000"]'></div>
-        <div class="form-group"><label>Env (JSON-Object, optional)</label><input id="mcp-env" placeholder='{"API_KEY": "xxx"}'></div>
-        <div class="form-group"><label>Beschreibung</label><input id="mcp-desc" placeholder="Dateisystem-Zugriff"></div>
+        <div class="form-group"><label>Args (JSON array, optional)</label><input id="mcp-args" placeholder='["--port", "3000"]'></div>
+        <div class="form-group"><label>Env (JSON object, optional)</label><input id="mcp-env" placeholder='{"API_KEY": "xxx"}'></div>
+        <div class="form-group"><label>Description</label><input id="mcp-desc" placeholder="File system access"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeMcpModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="saveMcpServer()">Speichern</button>
+        <button class="btn btn-secondary" onclick="closeMcpModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveMcpServer()">Save</button>
       </div>
     </div>
   </div>
@@ -264,18 +264,18 @@
   <!-- Instruction Modal -->
   <div class="modal-overlay" id="instructionModal">
     <div class="modal">
-      <div class="modal-header"><h3 id="instrModalTitle">Anweisung hinzuf&uuml;gen</h3><button class="modal-close" onclick="closeInstructionModal()">&times;</button></div>
+      <div class="modal-header"><h3 id="instrModalTitle">Add Instruction</h3><button class="modal-close" onclick="closeInstructionModal()">&times;</button></div>
       <div class="modal-body">
         <div class="form-group"><label>Name</label><input id="instr-name" placeholder="Coding Conventions"></div>
-        <div class="form-group"><label>Inhalt (Markdown)</label><textarea id="instr-content" rows="8" placeholder="Verwende TypeScript strict mode..."></textarea></div>
+        <div class="form-group"><label>Content (Markdown)</label><textarea id="instr-content" rows="8" placeholder="Use TypeScript strict mode..."></textarea></div>
         <div class="form-row-2">
-          <div class="form-group"><label>Aktiviert</label><select id="instr-enabled"><option value="1">Ja</option><option value="0">Nein</option></select></div>
-          <div class="form-group"><label>Sortierung</label><input id="instr-order" type="number" value="0"></div>
+          <div class="form-group"><label>Enabled</label><select id="instr-enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
+          <div class="form-group"><label>Sort Order</label><input id="instr-order" type="number" value="0"></div>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeInstructionModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="saveInstruction()">Speichern</button>
+        <button class="btn btn-secondary" onclick="closeInstructionModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveInstruction()">Save</button>
       </div>
     </div>
   </div>
@@ -283,18 +283,18 @@
   <!-- Plugin Modal -->
   <div class="modal-overlay" id="pluginModal">
     <div class="modal">
-      <div class="modal-header"><h3 id="pluginModalTitle">Plugin hinzuf&uuml;gen</h3><button class="modal-close" onclick="closePluginModal()">&times;</button></div>
+      <div class="modal-header"><h3 id="pluginModalTitle">Add Plugin</h3><button class="modal-close" onclick="closePluginModal()">&times;</button></div>
       <div class="modal-body">
-        <div class="form-group"><label>Name (npm-Paket)</label><input id="plugin-name" placeholder="opencode-snip"></div>
-        <div class="form-group"><label>Beschreibung</label><input id="plugin-desc" placeholder="Shell-Output komprimieren"></div>
-        <div class="form-group"><label>Benötigt Binary (optional)</label><input id="plugin-binary" placeholder="snip"></div>
+        <div class="form-group"><label>Name (npm package)</label><input id="plugin-name" placeholder="opencode-snip"></div>
+        <div class="form-group"><label>Description</label><input id="plugin-desc" placeholder="Compress shell output"></div>
+        <div class="form-group"><label>Requires Binary (optional)</label><input id="plugin-binary" placeholder="snip"></div>
         <div class="form-row-2">
-          <div class="form-group"><label>Aktiviert</label><select id="plugin-enabled"><option value="1">Ja</option><option value="0">Nein</option></select></div>
+          <div class="form-group"><label>Enabled</label><select id="plugin-enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closePluginModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="savePlugin()">Speichern</button>
+        <button class="btn btn-secondary" onclick="closePluginModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="savePlugin()">Save</button>
       </div>
     </div>
   </div>
@@ -308,7 +308,7 @@
 
     function renderAgents(){
       const el=document.getElementById("agentList");
-      if(!agentProfiles.length){el.innerHTML='<div class="placeholder">Keine Agenten vorhanden</div>';return}
+      if(!agentProfiles.length){el.innerHTML='<div class="placeholder">No agents available</div>';return}
       el.innerHTML=agentProfiles.map(a=>{
         const statusClass=a.status==="running"?"tag-running":"tag-idle";
         const skillTags=(a.skills||[]).map(s=>`<span class="tag tag-skill">${s}</span>`).join("");
@@ -319,17 +319,17 @@
           <div class="agent-avatar">${a.name.charAt(0).toUpperCase()}</div>
           <div class="agent-details">
             <div class="agent-name">${a.name} <span class="tag ${statusClass}">${a.status}</span></div>
-            <div class="agent-model">ID: ${a.id}${a.model_name?" | Modell: "+a.model_name:" | Standard-Modell"}${a.current_ticket_id?" | Ticket: "+a.current_ticket_id:""}</div>
-            <div class="agent-skills">${allTags||'<span class="tag" style="background:var(--border);color:var(--muted)">Keine Skills zugewiesen</span>'}</div>
+            <div class="agent-model">ID: ${a.id}${a.model_name?" | Model: "+a.model_name:" | Default model"}${a.current_ticket_id?" | Ticket: "+a.current_ticket_id:""}</div>
+            <div class="agent-skills">${allTags||'<span class="tag" style="background:var(--border);color:var(--muted)">No skills assigned</span>'}</div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="editAgent('${a.id}')">Bearbeiten</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteAgent('${a.id}')">L&ouml;schen</button>
+          <button class="btn btn-secondary btn-sm" onclick="editAgent('${a.id}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteAgent('${a.id}')">Delete</button>
         </div>`}).join("");
     }
 
     function renderMcp(){
       const el=document.getElementById("mcpList");
-      if(!mcpServers.length){el.innerHTML='<div class="placeholder">Keine MCP-Server konfiguriert</div>';return}
+      if(!mcpServers.length){el.innerHTML='<div class="placeholder">No MCP servers configured</div>';return}
       el.innerHTML=mcpServers.map(s=>`<div class="mcp-item">
         <div class="mcp-info">
           <div class="mcp-name">${s.name}</div>
@@ -338,20 +338,20 @@
         </div>
         <span class="tag tag-${s.server_type||"local"}">${s.server_type||"local"}</span>
         <div class="toggle ${s.enabled?"on":""}" onclick="toggleMcp('${s.name}',${s.enabled?0:1})"></div>
-        <button class="btn btn-secondary btn-sm" onclick="editMcp('${s.name}')">Bearbeiten</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteMcp('${s.name}')">L&ouml;schen</button>
+        <button class="btn btn-secondary btn-sm" onclick="editMcp('${s.name}')">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteMcp('${s.name}')">Delete</button>
       </div>`).join("");
     }
 
     function renderInstructions(){
       const el=document.getElementById("instructionList");
-      if(!instructions.length){el.innerHTML='<div class="placeholder">Keine Anweisungen definiert</div>';return}
+      if(!instructions.length){el.innerHTML='<div class="placeholder">No instructions defined</div>';return}
       el.innerHTML=instructions.map(i=>`<div class="instruction-item">
         <div class="instruction-header">
           <span class="instruction-name">${i.name}</span>
           <div class="toggle ${i.enabled?"on":""}" onclick="toggleInstr(${i.id},${i.enabled?0:1})"></div>
-          <button class="btn btn-secondary btn-sm" onclick="editInstr(${i.id})">Bearbeiten</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteInstr(${i.id})">L&ouml;schen</button>
+          <button class="btn btn-secondary btn-sm" onclick="editInstr(${i.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteInstr(${i.id})">Delete</button>
         </div>
         <div class="instruction-content" onclick="this.classList.toggle('expanded')">${i.content.substring(0,200)}${i.content.length>200?"...":""}</div>
       </div>`).join("");
@@ -359,13 +359,13 @@
 
     function populateSkillCheckboxes(selected=[]){
       const el=document.getElementById("ag-skills-list");
-      if(!mcpServers.length){el.innerHTML='<div class="placeholder" style="padding:.5rem">Keine MCP-Server vorhanden</div>';return}
+      if(!mcpServers.length){el.innerHTML='<div class="placeholder" style="padding:.5rem">No MCP servers available</div>';return}
       el.innerHTML=mcpServers.map(s=>`<div class="checkbox-item"><input type="checkbox" value="${s.name}" ${selected.includes(s.name)?"checked":""}><span>${s.name}</span> <span style="color:var(--muted);font-size:.75rem">${s.description||""}</span></div>`).join("");
     }
 
     function populateInstrCheckboxes(selected=[]){
       const el=document.getElementById("ag-instrs-list");
-      if(!instructions.length){el.innerHTML='<div class="placeholder" style="padding:.5rem">Keine Anweisungen vorhanden</div>';return}
+      if(!instructions.length){el.innerHTML='<div class="placeholder" style="padding:.5rem">No instructions available</div>';return}
       el.innerHTML=instructions.map(i=>`<div class="checkbox-item"><input type="checkbox" value="${i.id}" ${selected.includes(i.id)?"checked":""}><span>${i.name}</span></div>`).join("");
     }
 
@@ -375,7 +375,7 @@
 
     function populateRepoCheckboxes(selected=[]){
       const el=document.getElementById("ag-repos-list");
-      if(!repoNames.length){el.innerHTML='<div class="placeholder" style="padding:.5rem">Keine Repos vorhanden</div>';return}
+      if(!repoNames.length){el.innerHTML='<div class="placeholder" style="padding:.5rem">No repos available</div>';return}
       el.innerHTML=repoNames.map(r=>`<div class="checkbox-item"><input type="checkbox" value="${r}" ${selected.includes(r)?"checked":""}><span>${r}</span></div>`).join("");
     }
 
@@ -386,7 +386,7 @@
       populateRepoCheckboxes();
       if(agentId){
         const a=agentProfiles.find(x=>x.id===agentId);if(!a)return;
-        document.getElementById("agentModalTitle").textContent="Agent bearbeiten";
+        document.getElementById("agentModalTitle").textContent="Edit Agent";
         document.getElementById("ag-id").value=a.id;
         document.getElementById("ag-id").disabled=true;
         document.getElementById("ag-name").value=a.name||"";
@@ -397,7 +397,7 @@
           populateRepoCheckboxes(a.repo_affinities||[]);
         },50);
       }else{
-        document.getElementById("agentModalTitle").textContent="Agent erstellen";
+        document.getElementById("agentModalTitle").textContent="Create Agent";
         document.getElementById("ag-id").value="";
         document.getElementById("ag-id").disabled=false;
         document.getElementById("ag-name").value="";
@@ -413,22 +413,22 @@
       const model=document.getElementById("ag-model").value.trim();
       const skills=getCheckedSkills();
       const instrIds=getCheckedInstrs();
-      if(!id){showToast("Agent-ID ist Pflicht");return}
+      if(!id){showToast("Agent ID is required");return}
       const data={id,name,model_name:model,skills,instruction_ids:instrIds};
       if(editingAgentId){
         await api(`/agent-profiles/${editingAgentId}`,"PATCH",data);
       }else{
         const res=await api("/agent-profiles","POST",data);
-        if(!res.ok){showToast(res.error||"Fehler");return}
+        if(!res.ok){showToast(res.error||"Error");return}
       }
-      closeAgentModal();await refreshData();showToast(editingAgentId?"Aktualisiert!":"Erstellt!");
+      closeAgentModal();await refreshData();showToast(editingAgentId?"Updated!":"Created!");
     }
 
     async function deleteAgent(agentId){
-      if(!confirm(`Agent "${agentId}" wirklich l\u00f6schen?`))return;
+      if(!confirm(`Really delete agent "${agentId}"?`))return;
       const res=await api(`/agent-profiles/${agentId}`,"DELETE");
-      if(!res.ok){showToast(res.error||"Fehler");return}
-      await refreshData();showToast("Gel\u00f6scht!");
+      if(!res.ok){showToast(res.error||"Error");return}
+      await refreshData();showToast("Deleted!");
     }
     function editAgent(id){openAgentModal(id)}
 
@@ -457,44 +457,44 @@
       const mr=document.getElementById("cfg-max-retries").value;if(mr)data.agent_max_retries=mr;
       const ai=document.getElementById("cfg-agent-image").value;if(ai)data.agent_image=ai;
       data.dry_run=document.getElementById("cfg-dry-run").value;
-      await api("/settings","POST",data);showToast("Gespeichert!");
+      await api("/settings","POST",data);showToast("Saved!");
     }
 
-    function openMcpModal(name=null){editingMcp=name;if(name){const s=mcpServers.find(x=>x.name===name);if(!s)return;document.getElementById("mcpModalTitle").textContent="MCP-Server bearbeiten";document.getElementById("mcp-name").value=s.name;document.getElementById("mcp-name").disabled=true;document.getElementById("mcp-type").value=s.server_type||"local";document.getElementById("mcp-enabled").value=s.enabled?"1":"0";document.getElementById("mcp-command").value=s.command||"";try{document.getElementById("mcp-args").value=JSON.stringify(JSON.parse(s.args||"[]"))}catch(e){document.getElementById("mcp-args").value=""}try{document.getElementById("mcp-env").value=JSON.stringify(JSON.parse(s.env||"{}"))}catch(e){document.getElementById("mcp-env").value=""}document.getElementById("mcp-desc").value=s.description||""}else{document.getElementById("mcpModalTitle").textContent="MCP-Server hinzuf\u00fcgen";document.getElementById("mcp-name").value="";document.getElementById("mcp-name").disabled=false;document.getElementById("mcp-type").value="local";document.getElementById("mcp-enabled").value="1";document.getElementById("mcp-command").value="";document.getElementById("mcp-args").value="";document.getElementById("mcp-env").value="";document.getElementById("mcp-desc").value=""}document.getElementById("mcpModal").classList.add("open")}
+    function openMcpModal(name=null){editingMcp=name;if(name){const s=mcpServers.find(x=>x.name===name);if(!s)return;document.getElementById("mcpModalTitle").textContent="Edit MCP Server";document.getElementById("mcp-name").value=s.name;document.getElementById("mcp-name").disabled=true;document.getElementById("mcp-type").value=s.server_type||"local";document.getElementById("mcp-enabled").value=s.enabled?"1":"0";document.getElementById("mcp-command").value=s.command||"";try{document.getElementById("mcp-args").value=JSON.stringify(JSON.parse(s.args||"[]"))}catch(e){document.getElementById("mcp-args").value=""}try{document.getElementById("mcp-env").value=JSON.stringify(JSON.parse(s.env||"{}"))}catch(e){document.getElementById("mcp-env").value=""}document.getElementById("mcp-desc").value=s.description||""}else{document.getElementById("mcpModalTitle").textContent="Add MCP Server";document.getElementById("mcp-name").value="";document.getElementById("mcp-name").disabled=false;document.getElementById("mcp-type").value="local";document.getElementById("mcp-enabled").value="1";document.getElementById("mcp-command").value="";document.getElementById("mcp-args").value="";document.getElementById("mcp-env").value="";document.getElementById("mcp-desc").value=""}document.getElementById("mcpModal").classList.add("open")}
     function closeMcpModal(){document.getElementById("mcpModal").classList.remove("open");document.getElementById("mcp-name").disabled=false}
 
     async function saveMcpServer(){
       const data={name:document.getElementById("mcp-name").value,server_type:document.getElementById("mcp-type").value,enabled:document.getElementById("mcp-enabled").value==="1",command:document.getElementById("mcp-command").value,description:document.getElementById("mcp-desc").value};
       const argsVal=document.getElementById("mcp-args").value.trim();if(argsVal)data.args=JSON.parse(argsVal);
       const envVal=document.getElementById("mcp-env").value.trim();if(envVal)data.env=JSON.parse(envVal);
-      if(!data.name){showToast("Name ist Pflicht");return}
+      if(!data.name){showToast("Name is required");return}
       if(editingMcp){await api(`/mcp-servers/${editingMcp}`,"PATCH",data)}else{await api("/mcp-servers","POST",data)}
-      closeMcpModal();await refreshData();showToast(editingMcp?"Aktualisiert!":"Hinzugef\u00fcgt!");
+      closeMcpModal();await refreshData();showToast(editingMcp?"Updated!":"Added!");
     }
 
     async function toggleMcp(name,val){await api(`/mcp-servers/${name}`,"PATCH",{enabled:val});await refreshData()}
 
-    async function deleteMcp(name){if(!confirm(`MCP-Server "${name}" wirklich l\u00f6schen?`))return;await api(`/mcp-servers/${name}`,"DELETE");await refreshData();showToast("Gel\u00f6scht!")}
+    async function deleteMcp(name){if(!confirm(`Really delete MCP server "${name}"?`))return;await api(`/mcp-servers/${name}`,"DELETE");await refreshData();showToast("Deleted!")}
 
-    function openInstructionModal(id=null){editingInstr=id;if(id!==null){const i=instructions.find(x=>x.id===id);if(!i)return;document.getElementById("instrModalTitle").textContent="Anweisung bearbeiten";document.getElementById("instr-name").value=i.name;document.getElementById("instr-content").value=i.content;document.getElementById("instr-enabled").value=i.enabled?"1":"0";document.getElementById("instr-order").value=i.sort_order||0}else{document.getElementById("instrModalTitle").textContent="Anweisung hinzuf\u00fcgen";document.getElementById("instr-name").value="";document.getElementById("instr-content").value="";document.getElementById("instr-enabled").value="1";document.getElementById("instr-order").value="0"}document.getElementById("instructionModal").classList.add("open")}
+    function openInstructionModal(id=null){editingInstr=id;if(id!==null){const i=instructions.find(x=>x.id===id);if(!i)return;document.getElementById("instrModalTitle").textContent="Edit Instruction";document.getElementById("instr-name").value=i.name;document.getElementById("instr-content").value=i.content;document.getElementById("instr-enabled").value=i.enabled?"1":"0";document.getElementById("instr-order").value=i.sort_order||0}else{document.getElementById("instrModalTitle").textContent="Add Instruction";document.getElementById("instr-name").value="";document.getElementById("instr-content").value="";document.getElementById("instr-enabled").value="1";document.getElementById("instr-order").value="0"}document.getElementById("instructionModal").classList.add("open")}
     function closeInstructionModal(){document.getElementById("instructionModal").classList.remove("open")}
 
     async function saveInstruction(){
       const data={name:document.getElementById("instr-name").value,content:document.getElementById("instr-content").value,enabled:document.getElementById("instr-enabled").value==="1",sort_order:parseInt(document.getElementById("instr-order").value)||0};
-      if(!data.name||!data.content){showToast("Name und Inhalt sind Pflicht");return}
+      if(!data.name||!data.content){showToast("Name and content are required");return}
       if(editingInstr!==null){await api(`/agent-instructions/${editingInstr}`,"PATCH",data)}else{await api("/agent-instructions","POST",data)}
-      closeInstructionModal();await refreshData();showToast(editingInstr!==null?"Aktualisiert!":"Hinzugef\u00fcgt!");
+      closeInstructionModal();await refreshData();showToast(editingInstr!==null?"Updated!":"Added!");
     }
 
     async function toggleInstr(id,val){await api(`/agent-instructions/${id}`,"PATCH",{enabled:val});await refreshData()}
-    async function deleteInstr(id){if(!confirm("Anweisung wirklich l\u00f6schen?"))return;await api(`/agent-instructions/${id}`,"DELETE");await refreshData();showToast("Gel\u00f6scht!")}
+    async function deleteInstr(id){if(!confirm("Really delete this instruction?"))return;await api(`/agent-instructions/${id}`,"DELETE");await refreshData();showToast("Deleted!")}
     function editMcp(name){openMcpModal(name)}
     function editInstr(id){openInstructionModal(id)}
 
     // ── Plugins ──
     function renderPlugins(){
       const el=document.getElementById("pluginList");
-      if(!plugins.length){el.innerHTML='<div class="placeholder">Keine Plugins konfiguriert</div>';return}
+      if(!plugins.length){el.innerHTML='<div class="placeholder">No plugins configured</div>';return}
       el.innerHTML=plugins.map(p=>{
         const binaryBadge=p.requires_binary?`<span class="tag" style="background:var(--yellow-glow);color:var(--yellow)">Binary: ${p.requires_binary}</span>`:'';
         return `<div class="mcp-item">
@@ -503,8 +503,8 @@
             <div class="mcp-desc">${p.description||""}</div>
           </div>
           <div class="toggle ${p.enabled?"on":""}" onclick="togglePlugin('${p.name}',${p.enabled?0:1})"></div>
-          <button class="btn btn-secondary btn-sm" onclick="editPlugin('${p.name}')">Bearbeiten</button>
-          <button class="btn btn-danger btn-sm" onclick="deletePlugin('${p.name}')">L&ouml;schen</button>
+          <button class="btn btn-secondary btn-sm" onclick="editPlugin('${p.name}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deletePlugin('${p.name}')">Delete</button>
         </div>`}).join("");
     }
 
@@ -512,14 +512,14 @@
       editingPlugin=name;
       if(name){
         const p=plugins.find(x=>x.name===name);if(!p)return;
-        document.getElementById("pluginModalTitle").textContent="Plugin bearbeiten";
+        document.getElementById("pluginModalTitle").textContent="Edit Plugin";
         document.getElementById("plugin-name").value=p.name;
         document.getElementById("plugin-name").disabled=true;
         document.getElementById("plugin-desc").value=p.description||"";
         document.getElementById("plugin-binary").value=p.requires_binary||"";
         document.getElementById("plugin-enabled").value=p.enabled?"1":"0";
       }else{
-        document.getElementById("pluginModalTitle").textContent="Plugin hinzuf\u00fcgen";
+        document.getElementById("pluginModalTitle").textContent="Add Plugin";
         document.getElementById("plugin-name").value="";
         document.getElementById("plugin-name").disabled=false;
         document.getElementById("plugin-desc").value="";
@@ -532,12 +532,12 @@
 
     async function savePlugin(){
       const data={name:document.getElementById("plugin-name").value.trim(),description:document.getElementById("plugin-desc").value.trim(),requires_binary:document.getElementById("plugin-binary").value.trim(),enabled:document.getElementById("plugin-enabled").value==="1"};
-      if(!data.name){showToast("Name ist Pflicht");return}
+      if(!data.name){showToast("Name is required");return}
       if(editingPlugin){await api(`/plugins/${editingPlugin}`,"PATCH",data)}else{await api("/plugins","POST",data)}
-      closePluginModal();await refreshData();showToast(editingPlugin?"Aktualisiert!":"Hinzugef\u00fcgt!");
+      closePluginModal();await refreshData();showToast(editingPlugin?"Updated!":"Added!");
     }
     async function togglePlugin(name,val){await api(`/plugins/${name}`,"PATCH",{enabled:val});await refreshData()}
-    async function deletePlugin(name){if(!confirm(`Plugin "${name}" wirklich l\u00f6schen?`))return;await api(`/plugins/${name}`,"DELETE");await refreshData();showToast("Gel\u00f6scht!")}
+    async function deletePlugin(name){if(!confirm(`Really delete plugin "${name}"?`))return;await api(`/plugins/${name}`,"DELETE");await refreshData();showToast("Deleted!")}
     function editPlugin(name){openPluginModal(name)}
 
     async function refreshData(){

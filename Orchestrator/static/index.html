@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -397,13 +397,13 @@
           <span class="icon">&#128193;</span> Repositories
         </a>
         <a href="/settings" class="sidebar-link">
-          <span class="icon">&#9881;</span> Einstellungen
+          <span class="icon">&#9881;</span> Settings
         </a>
       </nav>
       <div class="sidebar-footer">
         <small style="color:var(--muted);font-size:0.7rem">
           <span class="status-dot" id="connStatus"></span>
-          <span id="connLabel">Verbunden</span>
+          <span id="connLabel">Connected</span>
         </small>
       </div>
     </aside>
@@ -416,25 +416,25 @@
           <div class="stat-icon">&#128195;</div>
           <div class="stat-value" id="statQueue">0</div>
           <div class="stat-label">Queue</div>
-          <div class="stat-sub">Wartende Tickets</div>
+          <div class="stat-sub">Pending tickets</div>
         </div>
         <div class="stat-card accent">
           <div class="stat-icon">&#129302;</div>
           <div class="stat-value" id="statAgents">0</div>
-          <div class="stat-label">Agenten</div>
-          <div class="stat-sub" id="statActiveAgents">0 aktiv</div>
+          <div class="stat-label">Agents</div>
+          <div class="stat-sub" id="statActiveAgents">0 active</div>
         </div>
         <div class="stat-card green">
           <div class="stat-icon">&#9989;</div>
           <div class="stat-value" id="statCompleted">0</div>
-          <div class="stat-label">Erledigt</div>
+          <div class="stat-label">Completed</div>
           <div class="stat-sub">Completed / Merged</div>
         </div>
         <div class="stat-card purple">
           <div class="stat-icon">&#128203;</div>
           <div class="stat-value" id="statTotal">0</div>
-          <div class="stat-label">Gesamt</div>
-          <div class="stat-sub">Alle Tickets</div>
+          <div class="stat-label">Total</div>
+          <div class="stat-sub">All tickets</div>
         </div>
       </div>
 
@@ -443,21 +443,21 @@
         <!-- Queue Panel -->
         <div class="panel">
           <div class="panel-header">
-            <h2>Queue &amp; Aktive Tickets</h2>
-            <button class="btn btn-primary btn-sm" onclick="openNewTicketModal()" style="font-size:0.75rem;padding:0.35rem 0.7rem">+ Neues Ticket</button>
+            <h2>Queue &amp; Active Tickets</h2>
+            <button class="btn btn-primary btn-sm" onclick="openNewTicketModal()" style="font-size:0.75rem;padding:0.35rem 0.7rem">+ New Ticket</button>
           </div>
           <div class="panel-body scroll" id="queueList">
-            <div class="placeholder">Keine Tickets in der Queue</div>
+            <div class="placeholder">No tickets in queue</div>
           </div>
         </div>
 
         <!-- Agents Panel -->
         <div class="panel">
           <div class="panel-header">
-            <h2>Agenten</h2>
+            <h2>Agents</h2>
           </div>
           <div class="panel-body" id="agentList">
-            <div class="placeholder">Keine Agenten</div>
+            <div class="placeholder">No agents</div>
           </div>
         </div>
       </div>
@@ -465,10 +465,10 @@
       <!-- Activity Log -->
       <div class="panel">
         <div class="panel-header">
-          <h2>Aktivitaet</h2>
+          <h2>Activity</h2>
         </div>
         <div class="panel-body scroll" id="activityLog" style="max-height:350px">
-          <div class="placeholder">Noch keine Aktivitaet</div>
+          <div class="placeholder">No activity yet</div>
         </div>
       </div>
     </main>
@@ -478,7 +478,7 @@
   <div class="modal-overlay" id="ticketModal">
     <div class="modal">
       <div class="modal-header">
-        <h3>Neues Ticket erstellen</h3>
+        <h3>Create New Ticket</h3>
         <button class="modal-close" onclick="closeTicketModal()">&times;</button>
       </div>
       <div class="modal-body">
@@ -488,36 +488,36 @@
             <input id="ticketId" placeholder="PROJ-123">
           </div>
           <div class="form-group">
-            <label>Titel</label>
-            <input id="ticketTitle" placeholder="Login-Button implementieren">
+            <label>Title</label>
+            <input id="ticketTitle" placeholder="Implement login button">
           </div>
         </div>
         <div class="form-group">
-          <label>Beschreibung</label>
-          <textarea id="ticketDesc" rows="3" placeholder="Beschreibe das Ticket..."></textarea>
+          <label>Description</label>
+          <textarea id="ticketDesc" rows="3" placeholder="Describe the ticket..."></textarea>
         </div>
         <div class="form-row-2">
           <div class="form-group">
-            <label>Typ</label>
+            <label>Type</label>
             <select id="ticketType">
               <option>Task</option><option>Bug</option><option>Feature</option>
             </select>
           </div>
           <div class="form-group">
-            <label>Prioritaet</label>
+            <label>Priority</label>
             <select id="ticketPriority">
               <option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option>
             </select>
           </div>
         </div>
         <div class="form-group">
-          <label>Labels (kommagetrennt)</label>
+          <label>Labels (comma-separated)</label>
           <input id="ticketLabels" placeholder="backend, api, bug">
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeTicketModal()">Abbrechen</button>
-        <button class="btn btn-primary" onclick="createTicket()">Erstellen</button>
+        <button class="btn btn-secondary" onclick="closeTicketModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createTicket()">Create</button>
       </div>
     </div>
   </div>
@@ -552,12 +552,12 @@
         ...queuedTickets.map(t => ({
           ticket_id: t.id,
           title: t.title,
-          agent_name: "Wartet...",
+          agent_name: "Waiting...",
           status: "queued",
           badge: "waiting"
         }))
       ];
-      if (!activeItems.length) { el.innerHTML = `<div class="placeholder">Keine aktiven Tickets</div>`; return; }
+      if (!activeItems.length) { el.innerHTML = `<div class="placeholder">No active tickets</div>`; return; }
       el.innerHTML = activeItems.map((q, idx) => {
         return `<div class="queue-item">
           <div class="q-pos">${idx + 1}</div>
@@ -573,7 +573,7 @@
 
     function renderAgents() {
       const el = document.getElementById("agentList");
-      if (!agents.length) { el.innerHTML = `<div class="placeholder">Keine Agenten</div>`; return; }
+      if (!agents.length) { el.innerHTML = `<div class="placeholder">No agents</div>`; return; }
       el.innerHTML = agents.map(a => {
         const pct = a.progress || 0;
         const st = a.status || "idle";
@@ -590,7 +590,7 @@
 
     function renderLog(logs) {
       const el = document.getElementById("activityLog");
-      if (!logs || !logs.length) { el.innerHTML = `<div class="placeholder">Noch keine Aktivitaet</div>`; return; }
+      if (!logs || !logs.length) { el.innerHTML = `<div class="placeholder">No activity yet</div>`; return; }
       el.innerHTML = logs.slice(0, 60).map(s => {
         const ts = s.timestamp ? new Date(s.timestamp).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "";
         return `<div class="log-entry">
@@ -604,7 +604,7 @@
     function updateStats() {
       document.getElementById("statQueue").textContent = tickets.filter(t => t.status === "queued").length;
       document.getElementById("statAgents").textContent = agents.length;
-      document.getElementById("statActiveAgents").textContent = agents.filter(a => a.status === "running").length + " aktiv";
+      document.getElementById("statActiveAgents").textContent = agents.filter(a => a.status === "running").length + " active";
       document.getElementById("statCompleted").textContent = tickets.filter(t => t.status === "completed" || t.status === "merged").length;
       document.getElementById("statTotal").textContent = tickets.length;
       document.getElementById("sidebarTicketBadge").textContent = tickets.length;
@@ -626,11 +626,11 @@
       es = new EventSource("/api/stream");
       es.onopen = () => {
         document.getElementById("connStatus").classList.remove("offline");
-        document.getElementById("connLabel").textContent = "Verbunden";
+        document.getElementById("connLabel").textContent = "Connected";
       };
       es.onerror = () => {
         document.getElementById("connStatus").classList.add("offline");
-        document.getElementById("connLabel").textContent = "Verbindung verloren";
+        document.getElementById("connLabel").textContent = "Connection lost";
         es.close();
         setTimeout(connectSSE, 5000);
       };
@@ -658,13 +658,13 @@
         priority: document.getElementById("ticketPriority").value,
         labels: document.getElementById("ticketLabels").value.split(",").map(s => s.trim()).filter(Boolean),
       };
-      if (!data.title) { showToast("Bitte einen Titel eingeben"); return; }
+      if (!data.title) { showToast("Please enter a title"); return; }
       await api("/tickets", "POST", data);
       closeTicketModal();
       document.getElementById("ticketId").value = "";
       document.getElementById("ticketTitle").value = "";
       document.getElementById("ticketDesc").value = "";
-      showToast("Ticket erstellt!");
+      showToast("Ticket created!");
       await refreshData();
     }
 

@@ -3,8 +3,8 @@ set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
 COMMENT_POLL_INTERVAL="${COMMENT_POLL_INTERVAL:-30}"
-GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN muss gesetzt sein}"
-GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST muss gesetzt sein}"
+GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN must be set}"
+GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST must be set}"
 GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
 
 TASK_FILE="${1:-}"
@@ -19,7 +19,7 @@ if [ -z "$TASK_FILE" ]; then
 fi
 
 if [ ! -f "$TASK_FILE" ]; then
-  echo "❌ Kein Task-Prompt gefunden. Gesucht: /etc/task/task.md, /workspace/.opencode/assignment.md"
+  echo "❌ No task prompt found. Searched: /etc/task/task.md, /workspace/.opencode/assignment.md"
   exit 1
 fi
 
@@ -53,18 +53,18 @@ if [ -z "$TICKET_TITLE" ] || [ "$TICKET_TITLE" = "$FIRST_LINE" ]; then
 fi
 
 if [ -z "$TICKET_ID" ] || [ -z "$TICKET_TITLE" ]; then
-  echo "❌ Konnte Ticket-ID oder Titel nicht aus dem Prompt extrahieren"
+  echo "❌ Could not extract ticket ID or title from the prompt"
   echo "   First line: $FIRST_LINE"
   exit 1
 fi
 
 BRANCH="feature/${TICKET_ID}"
 
-# ── MR-URL Erkennung: Existierenden Branch aus dem MR auschecken ─────
+# ── MR URL detection: Checkout existing branch from MR ─────
 MR_URL=$(grep -oE "https?://${GITLAB_HOST}/[^ ]*merge_requests/[0-9]+" "$TASK_FILE" 2>/dev/null | head -1 || true)
 MR_BRANCH=""
 if [ -n "$MR_URL" ]; then
-  echo "🔗 MR-URL gefunden: $MR_URL"
+  echo "🔗 MR URL found: $MR_URL"
   MR_PROJECT=$(echo "$MR_URL" | sed -E "s|https?://${GITLAB_HOST}/||;s|/-/merge_requests.*||;s|/merge_requests.*||")
   MR_IID=$(echo "$MR_URL" | grep -oE 'merge_requests/[0-9]+' | grep -oE '[0-9]+')
   if [ -n "$MR_PROJECT" ] && [ -n "$MR_IID" ]; then
@@ -74,9 +74,9 @@ if [ -n "$MR_URL" ]; then
     MR_BRANCH=$(echo "$MR_DATA" | jq -r '.source_branch // empty' 2>/dev/null || true)
     if [ -n "$MR_BRANCH" ]; then
       BRANCH="$MR_BRANCH"
-      echo "🌿 Existierenden MR-Branch verwendet: $BRANCH (MR !${MR_IID})"
+      echo "🌿 Using existing MR branch: $BRANCH (MR !${MR_IID})"
     else
-      echo "⚠️  Konnte Branch aus MR nicht ermitteln – verwende Default: $BRANCH"
+      echo "⚠️  Could not determine branch from MR – using default: $BRANCH"
     fi
   fi
 fi
@@ -88,26 +88,26 @@ echo "🧪 Dry-Run: $DRY_RUN"
 if [ "$DRY_RUN" = "true" ]; then
   echo ""
   echo "═══════════════════════════════════════════"
-  echo "  🧪 DRY RUN – keine echten Änderungen"
+  echo "  🧪 DRY RUN – no actual changes"
   echo "═══════════════════════════════════════════"
   echo ""
-  echo "📄 Task-Prompt (erste 20 Zeilen):"
+  echo "📄 Task prompt (first 20 lines):"
   head -20 "$TASK_FILE"
   echo "..."
   echo ""
   echo "📦 Repos in /workspace:"
   for d in /workspace/*/; do [ -d "$d/.git" ] && echo "  ${d%/}"; done
   echo ""
-  echo "🏁 Dry-Run abgeschlossen."
+  echo "🏁 Dry run completed."
   exit 0
 fi
 
-# ── Git Konfiguration (vor Rebase noetig) ──────────────────────────────
+# ── Git configuration (needed before rebase) ──────────────────────────────
 git config --global user.email "hivemind-agents@example.com"
 git config --global user.name "HiveMind"
 git config --global credential.helper store
 
-# ── Merge-Konflikt-Erkennung und automatische Aufloesung ──────────────
+# ── Merge conflict detection and automatic resolution ──────────────
 MERGE_CONFLICT=false
 TARGET_BRANCH="main"
 if [ -n "$MR_URL" ] && [ -n "$MR_DATA" ]; then
@@ -118,60 +118,60 @@ if [ -n "$MR_URL" ] && [ -n "$MR_DATA" ]; then
   if [ "$MERGE_STATUS" = "cannot_be_merged" ] || [ "$HAS_CONFLICTS" = "true" ]; then
     MERGE_CONFLICT=true
     TARGET_BRANCH="$MR_TARGET"
-    echo "⚠️  Merge-Konflikt erkannt (merge_status=$MERGE_STATUS, has_conflicts=$HAS_CONFLICTS)"
-    echo "🔀 Ziel-Branch: $TARGET_BRANCH"
+    echo "⚠️  Merge conflict detected (merge_status=$MERGE_STATUS, has_conflicts=$HAS_CONFLICTS)"
+    echo "🔀 Target branch: $TARGET_BRANCH"
   fi
 fi
 
 if [ "$MERGE_CONFLICT" = "true" ]; then
-  echo "🔄 Versuche automatische Konfiktaufloesung..."
+  echo "🔄 Attempting automatic conflict resolution..."
   for dir in /workspace/*/; do
     repo="${dir%/}"
     [ -d "$repo/.git" ] || continue
     cd "$repo" || continue
 
-    echo "📦 $(basename "$repo"): Rebasing auf origin/$TARGET_BRANCH..."
+    echo "📦 $(basename "$repo"): Rebasing onto origin/$TARGET_BRANCH..."
 
-    git fetch origin "$TARGET_BRANCH" 2>&1 || { echo "⚠️  Fetch fehlgeschlagen für $repo"; cd /workspace; continue; }
+    git fetch origin "$TARGET_BRANCH" 2>&1 || { echo "⚠️  Fetch failed for $repo"; cd /workspace; continue; }
 
     CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
     if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
       if git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
-        git checkout "$BRANCH" 2>&1 || { echo "⚠️  Checkout fehlgeschlagen für $BRANCH"; cd /workspace; continue; }
+        git checkout "$BRANCH" 2>&1 || { echo "⚠️  Checkout failed for $BRANCH"; cd /workspace; continue; }
       else
-        echo "   Branch $BRANCH existiert nicht in $repo – überspringe"
+        echo "   Branch $BRANCH does not exist in $repo – skipping"
         cd /workspace; continue
       fi
     fi
 
-    echo "   Rebasing $BRANCH auf origin/$TARGET_BRANCH..."
+    echo "   Rebasing $BRANCH onto origin/$TARGET_BRANCH..."
     if git rebase "origin/$TARGET_BRANCH" 2>&1; then
-      echo "✅ $(basename "$repo"): Rebase erfolgreich"
+      echo "✅ $(basename "$repo"): Rebase successful"
     else
-      echo "⚠️  $(basename "$repo"): Rebase hat Konflikte – versuche automatische Aufloesung"
+      echo "⚠️  $(basename "$repo"): Rebase has conflicts – attempting automatic resolution"
       CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
       CONFLICT_COUNT=$(echo "$CONFLICT_FILES" | grep -c . || echo "0")
-      echo "   $CONFLICT_COUNT Konflikt-Dateien erkannt"
+      echo "   $CONFLICT_COUNT conflict files detected"
 
       git diff --name-only --diff-filter=U | while read -r conflict_file; do
         if [ -z "$conflict_file" ]; then continue; fi
-        echo "   Löse Konflikt in: $conflict_file"
+        echo "   Resolving conflict in: $conflict_file"
         git checkout --theirs "$conflict_file" 2>/dev/null || \
         git checkout --ours "$conflict_file" 2>/dev/null || true
         git add "$conflict_file" 2>/dev/null || true
       done
 
       if git rebase --continue 2>&1; then
-        echo "✅ $(basename "$repo"): Konflikte aufgelöst, Rebase abgeschlossen"
+        echo "✅ $(basename "$repo"): Conflicts resolved, rebase completed"
       else
-        echo "❌ $(basename "$repo"): Rebase konnte nicht automatisch aufgelöst werden – abort"
+        echo "❌ $(basename "$repo"): Rebase could not be resolved automatically – aborting"
         git rebase --abort 2>/dev/null || true
       fi
     fi
 
     cd /workspace || true
   done
-  echo "🔄 Konfiktaufloesung abgeschlossen"
+  echo "🔄 Conflict resolution completed"
 fi
 
 # ── OpenCode Config ──────────────────────────────────────────────────────
@@ -182,13 +182,13 @@ if [ -z "${OPENCODE_PLUGINS:-}" ]; then
 fi
 
 if [ -f /mnt/opencode-config/opencode.json ]; then
-  echo "📄 Verwende opencode.json aus ConfigMap (/mnt/opencode-config)"
+  echo "📄 Using opencode.json from ConfigMap (/mnt/opencode-config)"
   cp /mnt/opencode-config/opencode.json /root/.config/opencode/opencode.json
 elif [ -f /etc/agent/opencode.json.template ]; then
-  echo "📄 Verwende opencode.json.template (Fallback)"
+  echo "📄 Using opencode.json.template (fallback)"
   envsubst '$OPENCODE_MODEL $OLLAMA_BASE_URL $OPENCODE_PLUGINS' < /etc/agent/opencode.json.template > /root/.config/opencode/opencode.json
 else
-  echo "❌ Keine opencode-Config gefunden"
+  echo "❌ No opencode config found"
   exit 1
 fi
 export OPENCODE_CONFIG=/root/.config/opencode/opencode.json
@@ -199,37 +199,37 @@ MEMORY_DIR="/root/.config/opencode/memory"
 
 # Restore memory blocks from mounted config if available
 if [ -d "/mnt/memory-blocks" ]; then
-  echo "📝 Stelle Memory-Blocks aus /mnt/memory-blocks wieder her..."
+  echo "📝 Restoring memory blocks from /mnt/memory-blocks..."
   cp /mnt/memory-blocks/*.md "$MEMORY_DIR/" 2>/dev/null || true
 fi
 
 # Seed default memory blocks if none exist
 if [ -z "$(ls -A "$MEMORY_DIR" 2>/dev/null)" ]; then
-  echo "📝 Erstelle Default-Memory-Blocks..."
+  echo "📝 Creating default memory blocks..."
   cat > "$MEMORY_DIR/persona.md" << 'MEMEOF'
 ---
 label: persona
-description: Agent-Identitaet und Verhalten
+description: Agent identity and behavior
 limit: 5000
 read_only: false
 ---
-Du bist ein autonomer Software-Entwickler. Arbeite sorgfaeltig und methodisch. Bevorzuge deutsche Kommentare im Code. Halte dich an bestehende Konventionen.
+You are an autonomous software developer. Work carefully and methodically. Prefer English comments in code. Follow existing conventions.
 MEMEOF
 
   cat > "$MEMORY_DIR/human.md" << 'MEMEOF'
 ---
 label: human
-description: Praeferenzen des Operators
+description: Operator preferences
 limit: 5000
 read_only: false
 ---
-Bevorzuge deutsche UI-Sprache. Verwende Conventional Commits. Keine Emojis in Commit-Nachrichten. Tests sind Pflicht.
+Prefer English UI language. Use Conventional Commits. No emojis in commit messages. Tests are mandatory.
 MEMEOF
 
   cat > "$MEMORY_DIR/project.md" << 'MEMEOF'
 ---
 label: project
-description: Projekt-Konventionen und Architektur
+description: Project conventions and architecture
 limit: 5000
 read_only: false
 ---
@@ -238,7 +238,7 @@ Tests: pnpm test && vue-tsc --noEmit (Frontend), go test ./... (Backend).
 Lint: pnpm lint (Frontend), golangci-lint run (Backend).
 Branch: feature/TICKET-ID. Conventional Commits.
 MEMEOF
-  echo "✅ Default-Memory-Blocks erstellt"
+  echo "✅ Default memory blocks created"
 fi
 
 # Agent-memory journal config (optional)
@@ -265,7 +265,7 @@ if [ -n "${OLLAMA_CLOUD_API_KEY:-}" ]; then
   export OLLAMA_API_KEY="$OLLAMA_CLOUD_API_KEY"
 fi
 
-echo "📝 Ergänze .gitignore in allen Repos..."
+echo "📝 Adding .gitignore entries in all repos..."
 GITIGNORE_ENTRIES=".leankg/
 leankg.yaml
 node_modules/"
@@ -290,9 +290,9 @@ if [ -f /mnt/opencode-config/opencode.json ]; then
 fi
 if [ -n "$PRIMARY_REPO" ] && [ -d "/workspace/$PRIMARY_REPO/.git" ]; then
   PRIMARY_REPO="/workspace/$PRIMARY_REPO"
-  echo "📂 Primaeres Repository aus Config: $PRIMARY_REPO"
+  echo "📂 Primary repository from config: $PRIMARY_REPO"
 elif [ -n "$PRIMARY_REPO" ]; then
-  echo "⚠️  Primaeres Repository '$PRIMARY_REPO' nicht in /workspace gefunden, suche Fallback..."
+  echo "⚠️  Primary repository '$PRIMARY_REPO' not found in /workspace, searching for fallback..."
   PRIMARY_REPO=""
 fi
 if [ -z "$PRIMARY_REPO" ]; then
@@ -304,11 +304,11 @@ if [ -z "$PRIMARY_REPO" ]; then
   done
 fi
 if [ -z "$PRIMARY_REPO" ]; then
-  echo "❌ Kein Git-Repository in /workspace gefunden"
+  echo "❌ No git repository found in /workspace"
   exit 1
 fi
 cd "$PRIMARY_REPO"
-echo "📂 Arbeitsverzeichnis: $PRIMARY_REPO"
+echo "📂 Working directory: $PRIMARY_REPO"
 
 inject_git_credentials() {
   local _saved_pwd="$PWD"
@@ -342,7 +342,7 @@ inject_git_credentials
 
 TASK_PROMPT="$(cat "$TASK_FILE")"
 
-# ── Fortschritts-Reporting an Orchestrator ──────────────────────────
+# ── Progress reporting to orchestrator ──────────────────────────
 post_progress() {
   local content="$1"
   local comment_type="${2:-system}"
@@ -388,10 +388,10 @@ progress_monitor() {
   done
 }
 
-post_progress "Agent startet — Ticket ${TICKET_ID}: ${TICKET_TITLE}" "system"
+post_progress "Agent starting — Ticket ${TICKET_ID}: ${TICKET_TITLE}" "system"
 OPENCODE_WEB_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
 
-echo "🤖 Starte opencode run..."
+echo "🤖 Starting opencode run..."
 echo "   Task: [${TICKET_ID}] ${TICKET_TITLE}"
 
 OPENCODE_EXIT=0
@@ -432,18 +432,18 @@ wait $MONITOR_PID 2>/dev/null || true
 OPENCODE_EXIT=$?
 
 if [ "$OPENCODE_EXIT" -ne 0 ]; then
-  echo "❌ opencode run fehlgeschlagen (Exit: $OPENCODE_EXIT)"
-  post_progress "❌ opencode fehlgeschlagen (Exit: $OPENCODE_EXIT)" "system"
+  echo "❌ opencode run failed (Exit: $OPENCODE_EXIT)"
+  post_progress "❌ opencode failed (Exit: $OPENCODE_EXIT)" "system"
   exit "$OPENCODE_EXIT"
 fi
 
-echo "✅ opencode Task abgeschlossen"
-post_progress "✅ opencode Task abgeschlossen – beginne Commit/Push/MR Phase" "system"
+echo "✅ opencode task completed"
+post_progress "✅ opencode task completed – starting commit/push/MR phase" "system"
 
 echo "🔑 Re-inject Git credentials (opencode may have modified remote URLs)..."
 inject_git_credentials
 
-# ── Phase 2: Commit, Push, MR — nur fuer echte Git-Repos ──────────────────
+# ── Phase 2: Commit, Push, MR — only for real Git repos ──────────────────
 
 GITLAB_API_URL="https://${GITLAB_HOST}/api/v4"
 
@@ -457,11 +457,11 @@ create_merge_request() {
   local encoded_path
   encoded_path=$(echo -n "$project_path" | jq -sRr @uri)
 
-  # Pruefe ob Projekt verschoben/redirected wurde → verwende neuen Pfad
+  # Check if project was moved/redirected → use new path
   local project_info
   project_info=$(curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_API_URL}/projects/${encoded_path}" 2>&1)
   if echo "$project_info" | jq -e '.message' 2>/dev/null | grep -qi "moved"; then
-    echo "⚠️  Projekt ${project_path} wurde verschoben, versuche Redirect..."
+    echo "⚠️  Project ${project_path} was moved, trying redirect..."
     local redirected_path
     redirected_path=$(echo "$project_info" | jq -r '."message" // empty' 2>/dev/null | grep -oE 'has been moved to [^ "]+' | sed 's/has been moved to //' | sed 's/\.git$//' | sed 's|/$||')
     if [ -z "$redirected_path" ]; then
@@ -472,18 +472,18 @@ create_merge_request() {
       project_path="$redirected_path"
       encoded_path=$(echo -n "$project_path" | jq -sRr @uri)
     else
-      echo "   → Konnte Redirect-Ziel nicht ermitteln, versuche trotzdem..."
+      echo "   → Could not determine redirect target, trying anyway..."
     fi
   fi
 
-  echo "🔍 Suche existierenden MR für ${project_path} (${source_branch} → ${target_branch})..."
+  echo "🔍 Searching for existing MR for ${project_path} (${source_branch} → ${target_branch})..."
   local existing
   existing=$(curl -sS \
     -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
     "${GITLAB_API_URL}/projects/${encoded_path}/merge_requests?state=opened&source_branch=${source_branch}&target_branch=${target_branch}" 2>&1)
 
   if echo "$existing" | jq -e '.[0].web_url' >/dev/null 2>&1; then
-    echo "✅ Existierenden MR gefunden"
+    echo "✅ Existing MR found"
     echo "$existing" | jq -r '.[0].web_url'
     return 0
   fi
@@ -496,7 +496,7 @@ create_merge_request() {
     --arg d "$description" \
     '{source_branch: $sb, target_branch: $tb, title: $t, description: $d, remove_source_branch: true}')
 
-  echo "📝 Erstelle neuen MR für ${project_path}..."
+  echo "📝 Creating new MR for ${project_path}..."
   local result
   result=$(curl -sS \
     -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
@@ -508,20 +508,20 @@ create_merge_request() {
     echo "$result" | jq -r '.web_url'
     return 0
   else
-    echo "❌ MR API Fehler: $(echo "$result" | head -200)" >&2
+    echo "❌ MR API error: $(echo "$result" | head -200)" >&2
     return 1
   fi
 }
 
-MR_DESCRIPTION="## Zusammenfassung
+MR_DESCRIPTION="## Summary
 
-Dieser MR wurde automatisch durch den HiveMind Agent erstellt.
+This MR was created automatically by the HiveMind agent.
 
 ### Ticket
 - **ID:** ${TICKET_ID}
-- **Titel:** ${TICKET_TITLE}
+- **Title:** ${TICKET_TITLE}
 
-### Änderungen
+### Changes
 
 $(SAVED_PWD="$PWD"; for dir in /workspace/*/; do
   repo="${dir%/}"
@@ -543,14 +543,14 @@ done)"
 for dir in /workspace/*/; do
   repo="${dir%/}"
   [ -d "$repo/.git" ] || continue
-  cd "$repo" || { echo "❌ Kann nicht in $repo wechseln"; exit 1; }
+  cd "$repo" || { echo "❌ Cannot change to $repo"; exit 1; }
 
-  echo "📦 $(basename "$repo"): Prüfe Branch/MR-Status..."
+  echo "📦 $(basename "$repo"): Checking branch/MR status..."
 
   BRANCH_EXISTS_LOCALLY=$(git branch --list "$BRANCH" 2>/dev/null)
   if [ -z "$BRANCH_EXISTS_LOCALLY" ]; then
     if [ -z "$(git status --porcelain)" ]; then
-      echo "📦 $(basename "$repo"): Keine Änderungen und kein Branch, überspringe."
+      echo "📦 $(basename "$repo"): No changes and no branch, skipping."
       continue
     fi
     git checkout -b "$BRANCH"
@@ -563,7 +563,7 @@ for dir in /workspace/*/; do
     git commit -m "[${TICKET_ID}] ${TICKET_TITLE}" --allow-empty
   fi
 
-  git push -u origin "$BRANCH" 2>&1 | tee /tmp/push_output.txt || git push origin "$BRANCH" 2>&1 | tee -a /tmp/push_output.txt || echo "⚠️  Push bereits vorhanden oder fehlgeschlagen für $(basename "$repo")"
+  git push -u origin "$BRANCH" 2>&1 | tee /tmp/push_output.txt || git push origin "$BRANCH" 2>&1 | tee -a /tmp/push_output.txt || echo "⚠️  Push already exists or failed for $(basename "$repo")"
 
   REMOTE_URL=$(git remote get-url origin 2>/dev/null)
   PROJECT_PATH=$(echo "$REMOTE_URL" | sed -E 's|.*://[^@]*@||;s|\.git$||;s|^.*://||;s|^git@[^:]*:||')
@@ -587,20 +587,20 @@ for dir in /workspace/*/; do
     "$MR_DESCRIPTION" 2>&1) || true
 
   if echo "$MR_URL" | grep -q "^http"; then
-    echo "🔗 MR erstellt für $(basename "$repo"): $MR_URL"
+    echo "🔗 MR created for $(basename "$repo"): $MR_URL"
   else
-    echo "⚠️  MR-Erstellung für $(basename "$repo") fehlgeschlagen: $MR_URL"
+    echo "⚠️  MR creation for $(basename "$repo") failed: $MR_URL"
   fi
 done
 
-echo "🏁 Alle Repos verarbeitet."
-post_progress "🏁 Ticket ${TICKET_ID} abgeschlossen – Alle Repos verarbeitet." "system"
+echo "🏁 All repos processed."
+post_progress "🏁 Ticket ${TICKET_ID} completed – All repos processed." "system"
 
-# ── Phase 3: Comment-Polling — auf User-Feedback reagieren ────────────
+# ── Phase 3: Comment polling — react to user feedback ────────────
 
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
-  echo "👂 Starte Comment-Polling (alle ${COMMENT_POLL_INTERVAL}s)..."
-  post_progress "👂 Warte auf Kommentare/Fedback..." "system"
+  echo "👂 Starting comment polling (every ${COMMENT_POLL_INTERVAL}s)..."
+  post_progress "👂 Waiting for comments/feedback..." "system"
 
   while true; do
     COMMENTS_JSON=$(curl -sS "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" 2>/dev/null || echo "[]")
@@ -635,33 +635,33 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
 
       LAST_SEEN_COMMENT_ID=$NEW_IDS
 
-      echo "💬 Neuer User-Kommentar erkannt — starte Follow-up..."
-      post_progress "💬 User-Feedback erhalten — verarbeite..." "system"
+      echo "💬 New user comment detected — starting follow-up..."
+      post_progress "💬 User feedback received — processing..." "system"
 
-      FOLLOWUP_PROMPT="# User-Feedback zu Ticket ${TICKET_ID}:
+      FOLLOWUP_PROMPT="# User feedback for ticket ${TICKET_ID}:
 
 ${COMMENT_BODIES}
 
-Bitte beruecksichtige dieses Feedback und passe die Aenderungen entsprechend an.
-Commite und pushe die Aenderungen auf denselben Branch."
+Please consider this feedback and adjust the changes accordingly.
+Commit and push the changes to the same branch."
 
       unset OPENCODE_SERVER_PASSWORD
       opencode run \
-        --title "[${TICKET_ID}] Follow-up: User-Feedback" \
-        "$FOLLOWUP_PROMPT" || echo "⚠️  Follow-up opencode run fehlgeschlagen (Exit: $?)"
+        --title "[${TICKET_ID}] Follow-up: User feedback" \
+        "$FOLLOWUP_PROMPT" || echo "⚠️  Follow-up opencode run failed (Exit: $?)"
 
-      echo "🔑 Re-inject Git credentials nach Follow-up..."
+      echo "🔑 Re-inject Git credentials after follow-up..."
       inject_git_credentials
 
       cd "$PRIMARY_REPO" 2>/dev/null || true
       if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
         git add -A
-        git commit -m "[${TICKET_ID}] Follow-up: User-Feedback" --allow-empty 2>/dev/null || true
-        git push -u origin "$BRANCH" 2>&1 || echo "⚠️  Follow-up Push fehlgeschlagen"
+        git commit -m "[${TICKET_ID}] Follow-up: User feedback" --allow-empty 2>/dev/null || true
+        git push -u origin "$BRANCH" 2>&1 || echo "⚠️  Follow-up push failed"
       fi
 
-      post_progress "✅ Follow-up abgeschlossen" "system"
-      echo "✅ Follow-up abgeschlossen, weiteres Polling..."
+      post_progress "✅ Follow-up completed" "system"
+      echo "✅ Follow-up completed, continuing polling..."
     fi
 
     sleep "$COMMENT_POLL_INTERVAL"
@@ -671,5 +671,5 @@ fi
 
 # opencode web is already running (started before opencode run --attach)
 # Web UI stays available for interactive corrections on port 4096
-echo "🌐 OpenCode Web UI laeuft auf Port 4096 (PID $WEB_PID) — warte bis sie beendet wird..."
+echo "🌐 OpenCode Web UI running on port 4096 (PID $WEB_PID) — waiting until terminated..."
 wait $WEB_PID 2>/dev/null || true

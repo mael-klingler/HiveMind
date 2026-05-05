@@ -2,8 +2,8 @@
 """
 Orchestrator – K8s/PVC-ready Workspace Generator
 
-Laedt .env aus /app/config/.env oder lokaler .env
-und konfiguriert Git-Token-Auth automatisch.
+Loads .env from /app/config/.env or local .env
+and configures Git token auth automatically.
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from database import set_ticket_ai_planning, get_enabled_mcp_servers, get_enable
 # ── .env Loader ────────────────────────────────────────────────────
 
 def _load_dotenv(path: str = "/app/config/.env"):
-    """Laedt Key=Value Paare aus einer .env Datei in os.environ."""
+    """Loads Key=Value pairs from a .env file into os.environ."""
     p = Path(path)
     if not p.exists():
         p = Path(".env")
@@ -45,7 +45,7 @@ def _load_dotenv(path: str = "/app/config/.env"):
 _load_dotenv()
 
 
-# ── Environment Konfiguration (zentral, Defaults fuer lokale Entwicklung) ──
+# ── Environment Configuration (central, Defaults for local development) ──
 
 ORCHESTRATOR_CONFIG = os.getenv("ORCHESTRATOR_CONFIG", "/app/config/orchestrator_config.json")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -61,7 +61,7 @@ OPENCODE_PORT = os.getenv("OPENCODE_PORT", "4096")
 OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
 
 
-# ── Datenklassen ─────────────────────────────────────────────────
+# ── Data Classes ─────────────────────────────────────────────────
 
 @dataclass
 class RepoConfig:
@@ -193,7 +193,7 @@ class RepoManager:
         except subprocess.TimeoutExpired:
             return -101, "", f"Git command timed out: {' '.join(cmd)}"
         except FileNotFoundError:
-            return -100, "", "git nicht gefunden"
+            return -100, "", "git not found"
 
     async def _arun(self, *cmd, cwd: Optional[str] = None) -> Tuple[int, str, str]:
         loop = asyncio.get_event_loop()
@@ -219,7 +219,7 @@ class RepoManager:
 
             if local_commit != remote_commit:
                 status.changes_detected = True
-                log.sub(f"{config.name}: neue commits ({local_commit[:8]} → {remote_commit[:8]})")
+                log.sub(f"{config.name}: new commits ({local_commit[:8]} → {remote_commit[:8]})")
                 rc, _, err = self._run("git", "reset", "--hard", f"origin/{branch}", cwd=str(repo_dir))
                 if rc:
                     status.error = f"pull failed: {err}"
@@ -237,17 +237,17 @@ class RepoManager:
             if rc != 0 and "not found in upstream" in err:
                 fallback_branch = self.default_branch
                 if fallback_branch != str(branch):
-                    log.sub(f"{config.name}: branch '{branch}' nicht gefunden, versuche '{fallback_branch}'...")
+                    log.sub(f"{config.name}: branch '{branch}' not found, trying '{fallback_branch}'...")
                     rc, out, err = self._run("git", "clone", "--depth=100", "-b", str(fallback_branch), url, str(repo_dir))
             if rc != 0:
-                status.error = f"Clone fehlgeschlagen: {err}"
-                log.error(f"{config.name}: clone fehlgeschlagen")
+                status.error = f"Clone failed: {err}"
+                log.error(f"{config.name}: clone failed")
                 log.error(f"Stderr: {err}")
                 return status
             rc, commit, _ = self._run("git", "rev-parse", "HEAD", cwd=str(repo_dir))
             status.latest_commit = commit
             status.exists = True
-            log.sub(f"{config.name}: geklont ({commit[:8]})")
+            log.sub(f"{config.name}: cloned ({commit[:8]})")
 
         return status
 
@@ -256,7 +256,7 @@ class RepoManager:
         return await loop.run_in_executor(None, self.ensure_repo, config)
 
     def init_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
-        log.step("Repository Initialisierung")
+        log.step("Repository Initialization")
         return [self.ensure_repo(r) for r in repos]
 
     def update_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
@@ -264,7 +264,7 @@ class RepoManager:
         return [self.ensure_repo(r) for r in repos]
 
     async def ainit_all(self, repos: List[RepoConfig]) -> List[RepoStatus]:
-        log.step("Repository Initialisierung (async)")
+        log.step("Repository Initialization (async)")
         loop = asyncio.get_event_loop()
         tasks = [loop.run_in_executor(None, self.ensure_repo, r) for r in repos]
         return await asyncio.gather(*tasks)
@@ -288,7 +288,7 @@ class LeanKGManager:
             result = subprocess.run([self.cmd, *args], capture_output=True, text=True, cwd=cwd, timeout=60)
             return result.returncode, result.stdout, result.stderr
         except FileNotFoundError:
-            return -100, "", "leankg nicht gefunden"
+            return -100, "", "leankg not found"
         except subprocess.TimeoutExpired:
             return -101, "", "Timeout"
 
@@ -319,15 +319,15 @@ class LeanKGManager:
 
     def index_all(self, statuses: List[RepoStatus]):
         if not self.is_available():
-            log.warn("LeanKG CLI nicht verfuegbar → ueberspringe Indexierung (Repos sind trotzdem geklont)")
+            log.warn("LeanKG CLI not available → skipping indexing (repos are still cloned)")
             return
-        log.step("LeanKG Indexierung")
+        log.step("LeanKG Indexing")
         for s in statuses:
             if s.error:
                 continue
-            log.sub(f"{s.config.name}: indexiere...")
+            log.sub(f"{s.config.name}: indexing...")
             if self.index_repo(s.local_path):
-                log.ok(f"{s.config.name}: indiziert")
+                log.ok(f"{s.config.name}: indexed")
                 s.leankg_ready = True
 
 
@@ -358,7 +358,7 @@ class OllamaClient:
                 error_body = e.read().decode("utf-8", errors="replace")
                 if e.code in (503, 429, 502) and attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
-                    print(f"   ⚠️  Ollama HTTP {e.code} (Versuch {attempt+1}/{self.MAX_RETRIES}), Retry in {delay}s...")
+                    print(f"   ⚠️  Ollama HTTP {e.code} (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
                     import time
                     time.sleep(delay)
                     last_error = RuntimeError(f"Ollama HTTP {e.code}: {error_body}")
@@ -367,13 +367,13 @@ class OllamaClient:
             except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
-                    print(f"   ⚠️  Ollama nicht erreichbar (Versuch {attempt+1}/{self.MAX_RETRIES}), Retry in {delay}s...")
+                    print(f"   ⚠️  Ollama not reachable (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
                     import time
                     time.sleep(delay)
                     last_error = e
                     continue
-                raise RuntimeError(f"Ollama nicht erreichbar nach {self.MAX_RETRIES} Versuchen: {e}") from e
-        raise last_error or RuntimeError("Ollama fehlgeschlagen")
+                raise RuntimeError(f"Ollama not reachable after {self.MAX_RETRIES} attempts: {e}") from e
+        raise last_error or RuntimeError("Ollama failed")
 
     def is_available(self) -> bool:
         try:
@@ -389,8 +389,8 @@ class OllamaClient:
             "model": self.model,
             "messages": [
                 {"role": "system", "content": (
-                    "Du bist ein Senior-Architekt. Analysiere das Ticket und waehle die Repositories, "
-                    "die am wahrscheinlichsten betroffen sind. Antworte NUR als JSON."
+                    "You are a Senior Architect. Analyze the ticket and select the repositories "
+                    "most likely affected. Respond ONLY as JSON."
                 )},
                 {"role": "user", "content": prompt}
             ],
@@ -400,7 +400,7 @@ class OllamaClient:
         raw = self._post(body)
         content = raw.get("message", {}).get("content", "")
         if not content:
-            raise RuntimeError(f"Ollama lieferte keine Antwort: {raw}")
+            raise RuntimeError(f"Ollama returned no answer: {raw}")
         try:
             return json.loads(content)
         except json.JSONDecodeError:
@@ -408,7 +408,7 @@ class OllamaClient:
             m = re.search(r'\{.*\}', content, re.DOTALL)
             if m:
                 return json.loads(m.group(0))
-            raise RuntimeError(f"Kein JSON in Ollama-Antwort: {content[:300]}")
+            raise RuntimeError(f"No JSON in Ollama response: {content[:300]}")
 
     def _make_prompt(self, ticket: Ticket, repo_contexts: List[RepoStatus], leankg: LeanKGManager) -> str:
         blocks = []
@@ -427,8 +427,8 @@ class OllamaClient:
             })
 
         return json.dumps({
-            "instruction": ("Waehle 1–4 Repositories fuer dieses Ticket. "
-                            "Gib JSON zurueck mit: selected_repos[], primary_repo, "
+            "instruction": ("Select 1–4 repositories for this ticket. "
+                            "Return JSON with: selected_repos[], primary_repo, "
                             "complexity (Low/Medium/High), estimated_hours, reasoning."),
             "ticket": {
                 "id": ticket.id,
@@ -468,16 +468,16 @@ def configure_git_credentials():
         subprocess.run(["git", "config", "--global", "credential.helper", "store"], check=False)
         subprocess.run(["git", "config", "--global", "user.email", "hivemind-agents@example.com"], check=False)
         subprocess.run(["git", "config", "--global", "user.name", "HiveMind"], check=False)
-        log.ok(f"Git-Credentials fuer {', '.join(sorted(hosts))} gesetzt")
+        log.ok(f"Git credentials set for {', '.join(sorted(hosts))}")
     else:
-        log.warn("GITLAB_TOKEN nicht gesetzt – ggf. Clone-Fehler")
+        log.warn("GITLAB_TOKEN not set – possible clone errors")
 
 
 # ── Workspace Utilities ─────────────────────────────────────────
 
 def create_opencode_config(workspace_dir: Path, ticket: Ticket, selected: List[RepoConfig],
                            analysis: Dict, assignment_md: str):
-    """Erzeugt .opencode/opencode.json fuer den Agent."""
+    """Creates .opencode/opencode.json for the agent."""
 
     git_user = get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token")
     git_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
@@ -510,18 +510,18 @@ def create_opencode_config(workspace_dir: Path, ticket: Ticket, selected: List[R
 
     (opencode_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    log.ok("Workspace .opencode/ erzeugt")
+    log.ok("Workspace .opencode/ created")
 
 
 def create_launch_scripts(workspace_dir: Path):
-    """Erzeugt start.sh und entrypoint.sh im Workspace."""
+    """Creates start.sh and entrypoint.sh in the workspace."""
     start_sh = workspace_dir / "start.sh"
     start_sh.write_text("""#!/bin/bash
 set -e
-echo "🚀 Starte Agent..."
+echo "🚀 Starting agent..."
 cd "$(dirname "$0")"
 if [ -f .opencode/opencode.json ]; then
-    echo "📋 Aufgabe geladen:"
+    echo "📋 Task loaded:"
     cat .opencode/config.json | jq -r '.ticket.title'
 fi
 bash "$(dirname "$0")/entrypoint.sh"
@@ -534,32 +534,32 @@ WORKSPACE="$(pwd)"
 echo "📋 Ticket:  $(jq -r '.ticket.id' $WORKSPACE/.opencode/config.json) – $(jq -r '.ticket.title' $WORKSPACE/.opencode/config.json)"
 echo "🌿 Branch:  feature/$(jq -r '.ticket.id' $WORKSPACE/.opencode/config.json)"
 echo "🧪 Dry-Run: false"
-echo "🤖 Starte opencode mit Task..."
+echo "🤖 Starting opencode with task..."
 export OPENCODE_MODEL="ollama/{OPENCODE_MODEL}"
 export OLLAMA_HOST="https://ollama.com/v1"
 export OLLAMA_CLOUD_API_KEY="{OLLAMA_CLOUD_API_KEY}"
 cd "$WORKSPACE"
 for repo in $(jq -r '.repositories[].name' $WORKSPACE/.opencode/config.json); do
     if [ -d "$repo" ]; then
-        echo "📦 $repo: Bearbeite..."
+        echo "📦 $repo: Processing..."
         cd "$WORKSPACE/$repo"
         if ! git diff --quiet HEAD 2>/dev/null; then
-            echo "✅ Änderungen erkannt, erstelle Commit..."
+            echo "✅ Changes detected, creating commit..."
             git add -A
             git commit -m "Agent: $(jq -r '.ticket.title' $WORKSPACE/.opencode/config.json)"
             git push origin HEAD:feature/$(jq -r '.ticket.id' $WORKSPACE/.opencode/config.json) || true
         else
-            echo "📦 $repo: Keine Änderungen, überspringe."
+            echo "📦 $repo: No changes, skipping."
         fi
         cd "$WORKSPACE"
     fi
 done
-echo "🏁 Alle Repos verarbeitet."
+echo "🏁 All repos processed."
 """, encoding="utf-8")
 
     start_sh.chmod(0o755)
     entrypoint_sh.chmod(0o755)
-    log.ok("Launch Scripts erzeugt")
+    log.ok("Launch scripts created")
 
 
 def generate_assignment_prompt(ticket: Ticket, analysis: Dict, repos: List[RepoConfig]) -> str:
@@ -568,7 +568,6 @@ def generate_assignment_prompt(ticket: Ticket, analysis: Dict, repos: List[RepoC
     primary = analysis.get("primary_repo", "–")
     reasoning = analysis.get("reasoning", "")
 
-    # Bei Retry: review_notes als Kontext hinzufuegen
     retry_context = ""
     review_notes = analysis.get("review_notes", "")
     mr_url = analysis.get("mr_url", "")
@@ -578,60 +577,60 @@ def generate_assignment_prompt(ticket: Ticket, analysis: Dict, repos: List[RepoC
     if retry_count > 0 or review_notes or pipeline_status == "failed":
         retry_context = f"""
 
-## ⚠️ Retry-Kontext (Versuch {retry_count + 1})
-Dieses Ticket wurde bereits bearbeitet, aber es gab Probleme die behoben werden muessen:
+## ⚠️ Retry Context (Attempt {retry_count + 1})
+This ticket has already been processed, but there were issues that need to be fixed:
 
-WICHTIG: Pushe deine Aenderungen in denselben bestehenden Branch `feature/{ticket.id}`. Erstelle KEINEN neuen Branch. Der Branch existiert bereits auf dem Remote.
+IMPORTANT: Push your changes to the same existing branch `feature/{ticket.id}`. Do NOT create a new branch. The branch already exists on the remote.
 
 """
         if pipeline_status == "failed":
-            retry_context += "- **Pipeline fehlgeschlagen** – Bitte stelle sicher, dass alle Tests und Typechecks bestehen.\n"
+            retry_context += "- **Pipeline failed** – Please ensure all tests and typechecks pass.\n"
         if review_notes:
-            retry_context += f"- **Review-Feedback:** {review_notes}\n"
+            retry_context += f"- **Review feedback:** {review_notes}\n"
         if mr_url:
-            retry_context += f"- **MR-Link:** {mr_url}\n"
+            retry_context += f"- **MR link:** {mr_url}\n"
         conflict_status = analysis.get("conflict_status", "")
         if conflict_status == "conflict_detected":
-            retry_context += "- **Merge-Konflikt** – Der Branch hat Konflikte mit dem Ziel-Branch. Loese die Konflikte auf, rebase auf den Ziel-Branch und pushe mit Force-Push.\n"
+            retry_context += "- **Merge conflict** – The branch has conflicts with the target branch. Resolve the conflicts, rebase onto the target branch, and push with force push.\n"
 
     repo_summaries = "\n".join(
-        f"  • **{r.name}** – {r.description or 'Keine Beschreibung'} (Tags: {', '.join(r.tags)})"
+        f"  • **{r.name}** – {r.description or 'No description'} (Tags: {', '.join(r.tags)})"
         for r in repos
     )
 
-    return f"""# 🎯 Aufgabe: {ticket.id} – {ticket.title}
+    return f"""# 🎯 Task: {ticket.id} – {ticket.title}
 
-## Prioritaet: {ticket.priority} | Typ: {ticket.issue_type} | Komplexitaet: {complexity} (~{estimates}h)
+## Priority: {ticket.priority} | Type: {ticket.issue_type} | Complexity: {complexity} (~{estimates}h)
 
-## Primaeres Repository: `{primary}`
+## Primary Repository: `{primary}`
 {retry_context}
-## Beschreibung
+## Description
 {ticket.description}
 
-## Ausgewaehlte Repositories ({len(repos)})
+## Selected Repositories ({len(repos)})
 {repo_summaries}
 
-## Bewertung
+## Assessment
 {reasoning}
 
-## Aufgaben
-1. Code-Aenderungen in den oben genannten Repositories vornehmen.
-2. Unit-/Integration-Tests ergaenzen.
-3. Commit mit aussagekraeftiger Nachricht (Conventional Commits).
-4. Branch `feature/{ticket.id}` pushen (Force-Push falls der Branch bereits existiert).
-5. Merge-Request erstellen oder aktualisieren (Titel = Ticket-Titel, Beschreibung = Aenderungszusammenfassung).
+## Tasks
+1. Make code changes in the repositories listed above.
+2. Add unit/integration tests.
+3. Commit with descriptive message (Conventional Commits).
+4. Push branch `feature/{ticket.id}` (force push if branch already exists).
+5. Create or update merge request (title = ticket title, description = change summary).
 
-## Akzeptanzkriterien
-- [ ] Ticket-Anforderung vollstaendig umgesetzt.
-- [ ] Tests decken die Aenderung ab.
-- [ ] Saubere Commits in allen betroffenen Repos.
-- [ ] Keine Regressionen.
-- [ ] Typecheck und Lint bestehen (falls CI vorhanden).
+## Acceptance Criteria
+- [ ] Ticket requirement fully implemented.
+- [ ] Tests cover the changes.
+- [ ] Clean commits in all affected repos.
+- [ ] No regressions.
+- [ ] Typecheck and lint pass (if CI is present).
 
-## Hinweise
-- Halte dich an bestehende Coding-Conventions.
-- Falls unklar: Architektur und Schnittstellen analysieren.
-- Beachte den Tech-Stack.
+## Notes
+- Follow existing coding conventions.
+- If unclear: analyze architecture and interfaces.
+- Consider the tech stack.
 """
 
     instructions_raw = ""
@@ -645,7 +644,7 @@ WICHTIG: Pushe deine Aenderungen in denselben bestehenden Branch `feature/{ticke
     if instructions_raw:
         prompt += f"""
 
-## Agent-Anweisungen
+## Agent Instructions
 {instructions_raw}
 """
 
@@ -659,13 +658,13 @@ def _kubectl(args: str) -> Tuple[int, str, str]:
         result = subprocess.run(f"kubectl {args}", shell=True, capture_output=True, text=True, timeout=30)
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:
-        return -100, "", "kubectl nicht gefunden"
+        return -100, "", "kubectl not found"
     except subprocess.TimeoutExpired:
         return -101, "", "Timeout"
 
 
 def _ensure_ollama_secret():
-    """Erstellt K8s Secret mit Ollama Cloud API Key falls nicht vorhanden."""
+    """Creates K8s Secret with Ollama Cloud API Key if not present."""
     if not OLLAMA_CLOUD_API_KEY:
         return False
     
@@ -686,8 +685,8 @@ stringData:
     secret_path.write_text(secret_yaml, encoding="utf-8")
     rc, _, err = _kubectl(f"apply -f {secret_path}")
     if rc != 0:
-        raise RuntimeError(f"Ollama Cloud Secret konnte nicht erstellt werden: {err}")
-    log.ok("Ollama Cloud Secret erstellt")
+        raise RuntimeError(f"Could not create Ollama Cloud Secret: {err}")
+    log.ok("Ollama Cloud Secret created")
     return True
 
 
@@ -703,20 +702,19 @@ def spawn_agent_pod(ticket: Ticket, selected: List[RepoConfig], assignment_md: s
     GITLAB_HOST_SAFE = _sanitize_yaml_value(get_setting("git_host") or os.getenv("GITLAB_HOST") or "")
     GITLAB_TOKEN_SAFE = _sanitize_yaml_value(get_setting("git_token") or GITLAB_TOKEN)
 
-    log.step("Agent-Pod erzeugen")
+    log.step("Creating agent pod")
 
     rc, out, err = _kubectl(f"get namespace {AGENT_NAMESPACE} -o name")
     if rc != 0:
-        log.info(f"Namespace {AGENT_NAMESPACE} existiert nicht → erstelle...")
+        log.info(f"Namespace {AGENT_NAMESPACE} does not exist → creating...")
         rc2, _, err2 = _kubectl(f"create namespace {AGENT_NAMESPACE}")
         if rc2 != 0:
-            raise RuntimeError(f"Namespace {AGENT_NAMESPACE} konnte nicht erstellt werden: {err2}")
+            raise RuntimeError(f"Could not create namespace {AGENT_NAMESPACE}: {err2}")
 
-    # Ollama Secret sicherstellen
     has_ollama_secret = _ensure_ollama_secret()
 
     # ConfigMap: repos
-    log.sub("Erstelle ConfigMap: repos")
+    log.sub("Creating ConfigMap: repos")
     repos_cm_yaml = f"""apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -733,11 +731,11 @@ data:
     repos_path.write_text(repos_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {repos_path}")
     if rc != 0:
-        raise RuntimeError(f"ConfigMap repos konnte nicht angelegt werden: {err}")
-    log.ok("ConfigMap repos angelegt")
+        raise RuntimeError(f"Could not create ConfigMap repos: {err}")
+    log.ok("ConfigMap repos created")
 
     # ConfigMap: assignment
-    log.sub("Erstelle ConfigMap: assignment")
+    log.sub("Creating ConfigMap: assignment")
     assignment_cm_yaml = f"""apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -754,11 +752,11 @@ data:
     assignment_path.write_text(assignment_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {assignment_path}")
     if rc != 0:
-        raise RuntimeError(f"ConfigMap assignment konnte nicht angelegt werden: {err}")
-    log.ok("ConfigMap assignment angelegt")
+        raise RuntimeError(f"Could not create ConfigMap assignment: {err}")
+    log.ok("ConfigMap assignment created")
 
     # ConfigMap: opencode.json
-    log.sub("Erstelle ConfigMap: opencode")
+    log.sub("Creating ConfigMap: opencode")
 
     agent_id = ticket.agent_id if hasattr(ticket, 'agent_id') and ticket.agent_id else None
     if agent_id:
@@ -838,8 +836,8 @@ data:
     opencode_path.write_text(opencode_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {opencode_path}")
     if rc != 0:
-        raise RuntimeError(f"ConfigMap opencode konnte nicht angelegt werden: {err}")
-    log.ok("ConfigMap opencode angelegt")
+        raise RuntimeError(f"Could not create ConfigMap opencode: {err}")
+    log.ok("ConfigMap opencode created")
 
     # ConfigMap: memory blocks (agent-specific, DB-persisted)
     memory_md = ""
@@ -851,23 +849,23 @@ data:
     if not memory_md:
         memory_md = """---
 label: persona
-description: Agent-Identitaet und Verhalten
+description: Agent identity and behavior
 limit: 5000
 read_only: false
 ---
-Du bist ein autonomer Software-Entwickler. Arbeite sorgfaeltig und methodisch.
+You are an autonomous software developer. Work carefully and methodically.
 
 ---
 label: human
-description: Praeferenzen des Operators
+description: Operator preferences
 limit: 5000
 read_only: false
 ---
-Bevorzuge deutsche UI-Sprache. Verwende Conventional Commits. Tests sind Pflicht.
+Prefer English UI language. Use Conventional Commits. Tests are mandatory.
 
 ---
 label: project
-description: Projekt-Konventionen und Architektur
+description: Project conventions and architecture
 limit: 5000
 read_only: false
 ---
@@ -891,15 +889,15 @@ data:
     memory_path.write_text(memory_cm_yaml, encoding="utf-8")
     rc, out, err = _kubectl(f"apply -f {memory_path}")
     if rc != 0:
-        raise RuntimeError(f"ConfigMap memory konnte nicht angelegt werden: {err}")
-    log.ok("ConfigMap memory angelegt")
+        raise RuntimeError(f"Could not create ConfigMap memory: {err}")
+    log.ok("ConfigMap memory created")
 
     complexity = analysis.get("complexity", "Medium")
     primary = analysis.get("primary_repo", selected[0].name)
 
-    log.sub("Erstelle Agent-Pod")
+    log.sub("Creating agent pod")
 
-    # Env-Var fuer Ollama Secret
+    # Env var for Ollama Secret
     ollama_env = ""
     if has_ollama_secret:
         ollama_env = """        - name: OLLAMA_CLOUD_API_KEY
@@ -961,7 +959,7 @@ spec:
             if echo "$url" | grep -qE "^https?://"; then
               url=$(echo "$url" | sed -E "s|^(https?://)|\\1${{GIT_USER}}:${{GITLAB_TOKEN}}@|")
             fi
-            echo "Cloning $repo (Branch: $branch) ..."
+            echo "Cloning $repo (branch: $branch) ..."
             git clone -b "$branch" --single-branch "$url" "/workspace/$repo"
             echo "Init leankg $repo ..."
             cd "/workspace/$repo"
@@ -1039,19 +1037,19 @@ spec:
     # Delete existing pod if it exists (spec changes are not allowed)
     rc_del, _, _ = _kubectl(f"delete pod {pod_name} -n {AGENT_NAMESPACE} --force --grace-period=0 2>/dev/null")
     if rc_del == 0:
-        log.info(f"Bestehenden Pod {pod_name} gelöscht, erstelle neuen...")
+        log.info(f"Deleted existing pod {pod_name}, creating new...")
         import time
         time.sleep(2)
 
     rc, out, err = _kubectl(f"apply -f {pod_path}")
     if rc != 0:
-        raise RuntimeError(f"Agent-Pod konnte nicht gestartet werden: {err}")
-    log.ok(f"Agent-Pod {pod_name} gestartet")
+        raise RuntimeError(f"Could not start agent pod: {err}")
+    log.ok(f"Agent pod {pod_name} started")
 
     log.info(f"Ticket: {ticket.id} – {ticket.title}")
-    log.info(f"Komplexitaet: {complexity} | Primaer: {primary}")
+    log.info(f"Complexity: {complexity} | Primary: {primary}")
     log.info(f"Repos ({len(selected)}): {', '.join(r.name for r in selected)}")
-    log.info(f"Pod-Status: kubectl -n {AGENT_NAMESPACE} get pod {pod_name} -w")
+    log.info(f"Pod status: kubectl -n {AGENT_NAMESPACE} get pod {pod_name} -w")
     return True
 
 
@@ -1067,9 +1065,9 @@ class Orchestrator:
         self._statuses: List[RepoStatus] = []
 
     def init(self):
-        log.step("=== Orchestrator Initialisierung ===")
+        log.step("=== Orchestrator Initialization ===")
         log.info(f"Work-Dir:  {self.config.work_dir}")
-        log.info(f"PVC-Pfad:  {self.config.pvc_mount_path}")
+        log.info(f"PVC path:  {self.config.pvc_mount_path}")
         log.info(f"Branch:    {self.config.track_branch}")
         log.info(f"Repos:     {len(self.config.repositories)}")
 
@@ -1080,7 +1078,7 @@ class Orchestrator:
         if self.config.leankg_enabled:
             self.leankg.index_all(self._statuses)
 
-        log.step("Initialisierung abgeschlossen")
+        log.step("Initialization complete")
 
     def update(self):
         log.step("=== Repository Update ===")
@@ -1088,55 +1086,55 @@ class Orchestrator:
 
         changed = [s for s in self._statuses if s.changes_detected]
         if changed:
-            log.info(f"{len(changed)} Repos hatten Aenderungen → Re-Index via LeanKG")
+            log.info(f"{len(changed)} repos had changes → Re-index via LeanKG")
             if self.config.leankg_enabled:
                 for s in changed:
                     if not s.error and self.leankg.index_repo(s.local_path):
                         s.leankg_ready = True
-                        log.ok(f"{s.config.name}: re-indiziert")
+                        log.ok(f"{s.config.name}: re-indexed")
         else:
-            log.info("Keine Aenderungen erkannt.")
+            log.info("No changes detected.")
         return self._statuses
 
     def process(self, ticket: Ticket, use_llm: bool, skip_clone: bool) -> Path:
         self.update()
 
-        log.step("Auswahl der benoetigten Repositories")
+        log.step("Selecting required repositories")
         analysis = None
 
         if use_llm and self.llm.is_available():
-            log.info("Verwende Ollama...")
+            log.info("Using Ollama...")
             try:
                 analysis = self.llm.analyze_repos_for_ticket(ticket, self._statuses, self.leankg)
-                log.info(f"LLM-Auswahl:    {analysis.get('selected_repos', [])}")
-                log.info(f"Primaer:          {analysis.get('primary_repo')}")
-                log.info(f"Komplexitaet:     {analysis.get('complexity')}")
+                log.info(f"LLM selection:    {analysis.get('selected_repos', [])}")
+                log.info(f"Primary:           {analysis.get('primary_repo')}")
+                log.info(f"Complexity:        {analysis.get('complexity')}")
             except RuntimeError as e:
-                log.error(f"LLM-Fehler: {e}")
+                log.error(f"LLM error: {e}")
                 analysis = None
         elif use_llm:
-            log.error(f"Ollama nicht erreichbar ({self.llm.host})")
+            log.error(f"Ollama not reachable ({self.llm.host})")
 
         if not analysis:
-            log.error("Keine KI-Analyse verfuegbar – Abbruch")
+            log.error("No AI analysis available – aborting")
             return None
 
         selected_names = set(analysis.get("selected_repos", []))
         selected_configs = [r for r in self.config.repositories if r.name in selected_names]
 
-        log.step("Prompt generieren")
+        log.step("Generating prompt")
         prompt = generate_assignment_prompt(ticket, analysis, selected_configs)
 
         set_ticket_ai_planning(ticket.id, analysis)
 
-        log.step("Workspace bauen")
+        log.step("Building workspace")
         workspace_dir = Path(self.config.work_dir) / f"workspace_{ticket.id}"
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
         create_opencode_config(workspace_dir / ".opencode", ticket, selected_configs, analysis, prompt)
         create_launch_scripts(workspace_dir)
 
-        log.step("Agent-Pod starten")
+        log.step("Starting agent pod")
         spawn_agent_pod(ticket, selected_configs, prompt, analysis)
 
         return workspace_dir
@@ -1148,15 +1146,15 @@ def print_usage():
     print("""Usage: python main.py <command> [...]
 
 Commands:
-  init                         Alle Repos pullen + LeanKG indexieren
-  init-repos                   GitLab-Projekte importieren + KI Tags/Beschreibung
-  update                       Alle Repos updaten + Delta + Re-Index
-  process <ticket.json> [...]  Ticket analysieren + Agent-Pod im Cluster starten
-  serve                        HTTP-Server fuer Ticket-API starten
+  init                         Pull all repos + index via LeanKG
+  init-repos                   Import GitLab projects + AI tags/description
+  update                       Update all repos + delta + re-index
+  process <ticket.json> [...]  Analyze ticket + start agent pod in cluster
+  serve                        Start HTTP server for ticket API
 
 (process Flags: --llm, --llm-only, --no-clone, --leankg-only)
 
-Environment (aus .env oder direkt):
+Environment (from .env or direct):
   ORCHESTRATOR_CONFIG=/app/config/orchestrator_config.json
   AGENT_NAMESPACE=hivemind
   AGENT_IMAGE=hivemind-opencode:v2
@@ -1184,7 +1182,7 @@ def main():
         gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
         gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
         if not gitlab_host or not gitlab_token:
-            print("❌ GITLAB_HOST und GITLAB_TOKEN muessen gesetzt sein")
+            print("❌ GITLAB_HOST and GITLAB_TOKEN must be set")
             sys.exit(1)
 
         import urllib.parse as _urlparse
@@ -1197,7 +1195,7 @@ def main():
             with _urlreq.urlopen(req, timeout=30) as resp:
                 projects = json.loads(resp.read())
         except Exception as e:
-            print(f"❌ GitLab API Fehler: {e}")
+            print(f"❌ GitLab API error: {e}")
             sys.exit(1)
 
         from database import get_all_repos as _get_all_repos, add_repo as _add_repo, get_repo as _get_repo
@@ -1216,7 +1214,7 @@ def main():
             added += 1
             print(f"  + {name}: {description[:60]}")
 
-        print(f"\n✅ {added} Repos importiert, {len(projects) - added} bereits vorhanden")
+        print(f"\n✅ {added} repos imported, {len(projects) - added} already existing")
         return
 
     if cmd == "update":
@@ -1230,13 +1228,13 @@ def main():
         if raw_port.startswith("tcp://"):
             raw_port = raw_port.split(":")[-1]
         PORT = int(raw_port)
-        print(f"🌐 Orchestrator FastAPI-Server auf Port {PORT}")
+        print(f"🌐 Orchestrator FastAPI server on port {PORT}")
         uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)
         return
 
     if cmd == "process":
         if not remaining:
-            print("❌ Fehlendes Ticket-Argument")
+            print("❌ Missing ticket argument")
             print_usage()
 
         ticket_path = remaining[0]
@@ -1245,22 +1243,22 @@ def main():
         skip_clone = "--no-clone" in flags
 
         if not Path(ticket_path).is_file():
-            print(f"❌ Datei nicht gefunden: {ticket_path}")
+            print(f"❌ File not found: {ticket_path}")
             sys.exit(1)
 
         ticket = Ticket.from_json(ticket_path)
-        print(f"📋 Ticket geladen: {ticket.id} – {ticket.title}")
+        print(f"📋 Ticket loaded: {ticket.id} – {ticket.title}")
 
         orch = Orchestrator(ORCHESTRATOR_CONFIG)
         orch.init()
         orch.process(ticket, use_llm=use_llm, skip_clone=skip_clone)
         return
 
-    # Legacy: Ticket-Datei direkt als erstes Argument
+    # Legacy: ticket file directly as first argument
     if Path(cmd).is_file():
         flags = set(remaining)
         ticket = Ticket.from_json(cmd)
-        print(f"📋 Ticket geladen: {ticket.id} – {ticket.title}")
+        print(f"📋 Ticket loaded: {ticket.id} – {ticket.title}")
         orch = Orchestrator(ORCHESTRATOR_CONFIG)
         orch.init()
         orch.process(ticket, use_llm="--llm" in flags, skip_clone="--no-clone" in flags)

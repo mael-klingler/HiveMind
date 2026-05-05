@@ -15,7 +15,7 @@ def get_db() -> sqlite3.Connection:
 
 
 def _add_column_if_not_exists(cursor, table: str, column: str, definition: str):
-    """Fügt eine Spalte hinzu, falls sie noch nicht existiert (für Migrationen)."""
+    """Adds a column if it does not already exist (for migrations)."""
     cursor.execute(f"PRAGMA table_info({table})")
     columns = [row[1] for row in cursor.fetchall()]
     if column not in columns:
@@ -26,7 +26,7 @@ def init_db():
     conn = get_db()
     c = conn.cursor()
 
-    # Tickets Tabelle (mit MR + Review Lifecycle)
+    # Tickets table (with MR + Review Lifecycle)
     c.execute("""
     CREATE TABLE IF NOT EXISTS tickets (
         id TEXT PRIMARY KEY,
@@ -37,18 +37,18 @@ def init_db():
         priority TEXT,
         status TEXT DEFAULT 'queued',
         mr_status TEXT DEFAULT 'none',         -- none | open | merged | rejected
-        mr_url TEXT,                           -- Link zum Merge Request
+        mr_url TEXT,                           -- Link to merge request
         review_status TEXT DEFAULT 'pending',  -- pending | approved | changes_requested
-        review_notes TEXT,                     -- Review-Feedback
-        retry_count INTEGER DEFAULT 0,         -- Wiederholungen nach Reject
-        workspace_path TEXT,                   -- Pfad zum Workspace-Ordner
-        agent_id TEXT,                         -- Zugewiesener Agent
+        review_notes TEXT,                     -- Review feedback
+        retry_count INTEGER DEFAULT 0,         -- Retries after rejection
+        workspace_path TEXT,                   -- Path to workspace folder
+        agent_id TEXT,                         -- Assigned agent
         created_at TEXT,
         updated_at TEXT
     )
     """)
 
-    # Alte Spalten migrieren (für existierende DBs)
+    # Migrate old columns (for existing DBs)
     _add_column_if_not_exists(c, "tickets", "mr_status", "TEXT DEFAULT 'none'")
     _add_column_if_not_exists(c, "tickets", "mr_url", "TEXT")
     _add_column_if_not_exists(c, "tickets", "review_status", "TEXT DEFAULT 'pending'")
@@ -63,7 +63,7 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "mr_iid", "INTEGER")
     _add_column_if_not_exists(c, "tickets", "mr_conflict_status", "TEXT DEFAULT 'none'")
 
-    # Tickets Tabelle (mit MR + Review Lifecycle)
+    # Tickets table (with MR + Review Lifecycle)
     c.execute("""
     CREATE TABLE IF NOT EXISTS tickets (
         id TEXT PRIMARY KEY,
@@ -85,7 +85,7 @@ def init_db():
     )
     """)
 
-    # Spalten migrieren (fuer existierende DBs)
+    # Migrate columns (for existing DBs)
     _add_column_if_not_exists(c, "tickets", "mr_status", "TEXT DEFAULT 'none'")
     _add_column_if_not_exists(c, "tickets", "mr_url", "TEXT")
     _add_column_if_not_exists(c, "tickets", "review_status", "TEXT DEFAULT 'pending'")
@@ -95,7 +95,7 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "agent_id", "TEXT")
     _add_column_if_not_exists(c, "tickets", "ai_planning", "TEXT")
 
-    # Agents Tabelle
+    # Agents table
     c.execute("""
     CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
@@ -110,7 +110,7 @@ def init_db():
     )
     """)
 
-    # Queue Tabelle
+    # Queue table
     c.execute("""
     CREATE TABLE IF NOT EXISTS queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +126,7 @@ def init_db():
     )
     """)
 
-    # Arbeitsschritte pro Ticket/Agent
+    # Work steps per ticket/agent
     c.execute("""
     CREATE TABLE IF NOT EXISTS steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +142,7 @@ def init_db():
     )
     """)
 
-    # Konfiguration
+    # Configuration
     c.execute("""
     CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
@@ -150,11 +150,11 @@ def init_db():
     )
     """)
 
-    # Defaults einfügen
+    # Insert defaults
     c.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('max_agents', '3')")
     c.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('polling_interval_seconds', '5')")
 
-    # MCP Servers Tabelle
+    # MCP Servers table
     c.execute("""
     CREATE TABLE IF NOT EXISTS mcp_servers (
         name TEXT PRIMARY KEY,
@@ -169,9 +169,9 @@ def init_db():
     )
     """)
 
-    c.execute("INSERT OR IGNORE INTO mcp_servers (name, server_type, command, description) VALUES ('leankg-mcp', 'local', 'leankg mcp-stdio', 'LeanKG Code-Suche und Abhaengigkeitsanalyse')")
+    c.execute("INSERT OR IGNORE INTO mcp_servers (name, server_type, command, description) VALUES ('leankg-mcp', 'local', 'leankg mcp-stdio', 'LeanKG code search and dependency analysis')")
 
-    # Agent Instructions Tabelle
+    # Agent Instructions table
     c.execute("""
     CREATE TABLE IF NOT EXISTS agent_instructions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,7 +187,7 @@ def init_db():
     _add_column_if_not_exists(c, "mcp_servers", "args", "TEXT")
     _add_column_if_not_exists(c, "mcp_servers", "env", "TEXT")
 
-    # Agent Skills (MCP-Server Zuordnung)
+    # Agent Skills (MCP server assignments)
     c.execute("""
     CREATE TABLE IF NOT EXISTS agent_skills (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,7 +226,7 @@ def init_db():
     )
     """)
 
-    # Agent Repo Affinities (Agent → Repo Zuordnung)
+    # Agent Repo Affinities (Agent → Repo assignments)
     c.execute("""
     CREATE TABLE IF NOT EXISTS agent_repo_affinities (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,9 +249,9 @@ def init_db():
         updated_at TEXT
     )
     """)
-    c.execute("INSERT OR IGNORE INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-snip', 'Shell-Output komprimieren (60-97% Token-Ersparnis)', 'snip')")
-    c.execute("INSERT OR IGNORE INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-agent-memory', 'Persistente Memory-Bloecke fuer Agenten (Letta-inspiriert)', '')")
-    c.execute("INSERT OR IGNORE INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-handoff', 'Session-Handoff fuer kontextueelle Uebergabe bei Retries', '')")
+    c.execute("INSERT OR IGNORE INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-snip', 'Compress shell output (60-97% token savings)', 'snip')")
+    c.execute("INSERT OR IGNORE INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-agent-memory', 'Persistent memory blocks for agents (Letta-inspired)', '')")
+    c.execute("INSERT OR IGNORE INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-handoff', 'Session handoff for contextual transitions on retries', '')")
 
     # Agent Memory Blocks (DB-persisted)
     c.execute("""
@@ -270,7 +270,7 @@ def init_db():
     )
     """)
 
-    # Repos Tabelle
+    # Repos table
     c.execute("""
     CREATE TABLE IF NOT EXISTS repos (
         name TEXT PRIMARY KEY,
@@ -425,7 +425,7 @@ def create_ticket(ticket: Dict[str, Any]) -> str:
     ))
     conn.commit()
 
-    # In Queue einfügen
+    # Insert into queue
     c.execute("SELECT COUNT(*) FROM queue WHERE status IN ('waiting', 'running', 'queued')")
     pos = c.fetchone()[0] + 1
     c.execute("""
@@ -488,7 +488,7 @@ def stop_ticket(ticket_id: str) -> bool:
 # ── Review / MR Lifecycle ──────────────────────────────────
 
 def get_tickets_with_queue() -> List[Dict]:
-    """Alle Tickets mit aktuellem Queue-Status."""
+    """All tickets with current queue status."""
     conn = get_db()
     c = conn.cursor()
     c.execute("""
@@ -503,7 +503,7 @@ def get_tickets_with_queue() -> List[Dict]:
 
 
 def update_ticket_review(ticket_id: str, review_status: str, notes: str = "", mr_url: str = ""):
-    """Review-Ergebnis speichern: approved oder changes_requested."""
+    """Save review result: approved or changes_requested."""
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
@@ -514,12 +514,12 @@ def update_ticket_review(ticket_id: str, review_status: str, notes: str = "", mr
         review_notes = ?, mr_url = ?, updated_at = ? WHERE id = ?
         """, (notes, mr_url, now, ticket_id))
     elif review_status == "changes_requested":
-        # Ticket wieder in Queue einreihen
+        # Re-enqueue ticket
         c.execute("""
         UPDATE tickets SET status = 'queued', review_status = 'changes_requested',
         review_notes = ?, retry_count = retry_count + 1, mr_url = ?, updated_at = ? WHERE id = ?
         """, (notes, mr_url, now, ticket_id))
-        # Neuen Queue-Eintrag erstellen
+        # Create new queue entry
         c.execute("""
         INSERT INTO queue (ticket_id, position, status, created_at)
         VALUES (?, (SELECT COALESCE(MAX(position), 0) + 1 FROM queue), 'waiting', ?)
@@ -646,7 +646,7 @@ def set_max_agents(max_agents: int):
 
 
 def ensure_agent_pool():
-    """Stellt sicher, dass Default-Agenten existieren. max_agents = max. gleichzeitige laufende Agenten."""
+    """Ensures that default agents exist. max_agents = max concurrent running agents."""
     max_agents = get_max_agents()
     conn = get_db()
     c = conn.cursor()
@@ -660,7 +660,7 @@ def ensure_agent_pool():
                 (agent_id, f"Agent {i+1}", "idle", json.dumps([]))
             )
 
-    # Re-aktiviere deaktivierte Agenten (nicht-laufende)
+    # Re-enable disabled agents (non-running)
     c.execute("UPDATE agents SET status = 'idle' WHERE status = 'disabled'")
 
     conn.commit()
@@ -709,7 +709,7 @@ def fail_queue_item(queue_id: int, error: str):
     now = datetime.now().isoformat()
     c.execute("UPDATE queue SET status = 'failed', completed_at = ? WHERE id = ?", (now, queue_id))
     c.execute("INSERT INTO steps (queue_id, step_name, status, detail, timestamp) VALUES (?, ?, ?, ?, ?)",
-              (queue_id, "Fehler", "error", error, now))
+              (queue_id, "Error", "error", error, now))
     conn.commit()
     conn.close()
 
@@ -839,7 +839,7 @@ def set_setting(key: str, value: str):
 
 
 def import_settings_from_env():
-    """Überschreibt Settings aus Umgebungsvariablen."""
+    """Overrides settings from environment variables."""
     env_mapping = {
         "GIT_HOST": "git_host",
         "GIT_USER": "git_user",
@@ -855,7 +855,7 @@ def import_settings_from_env():
 
 
 def requeue_ticket(ticket_id: str, max_retries: int = 3) -> bool:
-    """Setzt ein fehlgeschlagenes Ticket zurueck in die Queue wenn retry_count < max_retries."""
+    """Puts a failed ticket back into the queue if retry_count < max_retries."""
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
@@ -887,7 +887,7 @@ def requeue_ticket(ticket_id: str, max_retries: int = 3) -> bool:
 
 
 def reopen_ticket(ticket_id: str) -> bool:
-    """Oeffnet ein abgeschlossenes/fehlgeschlagenes Ticket manuell erneut. Erhoeht retry_count NICHT."""
+    """Manually reopens a completed/failed ticket. Does NOT increment retry_count."""
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
@@ -924,7 +924,7 @@ def get_failed_tickets() -> List[Dict]:
 
 
 def get_open_mr_tickets() -> List[Dict]:
-    """Tickets mit offener MR (zum Ueberwachen von Pipeline + Comments)."""
+    """Tickets with an open MR (for monitoring pipelines and comments)."""
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM tickets WHERE mr_status = 'open' OR mr_url IS NOT NULL")
@@ -1416,15 +1416,15 @@ def delete_agent_memory_block(block_id: int):
 def seed_default_memory_blocks(agent_id: str):
     """Seed default memory blocks for a new agent."""
     defaults = [
-        ("_global", "persona", "Du bist ein autonomer Software-Entwickler. Arbeite sorgfaeltig und methodisch. Bevorzuge deutsche Kommentare im Code.", "Agenten-Identitaet und Verhalten"),
-        ("_global", "human", "Bevorzuge deutsche UI-Sprache. Verwende Conventional Commits. Keine Emojis in Commits.", "Praeferenzen des Operators"),
-        ("_global", "project", "Tech-Stack: Vue 3 + TypeScript Frontend, Go Backend. Tests sind Pflicht.", "Projekt-Konventionen und Architektur"),
+        ("_global", "persona", "You are an autonomous software developer. Work carefully and methodically. Prefer English comments in code.", "Agent identity and behavior"),
+        ("_global", "human", "Prefer English UI language. Use Conventional Commits. No emojis in commits.", "Operator preferences"),
+        ("_global", "project", "Tech stack: Vue 3 + TypeScript frontend, Go backend. Tests are mandatory.", "Project conventions and architecture"),
     ]
     for repo_name, label, content, desc in defaults:
         set_agent_memory_block(agent_id, repo_name, label, content, desc)
 
 
-# ▄ Init ▄
+# ── Init ──
 init_db()
 ensure_config_defaults()
 import_settings_from_env()

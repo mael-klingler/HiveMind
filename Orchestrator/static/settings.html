@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Einstellungen - HiveMind Orchestrator</title>
+  <title>Settings - HiveMind Orchestrator</title>
   <style>
     :root {
       --bg: #090c10;
@@ -197,23 +197,23 @@
           <span class="icon">&#128193;</span> Repositories
         </a>
         <a href="/settings" class="sidebar-link active">
-          <span class="icon">&#9881;</span> Einstellungen
+          <span class="icon">&#9881;</span> Settings
         </a>
       </nav>
       <div class="sidebar-footer">
         <small style="color:var(--muted);font-size:0.7rem">
           <span class="status-dot" id="connStatus"></span>
-          <span id="connLabel">Verbunden</span>
+          <span id="connLabel">Connected</span>
         </small>
       </div>
     </aside>
 
     <main class="main">
       <div class="page-header">
-        <h2>Einstellungen</h2>
+        <h2>Settings</h2>
         <div class="actions">
-          <button class="btn btn-secondary" onclick="loadSettings()">Zuruecksetzen</button>
-          <button class="btn btn-primary" onclick="saveSettings()">Speichern</button>
+          <button class="btn btn-secondary" onclick="loadSettings()">Reset</button>
+          <button class="btn btn-primary" onclick="saveSettings()">Save</button>
         </div>
       </div>
 
@@ -223,37 +223,37 @@
           <div class="form-row">
             <label>GITLAB_HOST</label>
             <input id="gitlab_host" placeholder="YOUR_GITLAB_HOST">
-            <div class="help">Basis-URL des GitLab-Servers</div>
+            <div class="help">Base URL of the GitLab server</div>
           </div>
           <div class="form-row">
             <label>GIT_USER</label>
             <input id="git_user" placeholder="gitlab-ci-token">
-            <div class="help">Git-Benutzername fuer Clone-Authentifizierung (z.B. oauth2, gitlab-ci-token, username)</div>
+            <div class="help">Git username for clone authentication (e.g. oauth2, gitlab-ci-token, username)</div>
           </div>
           <div class="form-row">
             <label>GITLAB_TOKEN</label>
             <div class="input-with-toggle">
               <input id="gitlab_token" type="password" placeholder="glpat-xxx">
-              <button class="toggle-vis" onclick="toggleVis('gitlab_token')">Anzeigen</button>
+              <button class="toggle-vis" onclick="toggleVis('gitlab_token')">Show</button>
             </div>
-            <div class="help">Personal Access Token / CI Token (maskiert)</div>
+            <div class="help">Personal Access Token / CI Token (masked)</div>
           </div>
           <div class="form-grid">
             <div class="form-row">
               <label>GITLAB_SSH_KEY_BASE64</label>
               <input id="gitlab_ssh_key_base64" type="password" placeholder="LS0tLi4u">
-              <div class="help">Base64-kodierter SSH-Key</div>
+              <div class="help">Base64-encoded SSH key</div>
             </div>
             <div class="form-row">
               <label>SSH_KEY_PATH</label>
               <input id="ssh_key_path" placeholder="/root/.ssh/id_rsa">
-              <div class="help">Pfad zum SSH-Key im Container</div>
+              <div class="help">Path to SSH key in container</div>
             </div>
           </div>
           <div class="form-row">
             <label>DEFAULT_BRANCH</label>
             <input id="default_branch" placeholder="main">
-            <div class="help">Standard-Branch fuer neue Repositories</div>
+            <div class="help">Default branch for new repositories</div>
           </div>
         </div>
       </div>
@@ -301,9 +301,9 @@
             <label>OLLAMA_CLOUD_API_KEY</label>
             <div class="input-with-toggle">
               <input id="ollama_cloud_api_key" type="password" placeholder="sk-...">
-              <button class="toggle-vis" onclick="toggleVis('ollama_cloud_api_key')">Anzeigen</button>
+              <button class="toggle-vis" onclick="toggleVis('ollama_cloud_api_key')">Show</button>
             </div>
-            <div class="help">Ollama Cloud API-Schluessel (maskiert)</div>
+            <div class="help">Ollama Cloud API key (masked)</div>
           </div>
         </div>
       </div>
@@ -319,7 +319,7 @@
             <div class="form-row">
               <label>AGENT_RETRY_DELAY</label>
               <input id="agent_retry_delay" type="number" placeholder="120">
-              <div class="help">Sekunden zwischen Retry-Versuchen</div>
+              <div class="help">Seconds between retry attempts</div>
             </div>
           </div>
           <div class="form-grid">
@@ -328,25 +328,25 @@
               <input id="agent_max_retries" type="number" placeholder="3">
             </div>
             <div class="form-row">
-              <label>Max. gleichzeitige Agenten</label>
+              <label>Max concurrent agents</label>
               <input id="max_agents" type="number" min="1" max="20" value="3">
             </div>
           </div>
           <div class="form-row">
             <label>DRY_RUN</label>
             <select id="dry_run">
-              <option value="false">Deaktiviert</option>
-              <option value="true">Aktiviert</option>
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
             </select>
-            <div class="help">Wenn aktiviert, werden keine echten Aenderungen vorgenommen</div>
+            <div class="help">When enabled, no real changes will be made</div>
           </div>
         </div>
       </div>
 
       <div class="panel">
         <div class="panel-header">
-          <h3>K8s Agent-Pods</h3>
-          <button class="btn btn-secondary" onclick="loadAgents()" style="font-size:0.7rem;padding:0.3rem 0.6rem">Aktualisieren</button>
+          <h3>K8s Agent Pods</h3>
+          <button class="btn btn-secondary" onclick="loadAgents()" style="font-size:0.7rem;padding:0.3rem 0.6rem">Refresh</button>
         </div>
         <div class="panel-body" style="padding:0">
           <table class="pod-table">
@@ -354,7 +354,7 @@
               <tr><th>Name</th><th>Status</th><th>Ticket</th><th>Progress</th></tr>
             </thead>
             <tbody id="agentTableBody">
-              <tr><td colspan="4" style="color:var(--muted);text-align:center;padding:1.5rem">Lade...</td></tr>
+              <tr><td colspan="4" style="color:var(--muted);text-align:center;padding:1.5rem">Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -365,8 +365,8 @@
           <h3>Orchestrator</h3>
         </div>
         <div class="panel-body" style="display:flex;gap:0.75rem;align-items:center">
-          <button class="btn btn-danger" onclick="restartOrchestrator()">&#128260; Neustarten</button>
-          <span style="font-size:0.78rem;color:var(--muted)">Startet den Orchestrator-Prozess neu. Alle laufenden Agenten werden beendet.</span>
+          <button class="btn btn-danger" onclick="restartOrchestrator()">&#128260; Restart</button>
+          <span style="font-size:0.78rem;color:var(--muted)">Restarts the orchestrator process. All running agents will be terminated.</span>
         </div>
       </div>
     </main>
@@ -413,10 +413,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data)
         });
-        toast("Einstellungen gespeichert");
+        toast("Settings saved");
         await loadSettings();
       } catch(e) {
-        toast("Fehler beim Speichern: " + e.message, true);
+        toast("Error saving: " + e.message, true);
       }
     }
 
@@ -425,7 +425,7 @@
         const agents = await fetch("/api/agents").then(r => r.json());
         const tbody = document.getElementById("agentTableBody");
         if (!agents.length) {
-          tbody.innerHTML = `<tr><td colspan="4" style="color:var(--muted);text-align:center;padding:1.5rem">Keine Agenten</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="4" style="color:var(--muted);text-align:center;padding:1.5rem">No agents</td></tr>`;
           return;
         }
         tbody.innerHTML = agents.map(a => {
@@ -443,12 +443,12 @@
     }
 
     async function restartOrchestrator() {
-      if (!confirm("Orchestrator wirklich neustarten? Laufende Agenten werden beendet.")) return;
+      if (!confirm("Really restart the orchestrator? Running agents will be terminated.")) return;
       try {
         await fetch("/api/restart", { method: "POST" });
-        toast("Neustart initiiert...");
+        toast("Restart initiated...");
       } catch(e) {
-        toast("Neustart-Anfrage gesendet (Verbindung wird unterbrochen)", true);
+        toast("Restart request sent (connection will be interrupted)", true);
       }
     }
 
@@ -465,11 +465,11 @@
       es = new EventSource("/api/stream");
       es.onopen = () => {
         document.getElementById("connStatus").classList.remove("offline");
-        document.getElementById("connLabel").textContent = "Verbunden";
+        document.getElementById("connLabel").textContent = "Connected";
       };
       es.onerror = () => {
         document.getElementById("connStatus").classList.add("offline");
-        document.getElementById("connLabel").textContent = "Verbindung verloren";
+        document.getElementById("connLabel").textContent = "Connection lost";
         es.close();
         setTimeout(connectSSE, 5000);
       };
