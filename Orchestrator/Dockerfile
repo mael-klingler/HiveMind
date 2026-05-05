@@ -37,7 +37,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY database.py .
+COPY database_pg.py .
 COPY server.py .
+COPY k8s_client.py .
+COPY gitlab_client.py .
+COPY pod_builder.py .
 COPY static/ ./static/
 
 ENV PYTHONUNBUFFERED=1
