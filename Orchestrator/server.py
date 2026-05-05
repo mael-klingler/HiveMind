@@ -1097,6 +1097,24 @@ async def agent_session_root(ticket_id: str, request: Request):
     return await _proxy_request(ticket_id, "", request)
 
 
+@app.get("/api/agent-sessions")
+def api_agent_sessions():
+    running = [t for t in get_tickets(status=None) if t.get("status") == "running"]
+    sessions = []
+    for t in running:
+        ticket_id = t["id"]
+        pod_name = f"agent-worker-{ticket_id.lower()}"
+        namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+        sessions.append({
+            "ticket_id": ticket_id,
+            "title": t.get("title", ""),
+            "pod": pod_name,
+            "session_url": f"/agent-session/{ticket_id}/",
+            "status": t.get("status", "unknown"),
+        })
+    return sessions
+
+
 @app.websocket("/agent-session/{ticket_id}/ws")
 async def agent_session_ws(websocket: WebSocket, ticket_id: str):
     base_url = _resolve_pod_url(ticket_id)

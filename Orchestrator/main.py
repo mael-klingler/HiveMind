@@ -1000,7 +1000,7 @@ spec:
         - name: COMMENT_POLL_INTERVAL
           value: "{os.getenv('COMMENT_POLL_INTERVAL', '30')}"
       ports:
-        - name: opencode
+        - name: opencode-web
           containerPort: 4096
       resources:
         requests:
