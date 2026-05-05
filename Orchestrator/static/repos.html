@@ -129,6 +129,12 @@
       font-weight: 600; background: rgba(255,255,255,0.05);
       color: var(--muted); border: 1px solid var(--border);
     }
+    .repo-status-badge {
+      font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.45rem;
+      border-radius: 10px; margin-left: 0.4rem;
+    }
+    .repo-status-badge.active { background: var(--green-glow); color: var(--green); }
+    .repo-status-badge.pending { background: var(--yellow-glow); color: var(--yellow); }
     .repo-actions { display: flex; gap: 0.4rem; align-items: center; }
     .btn {
       display: inline-flex; align-items: center; gap: 0.35rem;
@@ -142,6 +148,8 @@
     .btn-secondary:hover { background: var(--border); }
     .btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
     .btn-danger:hover { filter: brightness(1.12); }
+    .btn-success { background: var(--green); color: #fff; border-color: var(--green); }
+    .btn-success:hover { filter: brightness(1.12); }
     .btn-sm { font-size: 0.72rem; padding: 0.3rem 0.6rem; }
 
     .modal-overlay {
@@ -254,11 +262,24 @@
 
       <div class="panel">
         <div class="panel-header">
-          <h3>Configured Repositories</h3>
-          <button class="btn btn-secondary btn-sm" onclick="loadRepos()">&#128260; Refresh</button>
+          <h3>&#9989; Active Repositories</h3>
+          <span id="activeCount" style="font-size:0.75rem;color:var(--muted)"></span>
         </div>
-        <div class="panel-body" id="reposList">
+        <div class="panel-body" id="activeReposList">
           <div class="placeholder">Loading repositories...</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h3>&#9203; Pending Repositories</h3>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            <span id="pendingCount" style="font-size:0.75rem;color:var(--muted)"></span>
+            <button class="btn btn-success btn-sm" id="activateAllBtn" onclick="activateAll()" style="display:none">&#10004; Activate All</button>
+          </div>
+        </div>
+        <div class="panel-body" id="pendingReposList">
+          <div class="placeholder">No pending repositories</div>
         </div>
       </div>
     </main>
@@ -343,6 +364,22 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="gitlabModal" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="modal" style="max-width:680px">
+      <div class="modal-header">
+        <h3>&#128270; Import from GitLab</h3>
+        <button class="modal-close" onclick="document.getElementById('gitlabModal').classList.remove('open')">&times;</button>
+      </div>
+      <div class="modal-body" id="gitlabModalBody">
+        <div class="placeholder">Loading...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('gitlabModal').classList.remove('open')">Cancel</button>
+        <button class="btn btn-primary" onclick="importSelectedGitlab()">Import Selected</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -375,30 +412,80 @@
     }
 
     function renderRepos() {
-      const el = document.getElementById("reposList");
-      if (!repos.length) {
-        el.innerHTML = `<div class="placeholder">No repositories configured</div>`;
-        return;
+      const active = repos.filter(r => r.active);
+      const pending = repos.filter(r => !r.active);
+
+      const activeEl = document.getElementById("activeReposList");
+      const pendingEl = document.getElementById("pendingReposList");
+
+      document.getElementById("activeCount").textContent = active.length ? `${active.length} active` : "";
+      document.getElementById("pendingCount").textContent = pending.length ? `${pending.length} pending` : "";
+      document.getElementById("activateAllBtn").style.display = pending.length > 0 ? "" : "none";
+
+      if (!active.length) {
+        activeEl.innerHTML = `<div class="placeholder">No active repositories. Activate pending repos below or add a new one.</div>`;
+      } else {
+        activeEl.innerHTML = active.map(r => renderRepoCard(r, true)).join("");
       }
-      el.innerHTML = repos.map(r => {
-        const tags = (r.tags || []).map(t => `<span class="repo-tag">${t}</span>`).join("");
-        const branch = r.branch || "development";
-        return `<div class="repo-card">
-          <div class="repo-card-top">
-            <div>
-              <span class="repo-name">${r.name}</span>
-              <span class="repo-branch" style="cursor:pointer" onclick="editBranch('${r.name}','${branch}')" title="Edit branch">${branch}</span>
-            </div>
-            <div class="repo-actions">
-              <button class="btn btn-secondary btn-sm" onclick="openEditRepoModal('${r.name}')">Edit</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteRepo('${r.name}')">Remove</button>
-            </div>
+
+      if (!pending.length) {
+        pendingEl.innerHTML = `<div class="placeholder">No pending repositories. Import from GitLab to discover projects.</div>`;
+      } else {
+        pendingEl.innerHTML = pending.map(r => renderRepoCard(r, false)).join("");
+      }
+    }
+
+    function renderRepoCard(r, isActive) {
+      const tags = (r.tags || []).map(t => `<span class="repo-tag">${t}</span>`).join("");
+      const branch = r.branch || "development";
+      const statusBadge = isActive
+        ? `<span class="repo-status-badge active">&#9989; active</span>`
+        : `<span class="repo-status-badge pending">&#9203; pending</span>`;
+      const toggleBtn = isActive
+        ? `<button class="btn btn-secondary btn-sm" onclick="toggleRepo('${r.name}', false)">&#9203; Deactivate</button>`
+        : `<button class="btn btn-success btn-sm" onclick="toggleRepo('${r.name}', true)">&#10004; Activate</button>`;
+      return `<div class="repo-card">
+        <div class="repo-card-top">
+          <div>
+            <span class="repo-name">${r.name}</span>${statusBadge}
+            <span class="repo-branch" style="cursor:pointer" onclick="editBranch('${r.name}','${branch}')" title="Edit branch">${branch}</span>
           </div>
-          <div class="repo-url">${r.url}</div>
-          ${r.description ? `<div class="repo-desc">${r.description}</div>` : ""}
-          ${tags ? `<div class="repo-tags">${tags}</div>` : ""}
-        </div>`;
-      }).join("");
+          <div class="repo-actions">
+            ${toggleBtn}
+            <button class="btn btn-secondary btn-sm" onclick="openEditRepoModal('${r.name}')">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteRepo('${r.name}')">Remove</button>
+          </div>
+        </div>
+        <div class="repo-url">${r.url}</div>
+        ${r.description ? `<div class="repo-desc">${r.description}</div>` : ""}
+        ${tags ? `<div class="repo-tags">${tags}</div>` : ""}
+      </div>`;
+    }
+
+    async function toggleRepo(name, activate) {
+      try {
+        const endpoint = activate ? `/repos/${encodeURIComponent(name)}/activate` : `/repos/${encodeURIComponent(name)}/deactivate`;
+        await api(endpoint, "POST");
+        showToast(activate ? "Repository activated" : "Repository deactivated");
+        await loadRepos();
+      } catch(e) {
+        showToast("Error: " + e.message, true);
+      }
+    }
+
+    async function activateAll() {
+      const pending = repos.filter(r => !r.active);
+      if (!pending.length) return;
+      if (!confirm(`Activate all ${pending.length} pending repositories?`)) return;
+      let ok = 0;
+      for (const r of pending) {
+        try {
+          await api(`/repos/${encodeURIComponent(r.name)}/activate`, "POST");
+          ok++;
+        } catch(e) {}
+      }
+      showToast(`${ok}/${pending.length} repos activated`);
+      await loadRepos();
     }
 
     async function fetchBranches(repoName) {
@@ -604,13 +691,77 @@
       } catch(e) {}
     }
 
+    let gitlabProjects = [];
+
     async function initFromGitlab() {
-      if (!confirm("Import all accessible GitLab projects?\nAI will generate tags and descriptions.")) return;
-      showToast("Importing from GitLab...");
+      showToast("Loading GitLab projects...");
       try {
-        const result = await api("/repos/init-from-gitlab", "POST", { use_ai: true });
+        gitlabProjects = await api("/repos/gitlab-projects");
+        renderGitlabModal();
+      } catch(e) {
+        showToast("Error: " + e.message, true);
+      }
+    }
+
+    function renderGitlabModal() {
+      const available = gitlabProjects.filter(p => !p.already_imported);
+      const imported = gitlabProjects.filter(p => p.already_imported);
+
+      let html = `<div style="max-height:50vh;overflow-y:auto">`;
+      if (imported.length) {
+        html += `<div style="margin-bottom:0.75rem;font-size:0.8rem;color:var(--muted)">${imported.length} already imported (hidden)</div>`;
+      }
+      if (!available.length) {
+        html += `<div class="placeholder">No new projects found on GitLab</div>`;
+      } else {
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+          <label style="font-size:0.8rem;color:var(--text2)">${available.length} projects available</label>
+          <button class="btn btn-secondary btn-sm" onclick="toggleAllGitlabCheckboxes()">Toggle All</button>
+        </div>`;
+        for (const p of available) {
+          const desc = p.description ? ` — ${p.description.substring(0, 60)}${p.description.length > 60 ? '...' : ''}` : "";
+          const branch = p.default_branch || "development";
+          html += `<label style="display:flex;align-items:flex-start;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid var(--border)">
+            <input type="checkbox" class="gitlab-project-check" data-name="${p.name}" data-url="${p.url}" data-branch="${branch}" data-description="${(p.description||'').replace(/"/g,'&quot;')}" data-tags="${(p.topics||[]).join(',')}" checked style="margin-top:0.25rem">
+            <div>
+              <div style="font-size:0.85rem;font-weight:600;color:var(--text)">${p.name} <span class="repo-branch">${branch}</span></div>
+              <div style="font-size:0.72rem;color:var(--muted2)">${p.url}</div>
+              ${p.description ? `<div style="font-size:0.75rem;color:var(--text2);margin-top:0.15rem">${p.description.substring(0, 80)}${p.description.length > 80 ? '...' : ''}</div>` : ""}
+            </div>
+          </label>`;
+        }
+      }
+      html += `</div>`;
+
+      document.getElementById("gitlabModalBody").innerHTML = html;
+      document.getElementById("gitlabModal").classList.add("open");
+    }
+
+    function toggleAllGitlabCheckboxes() {
+      const checks = document.querySelectorAll(".gitlab-project-check");
+      const allChecked = [...checks].every(c => c.checked);
+      checks.forEach(c => c.checked = !allChecked);
+    }
+
+    async function importSelectedGitlab() {
+      const checks = document.querySelectorAll(".gitlab-project-check:checked");
+      if (!checks.length) { showToast("No projects selected", true); return; }
+
+      const repos = [...checks].map(c => ({
+        name: c.dataset.name,
+        url: c.dataset.url,
+        branch: c.dataset.branch,
+        description: c.dataset.description,
+        tags: c.dataset.tags ? c.dataset.tags.split(",").filter(Boolean) : [],
+      }));
+
+      document.getElementById("gitlabModal").classList.remove("open");
+      showToast(`Importing ${repos.length} repos...`);
+
+      try {
+        const result = await api("/repos/import-selected", "POST", { repos });
         const msg = `${result.added.length} repos imported` +
-          (result.skipped.length ? `, ${result.skipped.length} already exist` : "");
+          (result.skipped.length ? `, ${result.skipped.length} skipped` : "");
         showToast(msg);
         await loadRepos();
       } catch(e) {

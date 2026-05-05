@@ -14,8 +14,6 @@ import re
 import subprocess
 import sys
 import traceback
-import urllib.request
-import urllib.error
 import uuid as _uuid
 from datetime import datetime
 from pathlib import Path
@@ -155,7 +153,7 @@ from database import (
     get_agent_memory_blocks, set_agent_memory_block, get_agent_memory_as_markdown,
     delete_agent_memory_block, seed_default_memory_blocks,
     get_all_repos, get_repo, add_repo as db_add_repo, delete_repo as db_delete_repo,
-    update_repo as db_update_repo, import_repos_from_config,
+    update_repo as db_update_repo, import_repos_from_config, set_repo_active,
     stop_ticket,
 )
 
@@ -200,7 +198,8 @@ def healthz():
 def readyz():
     try:
         get_db()
-        return {"status": "ok"}
+        w = _get_worker()
+        return {"status": "ok", "repos_initialized": w._init_done}
     except Exception:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=503, content={"status": "not ready"})
@@ -230,13 +229,21 @@ class WorkspaceBuilder:
         self.llm = self._main.OllamaClient(self.config.ollama_host, self.config.ollama_model)
         self._statuses = []
         self._init_done = False
+        self._init_lock = asyncio.Lock()
 
     @property
     def repositories(self):
-        return [self._main.RepoConfig.from_dict(r) for r in get_all_repos()]
+        return [self._main.RepoConfig.from_dict(r) for r in get_all_repos(active_only=True)]
 
     def _ensure_init(self):
-        if not self._init_done:
+        if self._init_done:
+            return
+        import threading
+        if not hasattr(self, '_init_thread_lock'):
+            self._init_thread_lock = threading.Lock()
+        with self._init_thread_lock:
+            if self._init_done:
+                return
             self._main.configure_git_credentials()
             self._statuses = self.git.update_all(self.repositories)
             if self.config.leankg_enabled:
@@ -244,13 +251,26 @@ class WorkspaceBuilder:
             self._init_done = True
 
     async def _aensure_init(self):
-        if not self._init_done:
+        if self._init_done:
+            return
+        async with self._init_lock:
+            if self._init_done:
+                return
+            print("  ⏳ Initializing repos (first request)...")
             self._main.configure_git_credentials()
-            self._statuses = await self.git.aupdate_all(self.repositories)
+            repos = self.repositories
+            for r in repos:
+                try:
+                    status = await self.git.aensure_repo(r)
+                    self._statuses.append(status)
+                    print(f"  ✅ {r.name}: initialized")
+                except Exception as e:
+                    print(f"  ❌ {r.name}: {e}")
             if self.config.leankg_enabled:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self.leankg.index_all, self._statuses)
             self._init_done = True
+            print("  ✅ Repo initialization complete")
 
     async def build_and_spawn(self, ticket):
         try:
@@ -478,11 +498,11 @@ async def handle_gitlab_mr(payload: Dict):
 
 def _cleanup_agent_resources(ticket_id: str):
     """Delete ConfigMaps created for an agent pod."""
-    pod_name = f"agent-worker-{ticket_id.lower()}"
+    from k8s_client import delete_configmap
     namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+    pod_name = f"agent-worker-{ticket_id.lower()}"
     for suffix in ("repos", "assignment", "opencode", "memory"):
-        cm_name = f"{pod_name}-{suffix}"
-        _get_main()._kubectl(f"delete configmap {cm_name} -n {namespace} --ignore-not-found=true 2>/dev/null")
+        delete_configmap(f"{pod_name}-{suffix}", namespace)
     print(f"🧹 ConfigMaps cleaned up for {pod_name}")
 
 
@@ -614,151 +634,34 @@ async def review_lifecycle_monitor():
 
 
 def _fetch_mr(gitlab_host: str, gitlab_token: str, mr_url: str) -> Optional[Dict]:
-    """Fetches MR data from GitLab API."""
-    project_path, mr_iid = _parse_mr_url(mr_url)
-    if not project_path or not mr_iid:
-        return None
-
-    encoded_path = project_path.replace("/", "%2F")
-    url = f"https://{gitlab_host}/api/v4/projects/{encoded_path}/merge_requests/{mr_iid}"
-    req = urllib.request.Request(url, headers={"PRIVATE-TOKEN": gitlab_token})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+    """Fetches MR data from GitLab API using httpx-based client."""
+    from gitlab_client import fetch_mr_sync
+    return fetch_mr_sync(gitlab_host, gitlab_token, mr_url)
 
 
 def _gitlab_api_get(path: str, gitlab_host: str = None, gitlab_token: str = None, params: dict = None) -> Optional[List[Dict]]:
-    """GitLab API GET request with pagination."""
-    gitlab_host = gitlab_host or os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
-    gitlab_token = gitlab_token or os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
-    if not gitlab_host or not gitlab_token:
-        return None
-    base = f"https://{gitlab_host}/api/v4{path}"
-    query = []
-    if params:
-        for k, v in params.items():
-            query.append(f"{k}={urllib.parse.quote(str(v), safe='')}")
-    page = 1
-    all_items = []
-    while True:
-        q = "&".join(query + [f"page={page}", "per_page=100"])
-        url = f"{base}?{q}" if q else base
-        req = urllib.request.Request(url, headers={"PRIVATE-TOKEN": gitlab_token})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                items = json.loads(resp.read())
-                if not items:
-                    break
-                all_items.extend(items)
-                total_pages = int(resp.headers.get("X-Total-Pages", "1"))
-                if page >= total_pages:
-                    break
-                page += 1
-        except urllib.error.HTTPError:
-            break
-        except Exception:
-            break
-    return all_items
+    """GitLab API GET request with pagination using httpx."""
+    from gitlab_client import gitlab_get_sync
+    return gitlab_get_sync(path, params, gitlab_host, gitlab_token)
 
 
 def _ai_enrich_repo(repo_info: Dict) -> Dict:
-    """Use Ollama to generate description and tags for a repo."""
-    ollama_host = os.getenv("OLLAMA_HOST", "").rstrip("/")
-    ollama_model = os.getenv("OLLAMA_MODEL", os.getenv("OPENCODE_MODEL", ""))
-    if not ollama_host or not ollama_model:
-        return repo_info
-
-    name = repo_info.get("name", "")
-    url = repo_info.get("url", "")
-    existing_desc = repo_info.get("description", "")
-    topics = repo_info.get("topics", [])
-    default_branch = repo_info.get("default_branch", "development")
-
-    context_parts = [f"Repository: {name}", f"URL: {url}", f"Branch: {default_branch}"]
-    if existing_desc:
-        context_parts.append(f"GitLab description: {existing_desc}")
-    if topics:
-        context_parts.append(f"GitLab topics: {', '.join(topics)}")
-
-    prompt = "\n".join(context_parts) + """
-
-Analyze this repository and provide:
-1. A short English description (1-2 sentences) explaining what this service/project does
-2. 3-6 relevant tags categorizing this repo (e.g. backend, frontend, api, service, infra, database, auth, etc.)
-
-Reply ONLY as JSON: {"description": "...", "tags": ["tag1", "tag2", ...]}"""
-
-    try:
-        body = json.dumps({
-            "model": ollama_model,
-            "messages": [
-                {"role": "system", "content": "You are a software architect. Describe repositories precisely in English. Reply ONLY as JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            "stream": False,
-            "format": "json"
-        }).encode("utf-8")
-
-        api_key = os.getenv("OLLAMA_CLOUD_API_KEY", "")
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        base_url = os.getenv("OLLAMA_BASE_URL", ollama_host + "/v1")
-        req = urllib.request.Request(
-            f"{base_url.rstrip('/')}/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            if not content and "message" in result:
-                content = result["message"].get("content", "")
-            if content:
-                parsed = json.loads(content)
-                if parsed.get("description"):
-                    repo_info["description"] = parsed["description"]
-                if parsed.get("tags"):
-                    repo_info["tags"] = parsed["tags"]
-    except Exception:
-        pass
-
-    return repo_info
+    from main import _ai_enrich_repo as _main_enrich
+    return _main_enrich(repo_info)
 
 
 def _parse_mr_url(mr_url: str) -> tuple:
     """Extracts (project_path, mr_iid) from a GitLab MR URL."""
-    if not mr_url:
-        return None, None
-    try:
-        parts = mr_url.split("/-/merge_requests/")
-        if len(parts) < 2:
-            return None, None
-        project_path = parts[0].replace("https://", "").replace("http://", "")
-        project_path = project_path.split("/", 1)[1] if "/" in project_path else project_path
-        mr_iid = parts[1].split("/")[0]
-        return project_path, mr_iid
-    except (ValueError, IndexError):
-        return None, None
+    from gitlab_client import parse_mr_url
+    return parse_mr_url(mr_url)
 
 
 async def _check_mr_comments(ticket_id, ticket, mr_url, project_path, mr_iid, gitlab_host, gitlab_token):
     """Checks new comments on an MR and re-queues on review feedback."""
+    from gitlab_client import fetch_mr_comments
     last_note_id = ticket.get("mr_last_note_id", 0) or 0
-    encoded_path = project_path.replace("/", "%2F")
-    notes_url = f"https://{gitlab_host}/api/v4/projects/{encoded_path}/merge_requests/{mr_iid}/notes?sort=asc&per_page=50"
-
-    req = urllib.request.Request(notes_url, headers={"PRIVATE-TOKEN": gitlab_token})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            notes = json.loads(resp.read())
-    except Exception:
+    notes = await fetch_mr_comments(gitlab_host, gitlab_token, project_path, mr_iid)
+    if not notes:
         return
 
     agent_bot_username = os.getenv("GITLAB_BOT_USERNAME", "hivemind")
@@ -927,6 +830,7 @@ async def agent_pod_monitor():
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
             gitlab_host = os.getenv("GITLAB_HOST") or ""
             if gitlab_token:
+                from gitlab_client import search_open_mrs
                 all_tickets = get_tickets(status=None)
                 for t in all_tickets:
                     if t.get("mr_url") or t.get("status") not in ("completed", "running"):
@@ -937,30 +841,25 @@ async def agent_pod_monitor():
                     branch_name = f"feature/{ticket_id.lower()}-{slug}" if slug else f"feature/{ticket_id.lower()}"
 
                     for repo in _get_worker().repositories:
-                        encoded_path = repo.url.split("://")[-1].replace(".git", "").replace(":", "/") if "://" in repo.url else ""
-                        if not encoded_path:
+                        project_path = repo.url.split("://")[-1].replace(".git", "").replace(":", "/") if "://" in repo.url else ""
+                        if "/" in project_path and ":" in project_path.split("/")[0]:
+                            project_path = "/".join(project_path.split("/")[1:])
+                        if not project_path:
                             continue
-                        encoded_path = encoded_path.replace("/", "%2F")
                         try:
-                            req = urllib.request.Request(
-                                f"https://{gitlab_host}/api/v4/projects/{encoded_path}/merge_requests?state=opened&source_branch={branch_name}",
-                                headers={"PRIVATE-TOKEN": gitlab_token},
-                            )
-                            with urllib.request.urlopen(req, timeout=10) as resp:
-                                mrs = json.loads(resp.read())
-                                if mrs:
-                                    mr_url = mrs[0].get("web_url", "")
-                                    if mr_url and not t.get("mr_url"):
-                                        set_ticket_mr_url(ticket_id, mr_url)
-                                        add_ticket_comment(ticket_id, author="system", comment_type="mr_created", content=f"Merge Request created: {mr_url}")
-                                        update_ticket_mr_tracking(ticket_id, pipeline_status=mrs[0].get("head_pipeline", {}).get("status", "unknown") if mrs[0].get("head_pipeline") else "unknown")
-                                        # Set mr_status to 'open'
-                                        conn = get_db()
-                                        conn.execute("UPDATE tickets SET mr_status = 'open' WHERE id = ?", (ticket_id,))
-                                        conn.commit()
-                                        conn.close()
-                                        print(f"🔗 Ticket {ticket_id}: MR found → {mr_url}")
-                                    break
+                            mrs = await search_open_mrs(gitlab_host, gitlab_token, project_path, branch_name)
+                            if mrs:
+                                mr_url = mrs[0].get("web_url", "")
+                                if mr_url and not t.get("mr_url"):
+                                    set_ticket_mr_url(ticket_id, mr_url)
+                                    add_ticket_comment(ticket_id, author="system", comment_type="mr_created", content=f"Merge Request created: {mr_url}")
+                                    update_ticket_mr_tracking(ticket_id, pipeline_status=mrs[0].get("head_pipeline", {}).get("status", "unknown") if mrs[0].get("head_pipeline") else "unknown")
+                                    conn = get_db()
+                                    conn.execute("UPDATE tickets SET mr_status = 'open' WHERE id = %s", (ticket_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    print(f"🔗 Ticket {ticket_id}: MR found → {mr_url}")
+                                break
                         except Exception:
                             pass
 
@@ -2167,7 +2066,7 @@ def api_get_repos():
 
 @app.get("/api/repo-names")
 def api_repo_names():
-    return [r["name"] for r in get_all_repos()]
+    return [r["name"] for r in get_all_repos(active_only=True)]
 
 
 @app.get("/api/repos/{name}/branches")
@@ -2183,6 +2082,7 @@ async def api_repo_branches(name: str):
     gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
 
     if gitlab_token and gitlab_host:
+        from gitlab_client import gitlab_get
         url = repo.get("url", "")
         project_path = ""
         if "://" in url:
@@ -2192,11 +2092,10 @@ async def api_repo_branches(name: str):
 
         if project_path:
             encoded_path = project_path.replace("/", "%2F")
-            api_url = f"https://{gitlab_host}/api/v4/projects/{encoded_path}/repository/branches?per_page=100"
             try:
-                req = urllib.request.Request(api_url, headers={"PRIVATE-TOKEN": gitlab_token})
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    for b in json.loads(resp.read()):
+                branch_list = await gitlab_get(f"/projects/{encoded_path}/repository/branches", {"per_page": "100"}, gitlab_host, gitlab_token)
+                if branch_list:
+                    for b in branch_list:
                         branches.add(b.get("name", ""))
             except Exception:
                 pass
@@ -2247,7 +2146,7 @@ async def api_add_repo(req: Request):
     if get_repo(name):
         raise HTTPException(status_code=409, detail=f"Repository '{name}' already exists")
 
-    ok = db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags)
+    ok = db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=1)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to add repository")
 
@@ -2275,7 +2174,7 @@ async def api_update_repo(name: str, req: Request):
         raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
     data = await req.json()
     fields = {}
-    for key in ("url", "branch", "description", "tags"):
+    for key in ("url", "branch", "description", "tags", "active"):
         if key in data:
             if key == "tags" and isinstance(data[key], str):
                 fields[key] = [t.strip() for t in data[key].split(",") if t.strip()]
@@ -2289,6 +2188,104 @@ async def api_update_repo(name: str, req: Request):
     _worker = None
 
     return {"ok": True, "name": name}
+
+
+@app.post("/api/repos/{name}/activate")
+async def api_activate_repo(name: str):
+    if not get_repo(name):
+        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+    set_repo_active(name, True)
+
+    global _worker
+    _worker = None
+
+    return {"ok": True, "name": name, "active": True}
+
+
+@app.post("/api/repos/{name}/deactivate")
+async def api_deactivate_repo(name: str):
+    if not get_repo(name):
+        raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
+    set_repo_active(name, False)
+
+    global _worker
+    _worker = None
+
+    return {"ok": True, "name": name, "active": False}
+
+
+@app.get("/api/repos/gitlab-projects")
+async def api_gitlab_projects():
+    gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
+    gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+    if not gitlab_host or not gitlab_token:
+        raise HTTPException(status_code=400, detail="GITLAB_HOST and GITLAB_TOKEN required")
+
+    projects = _gitlab_api_get("/projects", gitlab_host, gitlab_token, {
+        "membership": "true",
+        "min_access_level": "20",
+        "order_by": "name",
+        "sort": "asc",
+    })
+    if projects is None:
+        raise HTTPException(status_code=502, detail="Failed to fetch projects from GitLab")
+
+    existing_names = {r["name"] for r in get_all_repos()}
+
+    result = []
+    for p in projects:
+        name = p.get("name", "")
+        if not name:
+            continue
+        result.append({
+            "name": name,
+            "url": p.get("http_url_to_repo", ""),
+            "default_branch": p.get("default_branch", "development"),
+            "description": p.get("description", ""),
+            "topics": p.get("topics", []),
+            "already_imported": name in existing_names,
+        })
+
+    return result
+
+
+@app.post("/api/repos/import-selected")
+async def api_import_selected(req: Request):
+    data = await req.json()
+    selected = data.get("repos", [])
+    if not selected:
+        raise HTTPException(status_code=400, detail="No repos selected")
+
+    existing_names = {r["name"] for r in get_all_repos()}
+
+    added = []
+    skipped = []
+    for item in selected:
+        name = item.get("name", "")
+        url = item.get("url", "")
+        if not name or not url:
+            continue
+        if name in existing_names:
+            skipped.append(name)
+            continue
+
+        branch = item.get("branch") or item.get("default_branch", "development")
+        description = item.get("description", "")
+        tags = item.get("tags", item.get("topics", []))
+
+        ok = db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=0)
+        if ok:
+            existing_names.add(name)
+            added.append({"name": name})
+        else:
+            skipped.append(name)
+
+    global _worker
+    _worker = None
+
+    await broadcast_event("repos_updated", {"added": len(added), "skipped": len(skipped)})
+
+    return {"ok": True, "added": added, "skipped": skipped}
 
 
 @app.post("/api/repos/init-from-gitlab")
@@ -2338,7 +2335,7 @@ async def api_init_repos_from_gitlab(req: Request):
         description = repo_info.get("description", "")
         tags = repo_info.get("tags", repo_info.get("topics", []))
 
-        db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags)
+        db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=0)
         added.append({"name": name, "description": description, "tags": tags})
 
     global _worker
@@ -2380,6 +2377,17 @@ async def _pod_log_generator(pod_name: str, namespace: str) -> AsyncGenerator[st
         yield f"data: {json.dumps({'event': 'error', 'error': str(e)})}\n\n"
 
 
+async def _background_repo_init():
+    await asyncio.sleep(3)
+    w = _get_worker()
+    if w._init_done:
+        return
+    try:
+        await w._aensure_init()
+    except Exception as e:
+        print(f"⚠️ Background repo init failed: {e}")
+
+
 @app.get("/api/tickets/{ticket_id}/logs")
 async def api_ticket_logs(ticket_id: str):
     """Live logs of the agent pod for a ticket."""
@@ -2402,6 +2410,7 @@ def startup_event():
     asyncio.create_task(queue_processor())
     asyncio.create_task(review_lifecycle_monitor())
     asyncio.create_task(agent_pod_monitor())
+    asyncio.create_task(_background_repo_init())
     print(f"🔑 GitLab Webhook Secret: {'enabled' if GITLAB_WEBHOOK_SECRET else 'disabled (insecure)'}")
 
 

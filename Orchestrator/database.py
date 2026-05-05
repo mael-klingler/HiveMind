@@ -1,17 +1,33 @@
-import json
+"""
+Database module – thin adapter that delegates to either PostgreSQL or SQLite
+based on DATABASE_URL environment variable.
+
+To use PostgreSQL (recommended for production):
+  DATABASE_URL=postgresql://user:pass@host:5432/dbname
+
+To use SQLite (for local dev / single-instance):
+  DB_PATH=/path/to/orchestrator.db
+  (or no env = defaults to /app/data/orchestrator.db)
+"""
 import os
-import sqlite3
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 
-DB_PATH = Path(os.getenv("DB_PATH", "/app/data/orchestrator.db"))
+USE_POSTGRES = os.getenv("DATABASE_URL", "").startswith("postgresql")
 
+if USE_POSTGRES:
+    from database_pg import *  # noqa: F401,F403
+else:
+    import json
+    import sqlite3
+    from datetime import datetime
+    from pathlib import Path
+    from typing import Any, Dict, List, Optional
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    DB_PATH = Path(os.getenv("DB_PATH", "/app/data/orchestrator.db"))
+
+    def get_db():
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
 
 
 def _add_column_if_not_exists(cursor, table: str, column: str, definition: str):
@@ -280,10 +296,14 @@ def init_db():
         branch TEXT DEFAULT 'development',
         description TEXT DEFAULT '',
         tags TEXT DEFAULT '[]',
+        active INTEGER DEFAULT 0,
         created_at TEXT,
         updated_at TEXT
     )
     """)
+
+    _add_column_if_not_exists(c, "repos", "active", "INTEGER DEFAULT 0")
+    c.execute("UPDATE repos SET active = 1 WHERE active = 0 AND name IN (SELECT name FROM repos)")
 
     conn.commit()
     conn.close()
@@ -291,10 +311,13 @@ def init_db():
 
 # ── Repos ────────────────────────────────────────────────
 
-def get_all_repos() -> List[Dict]:
+def get_all_repos(active_only: bool = False) -> List[Dict]:
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT name, url, branch, description, tags FROM repos ORDER BY name")
+    if active_only:
+        c.execute("SELECT name, url, branch, description, tags, active FROM repos WHERE active = 1 ORDER BY name")
+    else:
+        c.execute("SELECT name, url, branch, description, tags, active FROM repos ORDER BY name")
     rows = c.fetchall()
     conn.close()
     result = []
@@ -311,6 +334,7 @@ def get_all_repos() -> List[Dict]:
             "branch": r["branch"],
             "description": r["description"],
             "tags": tags,
+            "active": bool(r["active"]),
         })
     return result
 
@@ -318,7 +342,7 @@ def get_all_repos() -> List[Dict]:
 def get_repo(name: str) -> Optional[Dict]:
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT name, url, branch, description, tags FROM repos WHERE name = ?", (name,))
+    c.execute("SELECT name, url, branch, description, tags, active FROM repos WHERE name = ?", (name,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -335,13 +359,14 @@ def get_repo(name: str) -> Optional[Dict]:
         "branch": row["branch"],
         "description": row["description"],
         "tags": tags,
+        "active": bool(row["active"]),
     }
 
 
 def update_repo(name: str, **fields) -> bool:
     conn = get_db()
     c = conn.cursor()
-    allowed = {"url", "branch", "description", "tags"}
+    allowed = {"url", "branch", "description", "tags", "active"}
     updates = {}
     for k, v in fields.items():
         if k in allowed:
@@ -361,7 +386,7 @@ def update_repo(name: str, **fields) -> bool:
     return ok
 
 
-def add_repo(name: str, url: str, branch: str = "", description: str = "", tags: list = None) -> bool:
+def add_repo(name: str, url: str, branch: str = "", description: str = "", tags: list = None, active: int = 0) -> bool:
     if not branch:
         branch = get_setting("default_branch") or "development"
     conn = get_db()
@@ -369,8 +394,8 @@ def add_repo(name: str, url: str, branch: str = "", description: str = "", tags:
     now = datetime.now().isoformat()
     try:
         c.execute(
-            "INSERT INTO repos (name, url, branch, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, url, branch, description, json.dumps(tags or []), now, now),
+            "INSERT INTO repos (name, url, branch, description, tags, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, url, branch, description, json.dumps(tags or []), active, now, now),
         )
         conn.commit()
         conn.close()
@@ -388,6 +413,16 @@ def delete_repo(name: str) -> bool:
     conn.commit()
     conn.close()
     return deleted
+
+
+def set_repo_active(name: str, active: bool) -> bool:
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE repos SET active = ?, updated_at = ? WHERE name = ?", (1 if active else 0, datetime.now().isoformat(), name))
+    ok = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
 
 
 def import_repos_from_config(config_path: str):
@@ -408,6 +443,7 @@ def import_repos_from_config(config_path: str):
             branch=repo.get("branch", "development"),
             description=repo.get("description", ""),
             tags=repo.get("tags", []),
+            active=1
         )
 
 

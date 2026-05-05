@@ -12,8 +12,6 @@ import os
 import re
 import subprocess
 import sys
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -110,7 +108,7 @@ class OrchestratorConfig:
         from database import get_all_repos, import_repos_from_config, get_setting
         import_repos_from_config(path)
 
-        db_repos = get_all_repos()
+        db_repos = get_all_repos(active_only=True)
         repositories = [RepoConfig.from_dict(r) for r in db_repos]
 
         fallback_str = get_setting("branch_fallback_order") or data.get("branch_fallback_order", "development,qa,main")
@@ -359,28 +357,30 @@ class OllamaClient:
         self.timeout = timeout
 
     def _post(self, payload: dict) -> dict:
-        import urllib.error
+        import httpx
         last_error = None
         for attempt in range(self.MAX_RETRIES):
             try:
                 body = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(f"{self.host}/api/chat",
-                                             data=body,
-                                             headers={"Content-Type": "application/json"},
-                                             method="POST")
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    return json.loads(resp.read())
-            except urllib.error.HTTPError as e:
-                error_body = e.read().decode("utf-8", errors="replace")
-                if e.code in (503, 429, 502) and attempt < self.MAX_RETRIES - 1:
+                headers = {"Content-Type": "application/json"}
+                api_key = os.getenv("OLLAMA_CLOUD_API_KEY", "")
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                base_url = os.getenv("OLLAMA_BASE_URL", self.host + "/v1")
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(f"{base_url.rstrip('/')}/chat/completions", content=body, headers=headers)
+                    resp.raise_for_status()
+                    return resp.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (503, 429, 502) and attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
-                    print(f"   ⚠️  Ollama HTTP {e.code} (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
+                    print(f"   ⚠️  Ollama HTTP {e.response.status_code} (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
                     import time
                     time.sleep(delay)
-                    last_error = RuntimeError(f"Ollama HTTP {e.code}: {error_body}")
+                    last_error = RuntimeError(f"Ollama HTTP {e.response.status_code}: {e.response.text}")
                     continue
-                raise RuntimeError(f"Ollama HTTP {e.code}: {error_body}") from e
-            except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+                raise RuntimeError(f"Ollama HTTP {e.response.status_code}: {e.response.text}") from e
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
                     print(f"   ⚠️  Ollama not reachable (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
@@ -392,10 +392,12 @@ class OllamaClient:
         raise last_error or RuntimeError("Ollama failed")
 
     def is_available(self) -> bool:
+        import httpx
         try:
-            req = urllib.request.Request(f"{self.host}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=5) as r:
-                return r.status == 200
+            base_url = os.getenv("OLLAMA_BASE_URL", self.host + "/v1")
+            with httpx.Client(timeout=5) as client:
+                resp = client.get(f"{base_url.rstrip('/')}/models")
+                return resp.status_code == 200
         except Exception:
             return False
 
@@ -672,40 +674,24 @@ IMPORTANT: Push your changes to the same existing branch `{branch_name_for(ticke
 # ── Agent Pod Spawner ────────────────────────────────────────────
 
 def _kubectl(args: str) -> Tuple[int, str, str]:
-    try:
-        result = subprocess.run(f"kubectl {args}", shell=True, capture_output=True, text=True, timeout=30)
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
-    except FileNotFoundError:
-        return -100, "", "kubectl not found"
-    except subprocess.TimeoutExpired:
-        return -101, "", "Timeout"
+    from k8s_client import kubectl_compat
+    return kubectl_compat(args)
 
 
 def _ensure_ollama_secret():
-    """Creates K8s Secret with Ollama Cloud API Key if not present."""
+    from k8s_client import create_namespaced_secret, get_secret, AGENT_NAMESPACE as K8S_NS
     if not OLLAMA_CLOUD_API_KEY:
         return False
-    
-    rc, _, _ = _kubectl(f"get secret ollama-cloud-api-key -n {AGENT_NAMESPACE} -o name")
-    if rc == 0:
+    ns = os.getenv("AGENT_NAMESPACE", "hivemind")
+    existing = get_secret("ollama-cloud-api-key", ns)
+    if existing:
         return True
-    
-    secret_yaml = f"""apiVersion: v1
-kind: Secret
-metadata:
-  name: ollama-cloud-api-key
-  namespace: {AGENT_NAMESPACE}
-type: Opaque
-stringData:
-  api-key: "{OLLAMA_CLOUD_API_KEY}"
-"""
-    secret_path = Path("/tmp/ollama-cloud-secret.yaml")
-    secret_path.write_text(secret_yaml, encoding="utf-8")
-    rc, _, err = _kubectl(f"apply -f {secret_path}")
-    if rc != 0:
-        raise RuntimeError(f"Could not create Ollama Cloud Secret: {err}")
-    log.ok("Ollama Cloud Secret created")
-    return True
+    try:
+        create_namespaced_secret("ollama-cloud-api-key", {"api-key": OLLAMA_CLOUD_API_KEY}, ns)
+        log.ok("Ollama Cloud Secret created")
+        return True
+    except Exception as e:
+        raise RuntimeError(f"Could not create Ollama Cloud Secret: {e}")
 
 
 def _sanitize_yaml_value(val: str) -> str:
@@ -713,383 +699,43 @@ def _sanitize_yaml_value(val: str) -> str:
 
 
 def spawn_agent_pod(ticket: Ticket, selected: List[RepoConfig], assignment_md: str, analysis: Dict):
-    pod_name = f"agent-worker-{ticket.id.lower()}"
-    repos_json = json.dumps({r.name: {"url": r.url, "branch": r.branch} for r in selected}, indent=2, ensure_ascii=False)
-    escaped_assignment = assignment_md.replace("\\", "\\\\").replace('"', '\\"')
-    GIT_USER = _sanitize_yaml_value(get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token"))
-    GITLAB_HOST_SAFE = _sanitize_yaml_value(get_setting("git_host") or os.getenv("GITLAB_HOST") or "")
-    GITLAB_TOKEN_SAFE = _sanitize_yaml_value(get_setting("git_token") or GITLAB_TOKEN)
+    git_user = get_setting("git_user") or os.getenv("GIT_USER", "gitlab-ci-token")
+    gitlab_token = get_setting("git_token") or GITLAB_TOKEN
+    gitlab_host = get_setting("git_host") or os.getenv("GITLAB_HOST") or ""
 
-    log.step("Creating agent pod")
-
-    rc, out, err = _kubectl(f"get namespace {AGENT_NAMESPACE} -o name")
-    if rc != 0:
-        log.info(f"Namespace {AGENT_NAMESPACE} does not exist → creating...")
-        rc2, _, err2 = _kubectl(f"create namespace {AGENT_NAMESPACE}")
-        if rc2 != 0:
-            raise RuntimeError(f"Could not create namespace {AGENT_NAMESPACE}: {err2}")
-
-    has_ollama_secret = _ensure_ollama_secret()
-
-    # ConfigMap: repos
-    log.sub("Creating ConfigMap: repos")
-    repos_cm_yaml = f"""apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {pod_name}-repos
-  namespace: {AGENT_NAMESPACE}
-  labels:
-    ticket-id: "{ticket.id}"
-data:
-  repos.json: |
-{chr(10).join('    ' + line for line in repos_json.splitlines())}
-"""
-    repos_path = Path("/tmp/agent-cm-repos.yaml")
-    repos_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', repos_cm_yaml)
-    repos_path.write_text(repos_cm_yaml, encoding="utf-8")
-    rc, out, err = _kubectl(f"apply -f {repos_path}")
-    if rc != 0:
-        raise RuntimeError(f"Could not create ConfigMap repos: {err}")
-    log.ok("ConfigMap repos created")
-
-    # ConfigMap: assignment
-    log.sub("Creating ConfigMap: assignment")
-    assignment_cm_yaml = f"""apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {pod_name}-assignment
-  namespace: {AGENT_NAMESPACE}
-  labels:
-    ticket-id: "{ticket.id}"
-data:
-  task.md: |
-{chr(10).join('    ' + line for line in assignment_md.splitlines())}
-"""
-    assignment_path = Path("/tmp/agent-cm-assignment.yaml")
-    assignment_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', assignment_cm_yaml)
-    assignment_path.write_text(assignment_cm_yaml, encoding="utf-8")
-    rc, out, err = _kubectl(f"apply -f {assignment_path}")
-    if rc != 0:
-        raise RuntimeError(f"Could not create ConfigMap assignment: {err}")
-    log.ok("ConfigMap assignment created")
-
-    # ConfigMap: opencode.json
-    log.sub("Creating ConfigMap: opencode")
-
+    mcp_servers = []
     agent_id = ticket.agent_id if hasattr(ticket, 'agent_id') and ticket.agent_id else None
     if agent_id:
         agent_mcps = get_agent_mcp_servers(agent_id)
         mcp_servers = agent_mcps if agent_mcps else get_enabled_mcp_servers()
     else:
         mcp_servers = get_enabled_mcp_servers()
-    mcp_entries = {}
-    for srv in mcp_servers:
-        cmd = srv.get("command", "").split()
-        entry = {"type": srv.get("server_type", "local"), "command": cmd, "enabled": True}
-        args_raw = srv.get("args", "[]")
-        if isinstance(args_raw, str):
-            try:
-                args_list = json.loads(args_raw)
-                if args_list:
-                    entry["args"] = args_list
-            except (json.JSONDecodeError, TypeError):
-                pass
-        env_raw = srv.get("env", "{}")
-        if isinstance(env_raw, str):
-            try:
-                env_dict = json.loads(env_raw)
-                if env_dict:
-                    entry["environment"] = env_dict
-            except (json.JSONDecodeError, TypeError):
-                pass
-        mcp_entries[srv["name"]] = entry
 
-    plugin_names = get_enabled_plugin_names()
-    plugin_json = json.dumps(plugin_names)
-
-    mcp_servers_json = json.dumps(mcp_entries) if mcp_entries else "{}"
-
-    opencode_config = {
-        "$schema": "https://opencode.ai/config.json",
-        "model": f"ollama/{OPENCODE_MODEL}",
-        "small_model": f"ollama/{OPENCODE_MODEL}",
-        "autoupdate": False,
-        "share": "disabled",
-        "plugin": plugin_names,
-        "provider": {
-            "ollama": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Ollama",
-                "options": {
-                    "baseURL": OLLAMA_BASE_URL
-                },
-                "models": {
-                    OPENCODE_MODEL: {
-                        "name": OPENCODE_MODEL,
-                        "options": {
-                            "num_ctx": 32768
-                        }
-                    }
-                }
-            }
-        },
-        "mcp": mcp_entries if mcp_entries else {}
-    }
-    opencode_json_str = json.dumps(opencode_config, indent=2, ensure_ascii=False)
-    opencode_indented = chr(10).join("    " + line for line in opencode_json_str.splitlines())
-
-    opencode_cm_yaml = f"""apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {pod_name}-opencode
-  namespace: {AGENT_NAMESPACE}
-  labels:
-    ticket-id: "{ticket.id}"
-data:
-  opencode.json: |
-{opencode_indented}
-"""
-    opencode_path = Path("/tmp/agent-cm-opencode.yaml")
-    opencode_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', opencode_cm_yaml)
-    opencode_path.write_text(opencode_cm_yaml, encoding="utf-8")
-    rc, out, err = _kubectl(f"apply -f {opencode_path}")
-    if rc != 0:
-        raise RuntimeError(f"Could not create ConfigMap opencode: {err}")
-    log.ok("ConfigMap opencode created")
-
-    # ConfigMap: memory blocks (agent-specific, DB-persisted)
     memory_md = ""
     if agent_id:
         try:
             memory_md = get_agent_memory_as_markdown(agent_id, "")
         except Exception:
             memory_md = ""
-    if not memory_md:
-        memory_md = """---
-label: persona
-description: Agent identity and behavior
-limit: 5000
-read_only: false
----
-You are an autonomous software developer. Work carefully and methodically.
 
----
-label: human
-description: Operator preferences
-limit: 5000
-read_only: false
----
-Prefer English UI language. Use Conventional Commits. Tests are mandatory.
-
----
-label: project
-description: Project conventions and architecture
-limit: 5000
-read_only: false
----
-Tech-Stack: Vue 3 + TypeScript Frontend, Go Backend.
-Tests: pnpm test && vue-tsc --noEmit (Frontend), go test ./... (Backend).
-"""
-
-    memory_cm_yaml = f"""apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {pod_name}-memory
-  namespace: {AGENT_NAMESPACE}
-  labels:
-    ticket-id: "{ticket.id}"
-data:
-  memory.md: |
-{chr(10).join('    ' + line for line in memory_md.splitlines())}
-"""
-    memory_path = Path("/tmp/agent-cm-memory.yaml")
-    memory_cm_yaml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', memory_cm_yaml)
-    memory_path.write_text(memory_cm_yaml, encoding="utf-8")
-    rc, out, err = _kubectl(f"apply -f {memory_path}")
-    if rc != 0:
-        raise RuntimeError(f"Could not create ConfigMap memory: {err}")
-    log.ok("ConfigMap memory created")
-
-    complexity = analysis.get("complexity", "Medium")
-    primary = analysis.get("primary_repo", selected[0].name)
-
-    log.sub("Creating agent pod")
-
-    # Env var for Ollama Secret
-    ollama_env = ""
-    if has_ollama_secret:
-        ollama_env = """        - name: OLLAMA_CLOUD_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: ollama-cloud-api-key
-              key: api-key"""
-
-    pod_yaml = f"""apiVersion: v1
-kind: Pod
-metadata:
-  name: {pod_name}
-  namespace: {AGENT_NAMESPACE}
-  labels:
-    app.kubernetes.io/name: hivemind
-    app.kubernetes.io/component: agent
-    ticket-id: "{ticket.id}"
-spec:
-  hostname: {pod_name}
-  subdomain: agent-session
-  restartPolicy: Never
-  volumes:
-    - name: workspace
-      emptyDir: {{}}
-    - name: repos-config
-      configMap:
-        name: {pod_name}-repos
-    - name: task-prompt
-      configMap:
-        name: {pod_name}-assignment
-    - name: opencode-config
-      configMap:
-        name: {pod_name}-opencode
-    - name: memory-blocks
-      configMap:
-        name: {pod_name}-memory
-
-  initContainers:
-    - name: clone-repos
-      image: {AGENT_IMAGE}
-      imagePullPolicy: IfNotPresent
-      volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        - name: repos-config
-          mountPath: /config
-      env:
-        - name: GITLAB_HOST
-          value: "{GITLAB_HOST_SAFE}"
-        - name: GITLAB_TOKEN
-          value: "{GITLAB_TOKEN_SAFE}"
-        - name: GIT_USER
-          value: "{GIT_USER}"
-      command: ["/bin/bash", "-c"]
-      args:
-        - |
-          set -euo pipefail
-          for repo in $(jq -r 'keys[]' /config/repos.json); do
-            url=$(jq -r --arg r "$repo" '.[$r].url' /config/repos.json)
-            branch=$(jq -r --arg r "$repo" '.[$r].branch' /config/repos.json)
-            if echo "$url" | grep -qE "^https?://"; then
-              url=$(echo "$url" | sed -E "s|^(https?://)|\\1${{GIT_USER}}:${{GITLAB_TOKEN}}@|")
-            fi
-            echo "Cloning $repo (branch: $branch) ..."
-            git clone -b "$branch" --single-branch "$url" "/workspace/$repo"
-            echo "Init leankg $repo ..."
-            cd "/workspace/$repo"
-            leankg init
-            echo "Index leankg $repo ..."
-            leankg index .
-          done
-          echo "All repos processed"
-
-  containers:
-    - name: opencode-agent
-      image: {AGENT_IMAGE}
-      imagePullPolicy: IfNotPresent
-      command: ["/bin/bash", "-c"]
-      args:
-        - |
-          echo "🚀 Starting opencode agent for ticket $TICKET_ID"
-          ORIG_CMD=$(cat /proc/1/cmdline 2>/dev/null || true)
-          exec /usr/local/bin/opencode-agent || true
-          RC=$?
-          echo "🛑 opencode exited with code $RC"
-          echo "📡 Notifying orchestrator of completion..."
-          AGENT_ID_VAL="${{AGENT_ID:-$TICKET_ID}}"
-          QUEUE_ID="${{QUEUE_ID:-}}"
-          curl -s -X POST "http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete" \
-            -H "Content-Type: application/json" \
-            -d '{{"agent_id": "'"$AGENT_ID_VAL"'", "ticket_id": "'"$TICKET_ID"'", "queue_id": "'"$QUEUE_ID"'"}}' || echo "⚠️ Failed to notify orchestrator"
-          echo "✅ Completion notification sent"
-      volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        - name: task-prompt
-          mountPath: /etc/task
-        - name: opencode-config
-          mountPath: /mnt/opencode-config
-        - name: memory-blocks
-          mountPath: /mnt/memory-blocks
-      env:
-        - name: GITLAB_TOKEN
-          value: "{GITLAB_TOKEN_SAFE}"
-        - name: GITLAB_HOST
-          value: "{GITLAB_HOST_SAFE}"
-        - name: GIT_USER
-          value: "{GIT_USER}"
-        - name: GITLAB_USER
-          value: "{GIT_USER}"
-        - name: OLLAMA_BASE_URL
-          value: "{OLLAMA_BASE_URL}"
-        - name: OPENCODE_MODEL
-          value: "{OPENCODE_MODEL}"
-        - name: OPENCODE_PLUGINS
-          value: '{plugin_json}'
-        - name: QUEUE_ID
-          value: "{queue_id}"
-{ollama_env}
-        - name: DRY_RUN
-          value: "false"
-        - name: OPENCODE_PERMISSION_WRITE
-          value: "allow"
-        - name: OPENCODE_PERMISSION_BASH
-          value: "allow"
-        - name: OPENCODE_PERMISSION_EXTERNAL_DIRECTORY
-          value: "allow"
-        - name: OPENCODE_PERMISSION_DOOM_LOOP
-          value: "allow"
-        - name: ORCHESTRATOR_URL
-          value: "http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080"
-        - name: TICKET_ID
-          value: "{ticket.id}"
-        - name: AGENT_ID
-          value: "{agent_id or ''}"
-        - name: BRANCH
-          value: "{branch_name_for(ticket)}"
-        - name: OPENCODE_SERVER_PASSWORD
-          value: "{os.getenv('OPENCODE_SERVER_PASSWORD', '')}"
-        - name: COMMENT_POLL_INTERVAL
-          value: "{os.getenv('COMMENT_POLL_INTERVAL', '30')}"
-      ports:
-        - name: opencode-web
-          containerPort: 4096
-      resources:
-        requests:
-          cpu: "500m"
-          memory: "1Gi"
-        limits:
-          cpu: "4"
-          memory: "8Gi"
-"""
-
-    pod_path = Path("/tmp/agent-pod.yaml")
-    pod_yaml_clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', pod_yaml)
-    pod_path.write_text(pod_yaml_clean, encoding="utf-8")
-
-    # Delete existing pod if it exists (spec changes are not allowed)
-    rc_del, _, _ = _kubectl(f"delete pod {pod_name} -n {AGENT_NAMESPACE} --force --grace-period=0 2>/dev/null")
-    if rc_del == 0:
-        log.info(f"Deleted existing pod {pod_name}, creating new...")
-        import time
-        time.sleep(2)
-
-    rc, out, err = _kubectl(f"apply -f {pod_path}")
-    if rc != 0:
-        raise RuntimeError(f"Could not start agent pod: {err}")
-    log.ok(f"Agent pod {pod_name} started")
-
-    log.info(f"Ticket: {ticket.id} – {ticket.title}")
-    log.info(f"Complexity: {complexity} | Primary: {primary}")
-    log.info(f"Repos ({len(selected)}): {', '.join(r.name for r in selected)}")
-    log.info(f"Pod status: kubectl -n {AGENT_NAMESPACE} get pod {pod_name} -w")
-    return True
+    from pod_builder import spawn_agent_pod as _spawn_agent_pod
+    return _spawn_agent_pod(
+        ticket_id=ticket.id,
+        ticket_title=ticket.title,
+        repos=[{"name": r.name, "url": r.url, "branch": r.branch} for r in selected],
+        assignment_md=assignment_md,
+        analysis=analysis,
+        agent_id=agent_id or "",
+        mcp_servers=mcp_servers,
+        plugin_names=get_enabled_plugin_names(),
+        memory_md=memory_md,
+        ollama_base_url=OLLAMA_BASE_URL,
+        opencode_model=OPENCODE_MODEL,
+        ollama_cloud_api_key=OLLAMA_CLOUD_API_KEY,
+        gitlab_host=gitlab_host,
+        git_user=git_user,
+        gitlab_token=gitlab_token,
+    )
 
 
 # ── Orchestrator ───────────────────────────────────────────────────
@@ -1224,17 +870,14 @@ def main():
             print("❌ GITLAB_HOST and GITLAB_TOKEN must be set")
             sys.exit(1)
 
-        import urllib.parse as _urlparse
-        import urllib.request as _urlreq
-        import urllib.error as _urlerr
-
-        base = f"https://{gitlab_host}/api/v4/projects?membership=true&min_access_level=20&per_page=100&order_by=name"
-        req = _urlreq.Request(base, headers={"PRIVATE-TOKEN": gitlab_token})
-        try:
-            with _urlreq.urlopen(req, timeout=30) as resp:
-                projects = json.loads(resp.read())
-        except Exception as e:
-            print(f"❌ GitLab API error: {e}")
+        from gitlab_client import gitlab_get_sync
+        projects = gitlab_get_sync("/projects", {
+            "membership": "true",
+            "min_access_level": "20",
+            "order_by": "name",
+        }, gitlab_host, gitlab_token)
+        if projects is None:
+            print("❌ GitLab API error")
             sys.exit(1)
 
         from database import get_all_repos as _get_all_repos, add_repo as _add_repo, get_repo as _get_repo
@@ -1258,7 +901,7 @@ def main():
 
     if cmd == "update":
         orch = Orchestrator(ORCHESTRATOR_CONFIG)
-        orch.init()
+        orch.update()
         return
 
     if cmd == "serve":
