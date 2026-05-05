@@ -1044,7 +1044,7 @@ def _resolve_pod_url(ticket_id: str) -> Optional[str]:
         return None
     pod_name = f"agent-worker-{ticket_id.lower()}"
     namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
-    return f"http://{pod_name}.{namespace}.svc.cluster.local:4096"
+    return f"http://{pod_name}.agent-session.{namespace}.svc.cluster.local:4096"
 
 
 async def _proxy_request(ticket_id: str, path: str, request: Request) -> Response:

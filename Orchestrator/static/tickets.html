@@ -532,6 +532,7 @@
       if (t.status === "running" || t.status === "queued") {
         ftHtml += ` <button class="btn btn-danger" onclick="stopTicket('${t.id}')">&#9724; Stoppen</button>`;
         ftHtml += ` <button class="btn btn-primary" onclick="loadLiveLogs('${t.id}')">&#128210; Live Logs</button>`;
+        ftHtml += ` <a href="/agent-session/${t.id}/" target="_blank" class="btn btn-primary" style="text-decoration:none;display:inline-flex;align-items:center;gap:0.3rem">&#127760; Agent Session</a>`;
       }
       if (t.status === "completed" || t.mr_status === "open") {
         ftHtml = `<div style="flex:1"><input id="reviewNotes" placeholder="Review-Notizen (optional)" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:0.45rem;border-radius:var(--radius-sm);font-size:0.8rem"></div><button class="btn btn-danger" onclick="reviewTicket('${t.id}','changes_requested')">Changes Requested</button><button class="btn btn-success" onclick="reviewTicket('${t.id}','approved')">Approve</button>`;
