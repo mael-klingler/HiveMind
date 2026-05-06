@@ -8,7 +8,14 @@ image:
 replicaCount: 1
 
 git:
+  host: ""
   token: ""
+
+github:
+  token: ""
+  host: "github.com"
+
+vcsProvider: "gitlab"
 
 envFromSecret:
   enabled: true
@@ -21,6 +28,22 @@ envFromConfigMap:
 ollamaCloud:
   apiKey: ""
 
+hivemindApiKey: ""
+
+modelRouting:
+  enabled: false
+  simpleModel: ""
+  complexModel: ""
+
+rateLimit:
+  perMinute: 60
+
+agent:
+  retryDelay: 30
+  maxRetries: 3
+  staleTimeout: 3600
+  testCommand: ""
+
 config:
   work_dir: "/app/workspace"
   pvc_mount_path: "/app/workspace/repos"
@@ -30,8 +53,9 @@ config:
   ollama_host: ""
   ollama_model: ""
   opencode_model: ""
+  ollama_timeout: 120
   log_level: "INFO"
-
+  database_url: ""
 
 persistence:
   enabled: true
@@ -69,10 +93,38 @@ ingress:
     existingSecret: ""
 
 securityContext:
-  runAsUser: 0
-  runAsGroup: 0
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
 
 rbac:
   create: true
 
 agentNamespace: hivemind
+
+networkPolicy:
+  enabled: true
+
+postgresql:
+  enabled: false
+  host: ""
+  port: 5432
+  database: hivemind
+  username: hivemind
+  password: ""
+  existingSecret: ""
+  existingSecretKey: ""
+
+database:
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClassName: local-path
+
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "8"
+    requests.memory: 32Gi
+    pods: "20"

@@ -188,6 +188,44 @@ async def correlation_id_middleware(request: Request, call_next):
     response.headers["X-Correlation-ID"] = correlation_id
     return response
 
+HIVEMIND_API_KEY = os.getenv("HIVEMIND_API_KEY", "")
+
+@app.middleware("http")
+async def api_key_auth_middleware(request: Request, call_next):
+    if not HIVEMIND_API_KEY:
+        return await call_next(request)
+    path = request.url.path
+    exempt_prefixes = ("/healthz", "/readyz", "/metrics", "/static/", "/webhooks/", "/agent-session/", "/api/stream")
+    if any(path.startswith(p) for p in exempt_prefixes) or not path.startswith("/api/"):
+        return await call_next(request)
+    api_key = request.headers.get("X-API-Key", "")
+    if not api_key:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            api_key = auth_header[7:]
+    if api_key != HIVEMIND_API_KEY:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    return await call_next(request)
+
+_rate_limit_store: Dict[str, list] = {}
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if request.url.path != "/api/tickets" or request.method != "POST":
+        return await call_next(request)
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    if client_ip not in _rate_limit_store:
+        _rate_limit_store[client_ip] = []
+    _rate_limit_store[client_ip] = [t for t in _rate_limit_store[client_ip] if now - t < 60]
+    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_PER_MINUTE:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+    _rate_limit_store[client_ip].append(now)
+    return await call_next(request)
+
 # ── Health Checks ──────────────────────────────────────────────────
 
 @app.get("/healthz")
@@ -256,28 +294,28 @@ class WorkspaceBuilder:
         async with self._init_lock:
             if self._init_done:
                 return
-            print("  ⏳ Initializing repos (first request)...")
+            log.info("Initializing repos (first request)...")
             self._main.configure_git_credentials()
             repos = self.repositories
             for r in repos:
                 try:
                     status = await self.git.aensure_repo(r)
                     self._statuses.append(status)
-                    print(f"  ✅ {r.name}: initialized")
+                    log.info(f"{r.name}: initialized")
                 except Exception as e:
-                    print(f"  ❌ {r.name}: {e}")
+                    log.error(f"{r.name}: init failed: {e}")
             if self.config.leankg_enabled:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self.leankg.index_all, self._statuses)
             self._init_done = True
-            print("  ✅ Repo initialization complete")
+            log.info("Repo initialization complete")
 
     async def build_and_spawn(self, ticket):
         try:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self._build_and_spawn_sync, ticket)
         except Exception as e:
-            print(f"Workspace-Builder error: {e}")
+            log.error(f"Workspace-Builder error: {e}", exc_info=True)
             traceback.print_exc()
             return f"failed: {e}", None, None
 
@@ -287,10 +325,10 @@ class WorkspaceBuilder:
         manual_repos = getattr(ticket, 'selected_repos', None) or []
 
         if manual_repos:
-            print(f"  🎯 Ticket {ticket.id} has manual repo selection: {manual_repos} – skipping AI analysis")
+            log.info(f"Ticket {ticket.id} has manual repo selection", extra={"ticket_id": ticket.id})
             selected_configs = [r for r in self.repositories if r.name in manual_repos]
             if not selected_configs:
-                print(f"  ❌ Manual repo selection has no matching repositories – ticket {ticket.id}")
+                log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
                 return "failed: no matching repositories", None, None
             analysis = {
                 "selected_repos": manual_repos,
@@ -317,23 +355,23 @@ class WorkspaceBuilder:
                         err_str = str(e)
                         if attempt < max_llm_retries - 1:
                             delay = retry_delays[attempt]
-                            print(f"  ⚠️  LLM analysis failed (attempt {attempt+1}/{max_llm_retries}): {e}")
-                            print(f"  ⏳ Retry in {delay}s...")
+                            log.warning(f"LLM analysis failed for ticket {ticket.id}: {e}", extra={"ticket_id": ticket.id, "attempt": attempt+1})
+                            log.warning(f"LLM retry in {delay}s...", extra={"ticket_id": ticket.id, "attempt": attempt+1})
                             import time
                             time.sleep(delay)
                         else:
-                            print(f"  ❌ LLM analysis failed after {max_llm_retries} attempts for ticket {ticket.id}: {e}")
+                            log.error(f"LLM analysis failed after {max_llm_retries} attempts for ticket {ticket.id}: {e}", extra={"ticket_id": ticket.id})
             else:
-                print(f"  ❌ Ollama not reachable ({self.llm.host}) – ticket {ticket.id} cannot be analyzed")
+                log.error(f"Ollama not reachable ({self.llm.host}) – ticket {ticket.id}", extra={"ticket_id": ticket.id})
 
             if not analysis:
-                print(f"  ❌ No AI analysis available – ticket {ticket.id} will be marked as 'failed'")
+                log.error(f"No AI analysis for ticket {ticket.id}", extra={"ticket_id": ticket.id})
                 return "failed: no llm analysis", None, None
 
             selected_names = set(analysis.get("selected_repos", []))
             selected_configs = [r for r in self.repositories if r.name in selected_names]
             if not selected_configs:
-                print(f"  ❌ AI analysis selected no matching repositories – ticket {ticket.id}")
+                log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
                 return "failed: no matching repositories", None, None
 
         prompt = self._main.generate_assignment_prompt(ticket, analysis, selected_configs)
@@ -422,7 +460,7 @@ async def handle_gitlab_issue(payload: Dict):
     }
 
     ticket_id = create_ticket(data)
-    print(f"📥 GitLab Issue → Ticket {ticket_id} created")
+    log.info(f"GitLab Issue → Ticket {ticket_id} created", extra={"ticket_id": ticket_id, "event": "ticket_created"})
 
     await broadcast_event("ticket_created", {"ticket_id": ticket_id, "title": data["title"]})
     await broadcast_event("queue_updated", get_queue())
@@ -468,7 +506,7 @@ async def handle_gitlab_mr(payload: Dict):
     if action in ("merge", "close") or state == "merged":
         update_ticket_review(ticket_id, "approved", f"MR {action}: {mr_url}", mr_url)
         update_ticket_status(ticket_id, "merged")
-        print(f"✅ MR merged → Ticket {ticket_id} set to 'merged'")
+        log.info(f"MR merged → Ticket {ticket_id} set to 'merged'", extra={"ticket_id": ticket_id, "event": "ticket_merged"})
         await broadcast_event("ticket_merged", {"ticket_id": ticket_id, "mr_url": mr_url})
 
         # Cleanup agent pod
@@ -476,7 +514,7 @@ async def handle_gitlab_mr(payload: Dict):
         if agent_pod:
             _kubectl = _get_main()._kubectl
             _kubectl(f"delete pod {agent_pod} -n {os.getenv('AGENT_NAMESPACE', 'hivemind')} --grace-period=0 --force")
-            print(f"🗑️  Agent pod {agent_pod} deleted")
+            log.info(f"Agent pod {agent_pod} deleted", extra={"ticket_id": ticket_id, "pod_name": agent_pod})
         _cleanup_agent_resources(ticket_id)
 
     # MR updated (new commits, review changes)
@@ -490,7 +528,7 @@ async def handle_gitlab_mr(payload: Dict):
         # Re-queue ticket
         update_ticket_review(ticket_id, "changes_requested", f"MR reopened: {mr_url}", mr_url)
         update_ticket_status(ticket_id, "queued")
-        print(f"🔄 MR reopened → Ticket {ticket_id} added to re-queue")
+        log.info(f"MR reopened → Ticket {ticket_id} added to re-queue", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
         await broadcast_event("ticket_queued", {"ticket_id": ticket_id, "mr_url": mr_url})
 
     return {"ok": True, "ticket_id": ticket_id, "action": action}
@@ -503,15 +541,15 @@ def _cleanup_agent_resources(ticket_id: str):
     pod_name = f"agent-worker-{ticket_id.lower()}"
     for suffix in ("repos", "assignment", "opencode", "memory"):
         delete_configmap(f"{pod_name}-{suffix}", namespace)
-    print(f"🧹 ConfigMaps cleaned up for {pod_name}")
+    log.info(f"ConfigMaps cleaned up for {pod_name}", extra={"ticket_id": ticket_id, "event": "configmap_cleanup"})
 
 
 async def review_lifecycle_monitor():
     """Background task: Monitors MR status, pipeline failures and new comments via GitLab API."""
-    print("🔍 Review Lifecycle Monitor started")
+    log.info("Review Lifecycle Monitor started")
     await asyncio.sleep(15)  # Wait until server is ready
 
-    while True:
+    while not _shutdown_requested:
         try:
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
             gitlab_host = os.getenv("GITLAB_HOST") or ""
@@ -542,7 +580,7 @@ async def review_lifecycle_monitor():
                         _cleanup_agent_resources(ticket_id)
                         update_ticket_review(ticket_id, "approved", "", mr_url)
                         add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Ticket completed: MR was merged.")
-                        print(f"✅ Ticket {ticket_id}: MR merged")
+                        log.info(f"Ticket {ticket_id}: MR merged", extra={"ticket_id": ticket_id, "event": "ticket_merged"})
                         await broadcast_event("ticket_merged", {"ticket_id": ticket_id})
                         continue
 
@@ -550,13 +588,13 @@ async def review_lifecycle_monitor():
                     if mr_state == "closed":
                         update_ticket_review(ticket_id, "changes_requested", "MR closed without merge", mr_url)
                         if requeue_ticket(ticket_id, AGENT_MAX_RETRIES):
-                            print(f"🔄 Ticket {ticket_id}: MR closed → re-queued")
+                            log.info(f"Ticket {ticket_id}: MR closed → re-queued", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
                             await broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "MR closed"})
                         else:
                             update_ticket_status(ticket_id, "failed")
                             metrics.inc("hivemind_tickets_failed_total")
                             _cleanup_agent_resources(ticket_id)
-                            print(f"❌ Ticket {ticket_id}: MR closed → failed (max retries)")
+                            log.error(f"Ticket {ticket_id}: MR closed → failed (max retries)", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
                         continue
 
                     # MR is open → check pipeline + conflicts + comments
@@ -577,7 +615,7 @@ async def review_lifecycle_monitor():
                         if merge_status == "cannot_be_merged" or has_conflicts:
                             last_conflict = t.get("mr_conflict_status", "none")
                             if last_conflict != "conflict_detected":
-                                print(f"⚠️  Ticket {ticket_id}: Merge conflict detected → re-queue for conflict resolution")
+                                log.warning(f"Ticket {ticket_id}: Merge conflict detected → re-queue for conflict resolution", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
                                 update_ticket_mr_tracking(ticket_id, conflict_status="conflict_detected")
                                 update_ticket_review(ticket_id, "changes_requested",
                                     f"Merge conflict: Branch {mr_data.get('source_branch', '?')} has conflicts with {mr_data.get('target_branch', 'development')}",
@@ -595,7 +633,7 @@ async def review_lifecycle_monitor():
                                     update_ticket_status(ticket_id, "failed")
                                     metrics.inc("hivemind_tickets_failed_total")
                                     _cleanup_agent_resources(ticket_id)
-                                    print(f"❌ Ticket {ticket_id}: Merge conflict → failed (max retries)")
+                                    log.error(f"Ticket {ticket_id}: Merge conflict → failed (max retries)", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
                                 continue
                         elif merge_status == "can_be_merged":
                             update_ticket_mr_tracking(ticket_id, conflict_status="none")
@@ -606,7 +644,7 @@ async def review_lifecycle_monitor():
                         last_pipeline = t.get("mr_pipeline_status", "unknown")
 
                         if pipeline_status == "failed" and last_pipeline != "failed":
-                            print(f"🔴 Ticket {ticket_id}: Pipeline failed → re-queue")
+                            log.info(f"Ticket {ticket_id}: Pipeline failed → re-queue", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
                             update_ticket_mr_tracking(ticket_id, pipeline_status="failed")
                             update_ticket_review(ticket_id, "changes_requested", "Pipeline failed", mr_url)
                             if requeue_ticket(ticket_id, AGENT_MAX_RETRIES):
@@ -624,7 +662,7 @@ async def review_lifecycle_monitor():
                         )
 
                 except Exception as e:
-                    print(f"  MR check error for {ticket_id}: {e}")
+                    log.error(f"MR check error for {ticket_id}: {e}", extra={"ticket_id": ticket_id})
                     traceback.print_exc()
 
             await asyncio.sleep(60)
@@ -679,7 +717,7 @@ async def _check_mr_comments(ticket_id, ticket, mr_url, project_path, mr_iid, gi
     for note in new_notes:
         author = note.get("author", {}).get("username", "unknown")
         body = note.get("body", "").strip()
-        print(f"💬 Ticket {ticket_id}: New comment from {author}: {body[:80]}...")
+        log.info(f"Ticket {ticket_id}: New comment from {author}: {body[:80]}...", extra={"ticket_id": ticket_id})
 
         lower_body = body.lower()
         is_changes_requested = any(kw in lower_body for kw in
@@ -689,7 +727,7 @@ async def _check_mr_comments(ticket_id, ticket, mr_url, project_path, mr_iid, gi
         if is_changes_requested:
             update_ticket_review(ticket_id, "changes_requested", body[:500], mr_url)
             if requeue_ticket(ticket_id, AGENT_MAX_RETRIES):
-                print(f"🔄 Ticket {ticket_id}: Changes requested → re-queued")
+                log.info(f"Ticket {ticket_id}: Changes requested → re-queued", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
                 await broadcast_event("ticket_requeued", {
                     "ticket_id": ticket_id,
                     "reason": f"Review feedback from {author}",
@@ -700,18 +738,19 @@ async def _check_mr_comments(ticket_id, ticket, mr_url, project_path, mr_iid, gi
                 update_ticket_status(ticket_id, "failed")
                 metrics.inc("hivemind_tickets_failed_total")
                 _cleanup_agent_resources(ticket_id)
-                print(f"❌ Ticket {ticket_id}: Changes requested → failed (max retries)")
+                log.error(f"Ticket {ticket_id}: Changes requested → failed (max retries)", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
             return
 
 
 AGENT_RETRY_DELAY = int(os.getenv("AGENT_RETRY_DELAY", "120"))
 AGENT_MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "3"))
+AGENT_STALE_TIMEOUT = int(os.getenv("AGENT_STALE_TIMEOUT", "3600"))
 
 
 async def agent_pod_monitor():
     """Background task: Checks agent pod status, re-queues failed tickets, marks completed ones and updates MR URLs."""
-    print(f"🔄 Agent Pod Monitor started (retry-delay: {AGENT_RETRY_DELAY}s, max-retries: {AGENT_MAX_RETRIES})")
-    while True:
+    log.info(f"Agent Pod Monitor started (retry-delay: {AGENT_RETRY_DELAY}s, max-retries: {AGENT_MAX_RETRIES})")
+    while not _shutdown_requested:
         try:
             # Detect completed pods (Succeeded/Completed)
             completed_pod_ids = set()
@@ -753,7 +792,7 @@ async def agent_pod_monitor():
                         _cleanup_agent_resources(ticket_id)
                         set_agent_status(t.get("agent_id", "") or ticket_id.lower(), "idle")
                         add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Agent pod completed. Ticket was marked as completed.")
-                        print(f"✅ Ticket {ticket_id}: Pod completed → 'completed'")
+                        log.info(f"Ticket {ticket_id}: pod completed", extra={"ticket_id": ticket_id, "event": "ticket_completed"})
                         await broadcast_event("ticket_completed", {"ticket_id": ticket_id})
                         await broadcast_event("queue_updated", get_queue())
                     else:
@@ -762,13 +801,13 @@ async def agent_pod_monitor():
                         agent_id = t.get("agent_id", "") or ticket_id.lower()
                         retry_count = t.get("retry_count", 0)
                         if retry_count < AGENT_MAX_RETRIES:
-                            print(f"🔄 Ticket {ticket_id}: Pod not found → re-queued")
+                            log.info(f"Ticket {ticket_id}: Pod not found → re-queued", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
                             requeue_ticket(ticket_id, AGENT_MAX_RETRIES)
                             set_agent_status(agent_id, "idle")
                             await broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "Pod not found"})
                             await broadcast_event("queue_updated", get_queue())
                         else:
-                            print(f"❌ Ticket {ticket_id}: Pod not found, max retries reached → failed")
+                            log.error(f"Ticket {ticket_id}: Pod not found, max retries reached → failed", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
                             update_ticket_status(ticket_id, "failed")
                             metrics.inc("hivemind_tickets_failed_total")
                             _cleanup_agent_resources(ticket_id)
@@ -791,7 +830,7 @@ async def agent_pod_monitor():
                     # Cleanup: delete pod after completion
                     try:
                         _get_main()._kubectl(f"delete pod {pod_name} -n {namespace} --grace-period=0 --force 2>/dev/null")
-                        print(f"🗑️  Pod {pod_name} deleted (completed)")
+                        log.info(f"Pod {pod_name} deleted (completed)", extra={"ticket_id": ticket_id, "pod_name": pod_name})
                     except Exception:
                         pass
                     continue
@@ -808,7 +847,7 @@ async def agent_pod_monitor():
                             elapsed = (datetime.now(timezone.utc) - failed_at).total_seconds()
                             if elapsed < AGENT_RETRY_DELAY:
                                 remaining = int(AGENT_RETRY_DELAY - elapsed)
-                                print(f"⏳ Ticket {ticket_id}: Retry in {remaining}s (delay={AGENT_RETRY_DELAY}s)")
+                                log.info(f"Ticket {ticket_id}: retry in {remaining}s", extra={"ticket_id": ticket_id})
                                 continue
                         except (ValueError, TypeError):
                             pass
@@ -829,11 +868,11 @@ async def agent_pod_monitor():
                         })
                         await broadcast_event("queue_updated", get_queue())
                     else:
-                        print(f"❌ Ticket {ticket_id}: Re-queue failed (max retries?)")
+                        log.error(f"Ticket {ticket_id}: Re-queue failed (max retries?)", extra={"ticket_id": ticket_id})
                     # Cleanup failed pod
                     try:
                         _get_main()._kubectl(f"delete pod {pod_name} -n {namespace} --grace-period=0 --force 2>/dev/null")
-                        print(f"🗑️  Pod {pod_name} deleted (failed)")
+                        log.info(f"Pod {pod_name} deleted (failed)", extra={"ticket_id": ticket_id, "pod_name": pod_name})
                     except Exception:
                         pass
                     _cleanup_agent_resources(ticket_id)
@@ -870,13 +909,13 @@ async def agent_pod_monitor():
                                     conn.execute("UPDATE tickets SET mr_status = 'open' WHERE id = %s", (ticket_id,))
                                     conn.commit()
                                     conn.close()
-                                    print(f"🔗 Ticket {ticket_id}: MR found → {mr_url}")
+                                    log.info(f"Ticket {ticket_id}: MR found → {mr_url}", extra={"ticket_id": ticket_id, "event": "mr_found"})
                                 break
                         except Exception:
                             pass
 
             # Stale tickets: Running tickets without active pod, older than 60 min → completed
-            stale_threshold = 3600  # 60 minutes (increased from 30min since long-running agents are normal)
+            stale_threshold = int(os.getenv("AGENT_STALE_TIMEOUT", "3600"))
             for t in [t for t in get_tickets(status=None) if t.get("status") == "running"]:
                 ticket_id = t["id"]
                 pod_name = f"agent-worker-{ticket_id.lower()}"
@@ -912,7 +951,7 @@ async def agent_pod_monitor():
                             agent_id = t.get("agent_id", "") or f"agent-{ticket_id.lower()}"
                             set_agent_status(agent_id, "idle")
                             add_ticket_comment(ticket_id, author="system", comment_type="summary", content=f"Pod disappeared (>30min). Ticket automatically marked as completed.")
-                            print(f"✅ Ticket {ticket_id}: Pod disappeared, >30min old → 'completed', Agent {agent_id} → 'idle'")
+                            log.info(f"Ticket {ticket_id}: Pod disappeared, >30min old → 'completed', Agent {agent_id} → 'idle'", extra={"ticket_id": ticket_id, "agent_id": agent_id, "event": "ticket_completed"})
                             await broadcast_event("ticket_completed", {"ticket_id": ticket_id})
                             await broadcast_event("queue_updated", get_queue())
                             # Cleanup: delete stale pod if still present
@@ -968,6 +1007,7 @@ async def agent_pod_monitor():
 # ── Global Queue Processor ───────────────────────────────────────
 
 _running = False
+_shutdown_requested = False
 _worker = None
 
 
@@ -982,9 +1022,9 @@ async def queue_processor():
     """Background task: Assigns tickets to free agents and spawns K8s pods."""
     global _running
     _running = True
-    print("🔄 Queue processor started")
+    log.info("Queue processor started")
 
-    while _running:
+    while _running and not _shutdown_requested:
         try:
             ensure_agent_pool()
 
@@ -1027,9 +1067,9 @@ async def queue_processor():
                             if analysis:
                                 set_ticket_ai_planning(ticket_data["id"], analysis)
                                 ticket_data = get_ticket(next_item["ticket_id"])
-                                print(f"🧠 Pre-AI analysis: primary_repo={analysis.get('primary_repo','?')}")
+                                log.info(f"Pre-AI analysis: primary_repo={analysis.get('primary_repo','?')}", extra={"ticket_id": ticket_data["id"]})
                     except Exception as e:
-                        print(f"⚠️ Pre-AI analysis failed: {e}")
+                            log.warning(f"Pre-AI analysis failed: {e}")
 
                 # Extract primary_repo from ai_planning
                 if ticket_data.get("ai_planning"):
@@ -1103,7 +1143,7 @@ async def queue_processor():
                     agent_id=ticket_data.get("agent_id", ""),
                     selected_repos=json.loads(ticket_data.get("selected_repos", "[]")) if ticket_data.get("selected_repos") else [],
                 )
-                print(f"🚀 Spawning agent pod for ticket {ticket.id}...")
+                log.info(f"Spawning agent pod for ticket {ticket.id}", extra={"ticket_id": ticket.id, "event": "pod_spawning"})
                 w = _get_worker()
 
                 # Pass retry context from ticket data to worker
@@ -1116,7 +1156,7 @@ async def queue_processor():
                 }
 
                 status, ws_path, pod_name = await w.build_and_spawn(ticket)
-                print(f"   Status: {status}, Pod: {pod_name}")
+                log.info(f"Ticket {ticket.id}: pod spawn result status={status}, pod={pod_name}", extra={"ticket_id": ticket.id, "pod_name": pod_name})
                 if ws_path:
                     set_ticket_workspace(next_item["ticket_id"], str(ws_path), agent["id"])
                     add_step(
@@ -1438,7 +1478,7 @@ async def api_reopen_ticket(ticket_id: str):
         raise HTTPException(status_code=400, detail="Ticket could not be reopened")
     if old_agent_id:
         set_agent_status(old_agent_id, "idle")
-        print(f"🔓 Agent {old_agent_id} → idle (ticket {ticket_id} reopened)")
+        log.info(f"Agent {old_agent_id} → idle (ticket {ticket_id} reopened)", extra={"agent_id": old_agent_id, "ticket_id": ticket_id})
     add_ticket_comment(ticket_id, author="user", comment_type="system", content="Ticket manually reopened.")
     await broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "Manually reopened"})
     await broadcast_event("queue_updated", get_queue())
@@ -1483,6 +1523,40 @@ async def api_create_ticket(req: Request, background_tasks: BackgroundTasks):
     await broadcast_event("queue_updated", get_queue())
 
     return {"id": ticket_id, "status": "queued"}
+
+
+@app.post("/api/tickets/preview")
+async def api_preview_ticket(req: Request):
+    data = await req.json()
+    w = _get_worker()
+    await w._aensure_init()
+    _ticket = _get_main().Ticket(
+        id=data.get("id", "PREVIEW"),
+        title=data.get("title", ""),
+        description=data.get("description", ""),
+        labels=data.get("labels", []),
+        issue_type=data.get("issue_type", "Task"),
+        priority=data.get("priority", "Medium"),
+    )
+    analysis = None
+    if w.llm.is_available():
+        try:
+            loop = asyncio.get_event_loop()
+            analysis = await loop.run_in_executor(None, w.llm.analyze_repos_for_ticket, _ticket, w._statuses, w.leankg)
+        except Exception as e:
+            analysis = {"error": str(e)}
+    if not analysis:
+        analysis = {"error": "LLM not available for preview"}
+    selected_names = set(analysis.get("selected_repos", []))
+    selected_configs = [r for r in w.repositories if r.name in selected_names]
+    prompt = _get_main().generate_assignment_prompt(_ticket, analysis, selected_configs) if selected_configs else ""
+    return {
+        "analysis": analysis,
+        "selected_repos": [r.name for r in selected_configs],
+        "prompt": prompt,
+        "complexity": analysis.get("complexity", "Unknown"),
+        "estimated_hours": analysis.get("estimated_hours", "?"),
+    }
 
 
 # ── REST API: Agents ─────────────────────────────────────────────
@@ -1749,21 +1823,130 @@ async def gitlab_webhook(req: Request):
                     retry_count = ticket.get("retry_count", 0) if ticket else 0
                     if retry_count >= 3:
                         update_ticket_status(ticket_id, "failed")
-                        print(f"❌ Ticket {ticket_id} set to 'failed' after 3 retries")
+                        log.error(f"Ticket {ticket_id} set to 'failed' after 3 retries", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
                         await broadcast_event("ticket_failed", {"ticket_id": ticket_id})
                     else:
-                        print(f"📝 Review Comment → Ticket {ticket_id} re-queue (retry #{retry_count})")
+                        log.info(f"Review Comment → Ticket {ticket_id} re-queue (retry #{retry_count})", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
                         await broadcast_event("ticket_requeued", {
                             "ticket_id": ticket_id, "retry_count": retry_count
                         })
                 elif "approved" in note_body or "lgtm" in note_body:
                     update_ticket_review(ticket_id, "approved", note_body)
-                    print(f"✅ Review Approval → Ticket {ticket_id} approved")
+                    log.info(f"Review Approval → Ticket {ticket_id} approved", extra={"ticket_id": ticket_id, "event": "ticket_reviewed"})
                     await broadcast_event("ticket_reviewed", {
                         "ticket_id": ticket_id, "status": "approved"
                     })
 
     return {"ok": True, "event": event_type}
+
+
+@app.post("/webhooks/github")
+async def github_webhook(req: Request):
+    body = await req.body()
+    event_type = req.headers.get("X-GitHub-Event", "").lower()
+    signature = req.headers.get("X-Hub-Signature-256", "")
+    
+    github_webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+    if github_webhook_secret and signature:
+        expected = "sha256=" + hmac.new(github_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    
+    metrics.inc("hivemind_webhooks_received_total", labels={"event_type": f"github_{event_type}"})
+    
+    delivery_id = req.headers.get("X-GitHub-Delivery", "")
+    if delivery_id:
+        async with _webhook_dedup_lock:
+            is_dup = _is_duplicate_webhook(delivery_id)
+        if is_dup:
+            return {"ok": True, "status": "duplicate"}
+    
+    if event_type == "issues":
+        action = payload.get("action", "")
+        if action in ("opened", "reopened"):
+            issue = payload.get("issue", {})
+            repo = payload.get("repository", {})
+            repo_full = repo.get("full_name", "")
+            ticket_id = f"GH-{issue.get('number', 'UNKNOWN')}"
+            existing = get_ticket(ticket_id)
+            if existing:
+                return {"ok": True, "id": ticket_id, "status": "already_exists"}
+            labels = [l.get("name", l) if isinstance(l, dict) else l for l in issue.get("labels", [])]
+            data = {
+                "id": ticket_id,
+                "title": issue.get("title", ""),
+                "description": issue.get("body", ""),
+                "issue_type": "Task",
+                "priority": "Medium",
+                "labels": labels,
+            }
+            ticket_id = create_ticket(data)
+            log.info(f"GitHub Issue -> Ticket {ticket_id} created", extra={"ticket_id": ticket_id, "event": "ticket_created"})
+            await broadcast_event("ticket_created", {"ticket_id": ticket_id, "title": data["title"]})
+            await broadcast_event("queue_updated", get_queue())
+            return {"ok": True, "id": ticket_id, "status": "queued"}
+    
+    elif event_type == "pull_request":
+        action = payload.get("action", "")
+        pr = payload.get("pull_request", {})
+        pr_url = pr.get("html_url", "")
+        source_branch = pr.get("head", {}).get("ref", "")
+        
+        ticket_id = None
+        cleaned = source_branch.replace("feature/", "")
+        for prefix in ("PROJ-", "BUG-", "TASK-", "GH-"):
+            m = re.match(rf'({prefix}\d+)', cleaned, re.IGNORECASE)
+            if m:
+                ticket_id = m.group(1).upper()
+                break
+        
+        if not ticket_id:
+            return {"ok": False, "error": "Could not extract ticket from branch"}
+        
+        ticket = get_ticket(ticket_id)
+        if not ticket:
+            return {"ok": False, "error": f"Ticket {ticket_id} not found"}
+        
+        if action == "closed" and pr.get("merged"):
+            update_ticket_review(ticket_id, "approved", f"PR merged: {pr_url}", pr_url)
+            update_ticket_status(ticket_id, "merged")
+            log.info(f"GitHub PR merged -> Ticket {ticket_id}", extra={"ticket_id": ticket_id, "event": "ticket_merged"})
+            await broadcast_event("ticket_merged", {"ticket_id": ticket_id, "mr_url": pr_url})
+            _cleanup_agent_resources(ticket_id)
+        elif action == "closed":
+            update_ticket_review(ticket_id, "changes_requested", "PR closed without merge", pr_url)
+            if requeue_ticket(ticket_id, AGENT_MAX_RETRIES):
+                await broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "PR closed"})
+            else:
+                update_ticket_status(ticket_id, "failed")
+                _cleanup_agent_resources(ticket_id)
+    
+    elif event_type == "pull_request_review":
+        review = payload.get("review", {})
+        pr = payload.get("pull_request", {})
+        source_branch = pr.get("head", {}).get("ref", "")
+        ticket_id = None
+        cleaned = source_branch.replace("feature/", "")
+        for prefix in ("PROJ-", "BUG-", "TASK-", "GH-"):
+            m = re.match(rf'({prefix}\d+)', cleaned, re.IGNORECASE)
+            if m:
+                ticket_id = m.group(1).upper()
+                break
+        if ticket_id:
+            review_state = review.get("state", "")
+            if review_state == "changes_requested":
+                update_ticket_review(ticket_id, "changes_requested", review.get("body", ""))
+                await broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "PR review: changes requested"})
+            elif review_state == "approved":
+                update_ticket_review(ticket_id, "approved", review.get("body", ""))
+                await broadcast_event("ticket_reviewed", {"ticket_id": ticket_id, "status": "approved"})
+    
+    return {"ok": True, "event": f"github_{event_type}"}
 
 
 # ── REST API: Review Lifecycle ─────────────────────────────────────
@@ -1844,7 +2027,12 @@ def tickets_page():
 @app.get("/metrics")
 def api_metrics():
     from fastapi.responses import PlainTextResponse
-    metrics.set("hivemind_agents_idle", len(get_idle_agents()))
+    all_agents = get_all_agents()
+    idle_agents = [a for a in all_agents if a.get("status") == "idle"]
+    running_agents = [a for a in all_agents if a.get("status") == "running"]
+    metrics.set("hivemind_agents_idle", len(idle_agents))
+    metrics.set("hivemind_agents_running", len(running_agents))
+    metrics.set("hivemind_agents_total", len(all_agents))
     metrics.set("hivemind_queue_length", len(get_queue()))
     all_tickets = get_tickets(status=None)
     for status in ("queued", "running", "completed", "failed", "merged", "stopped"):
@@ -2025,14 +2213,14 @@ async def api_agent_memory_sync(agent_id: str, req: Request):
             description=description, block_limit=block_limit, read_only=read_only
         )
         synced += 1
-    print(f"📝 Agent {agent_id}: {synced} memory blocks synced back")
+    log.info(f"Agent {agent_id}: {synced} memory blocks synced back")
     return {"ok": True, "synced": synced}
 
 
 @app.post("/api/agent-memory/{agent_id}/sync-filesystem")
 async def api_agent_memory_sync_filesystem(agent_id: str, req: Request):
     data = await req.json()
-    memory_dir = data.get("memory_dir", "/root/.config/opencode/memory")
+    memory_dir = data.get("memory_dir", "/home/hivemind/.config/opencode/memory")
     repo_name = data.get("repo_name", "_global")
     synced = 0
     import glob as _glob
@@ -2070,8 +2258,8 @@ async def api_agent_memory_sync_filesystem(agent_id: str, req: Request):
             )
             synced += 1
         except Exception as e:
-            print(f"⚠️ Memory sync failed for {md_file}: {e}")
-    print(f"📝 Agent {agent_id}: {synced} memory blocks synced from filesystem")
+            log.warning(f"Memory sync failed for {md_file}: {e}")
+    log.info(f"Agent {agent_id}: {synced} memory blocks synced from filesystem")
     return {"ok": True, "synced": synced}
 
 
@@ -2403,7 +2591,7 @@ async def _background_repo_init():
     try:
         await w._aensure_init()
     except Exception as e:
-        print(f"⚠️ Background repo init failed: {e}")
+        log.warning(f"Background repo init failed: {e}")
 
 
 @app.get("/api/tickets/{ticket_id}/logs")
@@ -2420,6 +2608,42 @@ async def api_ticket_logs(ticket_id: str):
     return {"logs": out, "pod": pod_name, "status": "ok"}
 
 
+def _handle_sigterm(signum, frame):
+    global _shutdown_requested, _running
+    _shutdown_requested = True
+    _running = False
+    log.info("SIGTERM received, initiating graceful shutdown")
+
+import signal
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+async def _orphan_recovery():
+    await asyncio.sleep(10)
+    try:
+        from k8s_client import list_pods
+        namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+        pods = list_pods(namespace, label_selector="app.kubernetes.io/component=agent")
+        if not pods:
+            return
+        running_tickets = {t["id"]: t for t in get_tickets(status=None) if t.get("status") == "running"}
+        pod_ticket_ids = set()
+        for pod in pods:
+            pod_name = pod.metadata.name
+            if pod_name.startswith("agent-worker-"):
+                tid = pod_name.replace("agent-worker-", "").upper()
+                pod_ticket_ids.add(tid)
+        for tid, t in running_tickets.items():
+            if tid.lower() not in {p.lower() for p in pod_ticket_ids}:
+                log.info(f"Orphan recovery: ticket {tid} is running but no pod exists, re-queuing", extra={"ticket_id": tid, "event": "orphan_recovery"})
+                requeue_ticket(tid, AGENT_MAX_RETRIES)
+                agent_id = t.get("agent_id", "") or tid.lower()
+                set_agent_status(agent_id, "idle")
+                await broadcast_event("ticket_requeued", {"ticket_id": tid, "reason": "Orphaned after restart"})
+        await broadcast_event("queue_updated", get_queue())
+    except Exception as e:
+        log.error(f"Orphan recovery failed: {e}", exc_info=True)
+
+
 @app.on_event("startup")
 def startup_event():
     setup_logging()
@@ -2429,17 +2653,28 @@ def startup_event():
     asyncio.create_task(review_lifecycle_monitor())
     asyncio.create_task(agent_pod_monitor())
     asyncio.create_task(_background_repo_init())
-    print(f"🔑 GitLab Webhook Secret: {'enabled' if GITLAB_WEBHOOK_SECRET else 'disabled (insecure)'}")
+    asyncio.create_task(_orphan_recovery())
+    log.info(f"GitLab Webhook Secret: {'enabled' if GITLAB_WEBHOOK_SECRET else 'disabled (insecure)'}")
+    log.info(f"API Authentication: {'enabled' if HIVEMIND_API_KEY else 'disabled (insecure)'}")
 
 
 @app.on_event("shutdown")
-def shutdown_event():
+async def shutdown_event():
     global _running
     _running = False
-    print("🛑 Graceful shutdown: stopping queue processor")
+    log.info("Graceful shutdown: stopping background tasks...")
+    await broadcast_event("server_shutdown", {"message": "Server shutting down"})
+    try:
+        from gitlab_client import close_async_client
+        await close_async_client()
+    except Exception:
+        pass
+    if _agent_http_client and not _agent_http_client.is_closed:
+        await _agent_http_client.aclose()
+    log.info("Shutdown complete")
 
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting Orchestrator Server on http://0.0.0.0:8080")
+    log.info("Starting Orchestrator Server on http://0.0.0.0:8080")
     uvicorn.run(app, host="0.0.0.0", port=8080)

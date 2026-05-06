@@ -1,7 +1,7 @@
 {
   "work_dir": "/app/workspace",
   "pvc_mount_path": "/app/workspace/repos",
-  "track_branch": "main",
+  "track_branch": "development",
   "auto_pull_interval_minutes": 60,
   "leankg_enabled": true,
   "ollama_host_from_env": true,

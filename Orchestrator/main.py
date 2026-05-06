@@ -113,10 +113,12 @@ class OrchestratorConfig:
 
         fallback_str = get_setting("branch_fallback_order") or data.get("branch_fallback_order", "development,qa,main")
 
+        db_track_branch = get_setting("default_branch")
+
         return cls(
             work_dir=data.get("work_dir", "/app/workspace"),
             pvc_mount_path=data.get("pvc_mount_path", "/app/workspace/repos"),
-            track_branch=data.get("track_branch", "development"),
+            track_branch=db_track_branch or data.get("track_branch", "development"),
             branch_fallback_order=[b.strip() for b in fallback_str.split(",") if b.strip()],
             auto_pull_interval_minutes=data.get("auto_pull_interval_minutes", 60),
             leankg_enabled=data.get("leankg_enabled", True),
@@ -167,24 +169,28 @@ class Ticket:
 
 # ── Logger ─────────────────────────────────────────────────────────
 
+import logging as _logging
+
+_struct_log = _logging.getLogger("hivemind.main")
+
 class Logger:
     def info(self, msg: str):
-        print(f"   ℹ️  {msg}")
+        _struct_log.info(msg)
 
     def ok(self, msg: str):
-        print(f"   ✅ {msg}")
+        _struct_log.info(msg)
 
     def warn(self, msg: str):
-        print(f"   ⚠️  {msg}")
+        _struct_log.warning(msg)
 
     def error(self, msg: str):
-        print(f"   ❌ {msg}")
+        _struct_log.error(msg)
 
     def step(self, msg: str):
-        print(f"\n📌 {msg}")
+        _struct_log.info(msg)
 
     def sub(self, msg: str):
-        print(f"   🔹 {msg}")
+        _struct_log.info(msg)
 
 log = Logger()
 
@@ -374,7 +380,7 @@ class OllamaClient:
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (503, 429, 502) and attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
-                    print(f"   ⚠️  Ollama HTTP {e.response.status_code} (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
+                    _struct_log.warning(f"Ollama HTTP {e.response.status_code} (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s")
                     import time
                     time.sleep(delay)
                     last_error = RuntimeError(f"Ollama HTTP {e.response.status_code}: {e.response.text}")
@@ -383,7 +389,7 @@ class OllamaClient:
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
-                    print(f"   ⚠️  Ollama not reachable (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s...")
+                    _struct_log.warning(f"Ollama not reachable (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s")
                     import time
                     time.sleep(delay)
                     last_error = e
@@ -400,6 +406,22 @@ class OllamaClient:
                 return resp.status_code == 200
         except Exception:
             return False
+
+    def select_model_for_complexity(self, analysis: Dict) -> str:
+        """Selects LLM model based on ticket complexity. Returns model name."""
+        complexity = analysis.get("complexity", "Medium")
+        routing_enabled = get_setting("model_routing_enabled") or os.getenv("MODEL_ROUTING_ENABLED", "false")
+        if str(routing_enabled).lower() != "true":
+            return self.model
+        simple_model = get_setting("simple_model") or os.getenv("SIMPLE_MODEL", self.model)
+        complex_model = get_setting("complex_model") or os.getenv("COMPLEX_MODEL", self.model)
+        if complexity in ("Low",) and simple_model:
+            log.info(f"Model routing: {complexity} complexity → {simple_model}")
+            return simple_model
+        elif complexity in ("High",) and complex_model:
+            log.info(f"Model routing: {complexity} complexity → {complex_model}")
+            return complex_model
+        return self.model
 
     def analyze_repos_for_ticket(self, ticket: Ticket, repo_contexts: List[RepoStatus], leankg: LeanKGManager) -> Dict:
         prompt = self._make_prompt(ticket, repo_contexts, leankg)
@@ -875,7 +897,7 @@ def main():
         gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
         gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
         if not gitlab_host or not gitlab_token:
-            print("❌ GITLAB_HOST and GITLAB_TOKEN must be set")
+            _struct_log.error("GITLAB_HOST and GITLAB_TOKEN must be set")
             sys.exit(1)
 
         from gitlab_client import gitlab_get_sync
@@ -885,7 +907,7 @@ def main():
             "order_by": "name",
         }, gitlab_host, gitlab_token)
         if projects is None:
-            print("❌ GitLab API error")
+            _struct_log.error("GitLab API error")
             sys.exit(1)
 
         from database import get_all_repos as _get_all_repos, add_repo as _add_repo, get_repo as _get_repo
@@ -902,9 +924,9 @@ def main():
             _add_repo(name=name, url=url, branch=branch, description=description, tags=topics)
             existing.add(name)
             added += 1
-            print(f"  + {name}: {description[:60]}")
+            _struct_log.info(f"Imported repo: {name}: {description[:60]}")
 
-        print(f"\n✅ {added} repos imported, {len(projects) - added} already existing")
+        _struct_log.info(f"{added} repos imported, {len(projects) - added} already existing")
         return
 
     if cmd == "update":
@@ -918,13 +940,13 @@ def main():
         if raw_port.startswith("tcp://"):
             raw_port = raw_port.split(":")[-1]
         PORT = int(raw_port)
-        print(f"🌐 Orchestrator FastAPI server on port {PORT}")
+        _struct_log.info(f"Orchestrator FastAPI server on port {PORT}")
         uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)
         return
 
     if cmd == "process":
         if not remaining:
-            print("❌ Missing ticket argument")
+            _struct_log.error("Missing ticket argument")
             print_usage()
 
         ticket_path = remaining[0]
@@ -933,11 +955,11 @@ def main():
         skip_clone = "--no-clone" in flags
 
         if not Path(ticket_path).is_file():
-            print(f"❌ File not found: {ticket_path}")
+            _struct_log.error(f"File not found: {ticket_path}")
             sys.exit(1)
 
         ticket = Ticket.from_json(ticket_path)
-        print(f"📋 Ticket loaded: {ticket.id} – {ticket.title}")
+        _struct_log.info(f"Ticket loaded: {ticket.id} – {ticket.title}")
 
         orch = Orchestrator(ORCHESTRATOR_CONFIG)
         orch.init()
@@ -948,7 +970,7 @@ def main():
     if Path(cmd).is_file():
         flags = set(remaining)
         ticket = Ticket.from_json(cmd)
-        print(f"📋 Ticket loaded: {ticket.id} – {ticket.title}")
+        _struct_log.info(f"Ticket loaded: {ticket.id} – {ticket.title}")
         orch = Orchestrator(ORCHESTRATOR_CONFIG)
         orch.init()
         orch.process(ticket, use_llm="--llm" in flags, skip_clone="--no-clone" in flags)

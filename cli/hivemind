@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""HiveMind CLI — talk to the HiveMind orchestrator REST API."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+import urllib.parse
+
+
+BASE_URL = os.environ.get("HIVEMIND_URL", "http://localhost:8080")
+API_KEY = os.environ.get("HIVEMIND_API_KEY")
+
+
+def _headers(content_type=None):
+    h = {}
+    if content_type:
+        h["Content-Type"] = content_type
+    if API_KEY:
+        h["X-API-Key"] = API_KEY
+    return h
+
+
+def _request(method, path, body=None, stream=False):
+    url = f"{BASE_URL}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    for k, v in _headers("application/json" if data else None).items():
+        req.add_header(k, v)
+    try:
+        if stream:
+            return urllib.request.urlopen(req)
+        resp = urllib.request.urlopen(req)
+        ct = resp.headers.get("Content-Type", "")
+        if "application/json" in ct:
+            return json.loads(resp.read().decode())
+        return resp.read().decode()
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode())
+        except Exception:
+            detail = e.reason
+        print(f"Error {e.code}: {detail}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"Connection error: {e.reason}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _get(path, params=None):
+    if params:
+        filtered = {k: v for k, v in params.items() if v is not None}
+        if filtered:
+            path += "?" + urllib.parse.urlencode(filtered)
+    return _request("GET", path)
+
+
+def _post(path, body=None):
+    return _request("POST", path, body)
+
+
+# ── ticket commands ──────────────────────────────────────────────
+
+def cmd_ticket_create(args):
+    body = {"title": args.title, "priority": args.priority, "description": args.description or ""}
+    if args.labels:
+        body["labels"] = [l.strip() for l in args.labels.split(",")]
+    result = _post("/api/tickets", body)
+    print(json.dumps(result, indent=2))
+
+
+def cmd_ticket_list(args):
+    params = {}
+    if args.status:
+        params["status"] = args.status
+    result = _get("/api/tickets", params)
+    print(json.dumps(result, indent=2))
+
+
+def cmd_ticket_get(args):
+    result = _get(f"/api/tickets/{args.id}")
+    print(json.dumps(result, indent=2))
+
+
+def cmd_ticket_logs(args):
+    resp = _request("GET", f"/api/tickets/{args.id}/logs", stream=True)
+    try:
+        while True:
+            chunk = resp.read(4096)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+    except KeyboardInterrupt:
+        pass
+
+
+def cmd_ticket_stop(args):
+    result = _post(f"/api/tickets/{args.id}/stop")
+    print(json.dumps(result, indent=2))
+
+
+def cmd_ticket_reopen(args):
+    result = _post(f"/api/tickets/{args.id}/reopen")
+    print(json.dumps(result, indent=2))
+
+
+def cmd_ticket_review(args):
+    body = {}
+    if args.approve:
+        body["decision"] = "approved"
+    elif args.request_changes:
+        body["decision"] = "changes_requested"
+    if args.notes:
+        body["notes"] = args.notes
+    result = _post(f"/api/tickets/{args.id}/review", body)
+    print(json.dumps(result, indent=2))
+
+
+def cmd_ticket_comments(args):
+    if args.add:
+        result = _post(f"/api/tickets/{args.id}/comments", {"text": args.add})
+    else:
+        result = _get(f"/api/tickets/{args.id}/comments")
+    print(json.dumps(result, indent=2))
+
+
+# ── agent / repo / misc commands ─────────────────────────────────
+
+def cmd_agent_list(_args):
+    result = _get("/api/agents")
+    print(json.dumps(result, indent=2))
+
+
+def cmd_repo_list(_args):
+    result = _get("/api/repos")
+    print(json.dumps(result, indent=2))
+
+
+def cmd_dashboard(_args):
+    url = BASE_URL
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", url], check=False)
+        elif sys.platform.startswith("linux"):
+            subprocess.run(["xdg-open", url], check=False)
+        elif sys.platform == "win32":
+            subprocess.run(["start", url], shell=True, check=False)
+        else:
+            print(url)
+            return
+        print(f"Opened {url}")
+    except FileNotFoundError:
+        print(url)
+
+
+def cmd_stream(_args):
+    req = urllib.request.Request(f"{BASE_URL}/api/stream")
+    for k, v in _headers().items():
+        req.add_header(k, v)
+    try:
+        resp = urllib.request.urlopen(req)
+        try:
+            while True:
+                line = resp.readline()
+                if not line:
+                    break
+                sys.stdout.write(line.decode(errors="replace"))
+                sys.stdout.flush()
+        except KeyboardInterrupt:
+            pass
+    except urllib.error.URLError as e:
+        print(f"Connection error: {e.reason}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_version(_args):
+    result = _get("/api/config")
+    print(json.dumps(result, indent=2))
+
+
+# ── argument parsing ─────────────────────────────────────────────
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="hivemind",
+        description="HiveMind CLI — talk to the HiveMind orchestrator",
+    )
+
+    sub = p.add_subparsers(dest="command", required=True)
+
+    # ticket
+    ticket = sub.add_parser("ticket", help="Ticket operations")
+    tsub = ticket.add_subparsers(dest="ticket_command", required=True)
+
+    # ticket create
+    tc = tsub.add_parser("create", help="Create a ticket")
+    tc.add_argument("--title", required=True)
+    tc.add_argument("--priority", default="Medium")
+    tc.add_argument("--labels", default=None)
+    tc.add_argument("--description", default=None)
+    tc.set_defaults(func=cmd_ticket_create)
+
+    # ticket list
+    tl = tsub.add_parser("list", help="List tickets")
+    tl.add_argument("--status", choices=["queued", "running", "completed", "failed"], default=None)
+    tl.set_defaults(func=cmd_ticket_list)
+
+    # ticket get
+    tg = tsub.add_parser("get", help="Get ticket details")
+    tg.add_argument("id", help="Ticket ID (e.g. PROJ-123)")
+    tg.set_defaults(func=cmd_ticket_get)
+
+    # ticket logs
+    tlo = tsub.add_parser("logs", help="Stream ticket logs")
+    tlo.add_argument("id")
+    tlo.set_defaults(func=cmd_ticket_logs)
+
+    # ticket stop
+    ts = tsub.add_parser("stop", help="Stop a ticket")
+    ts.add_argument("id")
+    ts.set_defaults(func=cmd_ticket_stop)
+
+    # ticket reopen
+    tr = tsub.add_parser("reopen", help="Reopen a ticket")
+    tr.add_argument("id")
+    tr.set_defaults(func=cmd_ticket_reopen)
+
+    # ticket review
+    tv = tsub.add_parser("review", help="Review a ticket")
+    tv.add_argument("id")
+    g = tv.add_mutually_exclusive_group(required=True)
+    g.add_argument("--approve", action="store_true")
+    g.add_argument("--request-changes", action="store_true", dest="request_changes")
+    tv.add_argument("--notes", default=None)
+    tv.set_defaults(func=cmd_ticket_review)
+
+    # ticket comments
+    tcm = tsub.add_parser("comments", help="List or add ticket comments")
+    tcm.add_argument("id")
+    tcm.add_argument("--add", default=None, help="Add a comment")
+    tcm.set_defaults(func=cmd_ticket_comments)
+
+    # agent
+    agent = sub.add_parser("agent", help="Agent operations")
+    asub = agent.add_subparsers(dest="agent_command", required=True)
+    al = asub.add_parser("list", help="List agents")
+    al.set_defaults(func=cmd_agent_list)
+
+    # repo
+    repo = sub.add_parser("repo", help="Repository operations")
+    rsub = repo.add_subparsers(dest="repo_command", required=True)
+    rl = rsub.add_parser("list", help="List repos")
+    rl.set_defaults(func=cmd_repo_list)
+
+    # dashboard
+    sub.add_parser("dashboard", help="Open HiveMind in browser").set_defaults(func=cmd_dashboard)
+
+    # stream
+    sub.add_parser("stream", help="Stream SSE events").set_defaults(func=cmd_stream)
+
+    # version
+    sub.add_parser("version", help="Print version info").set_defaults(func=cmd_version)
+
+    return p
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

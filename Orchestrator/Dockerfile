@@ -20,7 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+RUN K8S_ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') \
+    && curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${K8S_ARCH}/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
     && rm kubectl
 
@@ -28,7 +29,9 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 COPY --from=leankg-builder /usr/local/bin/leankg /usr/local/bin/leankg
 RUN leankg --version
 
-RUN mkdir -p /root/.ssh
+RUN groupadd -g 1000 hivemind 2>/dev/null || true && \
+    useradd -u 1000 -g 1000 -m -s /bin/bash hivemind 2>/dev/null || true && \
+    mkdir -p /home/hivemind/.ssh
 
 WORKDIR /app
 
@@ -42,12 +45,16 @@ COPY server.py .
 COPY k8s_client.py .
 COPY gitlab_client.py .
 COPY pod_builder.py .
+COPY vcs/ ./vcs/
 COPY static/ ./static/
+
+RUN chown -R 1000:1000 /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 EXPOSE 8080
 
+USER hivemind
 ENTRYPOINT ["python3", "main.py"]
 CMD ["serve"]
 

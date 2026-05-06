@@ -98,12 +98,16 @@ def build_pod_spec(
         kclient.V1EnvVar(name="BRANCH", value=branch),
         kclient.V1EnvVar(name="OPENCODE_SERVER_PASSWORD", value=os.getenv("OPENCODE_SERVER_PASSWORD", "")),
         kclient.V1EnvVar(name="COMMENT_POLL_INTERVAL", value=os.getenv("COMMENT_POLL_INTERVAL", "30")),
-        kclient.V1EnvVar(name="ORCHESTRATOR_URL", value=f"http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080"),
+            kclient.V1EnvVar(name="ORCHESTRATOR_URL", value=f"http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080"),
+            kclient.V1EnvVar(name="MODEL_ROUTING_ENABLED", value=os.getenv("MODEL_ROUTING_ENABLED", "false")),
+            kclient.V1EnvVar(name="SIMPLE_MODEL", value=os.getenv("SIMPLE_MODEL", "")),
+            kclient.V1EnvVar(name="COMPLEX_MODEL", value=os.getenv("COMPLEX_MODEL", "")),
         kclient.V1EnvVar(name="DRY_RUN", value="false"),
         kclient.V1EnvVar(name="OPENCODE_PERMISSION_WRITE", value="allow"),
         kclient.V1EnvVar(name="OPENCODE_PERMISSION_BASH", value="allow"),
         kclient.V1EnvVar(name="OPENCODE_PERMISSION_EXTERNAL_DIRECTORY", value="allow"),
         kclient.V1EnvVar(name="OPENCODE_PERMISSION_DOOM_LOOP", value="allow"),
+        kclient.V1EnvVar(name="TEST_COMMAND", value=os.getenv("TEST_COMMAND", "")),
     ]
 
     if has_ollama_secret:
@@ -134,25 +138,25 @@ def build_pod_spec(
             "  echo '❌ No task file found at $TASK_FILE'\n"
             "  exit 1\n"
             "fi\n"
-            "mkdir -p /root/.config/opencode\n"
+            "mkdir -p /home/hivemind/.config/opencode\n"
             "if [ -f /mnt/opencode-config/opencode.json ]; then\n"
-            "  cp /mnt/opencode-config/opencode.json /root/.config/opencode/opencode.json\n"
+            "  cp /mnt/opencode-config/opencode.json /home/hivemind/.config/opencode/opencode.json\n"
             "fi\n"
-            "mkdir -p /root/.config/opencode/memory\n"
+            "mkdir -p /home/hivemind/.config/opencode/memory\n"
             "if [ -d /mnt/memory-blocks ]; then\n"
-            "  cp /mnt/memory-blocks/*.md /root/.config/opencode/memory/ 2>/dev/null || true\n"
+            "  cp /mnt/memory-blocks/*.md /home/hivemind/.config/opencode/memory/ 2>/dev/null || true\n"
             "fi\n"
             "if [ -n \"${OLLAMA_CLOUD_API_KEY:-}\" ]; then\n"
             "  export OLLAMA_API_KEY=\"$OLLAMA_CLOUD_API_KEY\"\n"
             "fi\n"
-            "export OPENCODE_CONFIG=/root/.config/opencode/opencode.json\n"
+            "export OPENCODE_CONFIG=/home/hivemind/.config/opencode/opencode.json\n"
             "export GITLAB_TOKEN GITLAB_HOST GIT_USER GITLAB_USER BRANCH\n"
             "export GITLAB_USER=${GITLAB_USER:-$GIT_USER}\n"
             "git config --global user.email 'hivemind-agents@example.com'\n"
             "git config --global user.name 'HiveMind'\n"
             "git config --global credential.helper store\n"
-            "echo \"https://${GIT_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}\" > /root/.git-credentials\n"
-            "chmod 600 /root/.git-credentials\n"
+            "echo \"https://${GIT_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}\" > /home/hivemind/.git-credentials\n"
+            "chmod 600 /home/hivemind/.git-credentials\n"
             "for repo in $(jq -r 'keys[]' /config/repos.json); do\n"
             "  url=$(jq -r --arg r \"$repo\" '.[$r].url' /config/repos.json)\n"
             "  branch=$(jq -r --arg r \"$repo\" '.[$r].branch' /config/repos.json)\n"
@@ -163,7 +167,7 @@ def build_pod_spec(
             "    cd \"/workspace/$repo\"\n"
             "  fi\n"
             "done\n"
-            "PRIMARY_REPO=$(jq -r '.repositories[] | select(.primary == true) | .name' /root/.config/opencode/opencode.json 2>/dev/null | head -1 || true)\n"
+            "PRIMARY_REPO=$(jq -r '.repositories[] | select(.primary == true) | .name' /home/hivemind/.config/opencode/opencode.json 2>/dev/null | head -1 || true)\n"
             "if [ -n \"$PRIMARY_REPO\" ] && [ -d \"/workspace/$PRIMARY_REPO\" ]; then\n"
             "  cd \"/workspace/$PRIMARY_REPO\"\n"
             "fi\n"
@@ -198,6 +202,12 @@ def build_pod_spec(
         hostname=pod_name,
         subdomain="agent-session",
         restart_policy="Never",
+        security_context=kclient.V1PodSecurityContext(
+            run_as_non_root=True,
+            run_as_user=1000,
+            run_as_group=1000,
+            fs_group=1000,
+        ),
         volumes=volumes,
         init_containers=[init_container],
         containers=[main_container],

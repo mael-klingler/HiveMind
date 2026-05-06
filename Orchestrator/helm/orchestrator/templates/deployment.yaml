@@ -17,6 +17,11 @@ spec:
       {{- if .Values.rbac.create }}
       serviceAccountName: {{ include "orchestrator.fullname" . }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       initContainers:
         - name: repo-init
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
@@ -41,6 +46,36 @@ spec:
               value: "{{ .Values.ollamaCloud.apiKey }}"
             - name: TRACK_BRANCH
               value: "development"
+            - name: GITLAB_HOST
+              value: "{{ .Values.git.host }}"
+            - name: GITLAB_TOKEN
+              value: "{{ .Values.git.token }}"
+            - name: GITHUB_TOKEN
+              value: "{{ .Values.github.token }}"
+            - name: GITHUB_HOST
+              value: "{{ .Values.github.host }}"
+            - name: VCS_PROVIDER
+              value: "{{ .Values.vcsProvider }}"
+            - name: HIVEMIND_API_KEY
+              value: "{{ .Values.hivemindApiKey }}"
+            - name: MODEL_ROUTING_ENABLED
+              value: "{{ .Values.modelRouting.enabled }}"
+            - name: SIMPLE_MODEL
+              value: "{{ .Values.modelRouting.simpleModel }}"
+            - name: COMPLEX_MODEL
+              value: "{{ .Values.modelRouting.complexModel }}"
+            - name: RATE_LIMIT_PER_MINUTE
+              value: "{{ .Values.rateLimit.perMinute }}"
+            - name: AGENT_RETRY_DELAY
+              value: "{{ .Values.agent.retryDelay }}"
+            - name: AGENT_MAX_RETRIES
+              value: "{{ .Values.agent.maxRetries }}"
+            - name: AGENT_STALE_TIMEOUT
+              value: "{{ .Values.agent.staleTimeout }}"
+            - name: TEST_COMMAND
+              value: "{{ .Values.agent.testCommand }}"
+            - name: DATABASE_URL
+              value: "{{ .Values.config.database_url }}"
           volumeMounts:
             - name: config
               mountPath: /app/config
@@ -74,6 +109,36 @@ spec:
               value: "{{ .Values.ollamaCloud.apiKey }}"
             - name: TRACK_BRANCH
               value: "main"
+            - name: GITLAB_HOST
+              value: "{{ .Values.git.host }}"
+            - name: GITLAB_TOKEN
+              value: "{{ .Values.git.token }}"
+            - name: GITHUB_TOKEN
+              value: "{{ .Values.github.token }}"
+            - name: GITHUB_HOST
+              value: "{{ .Values.github.host }}"
+            - name: VCS_PROVIDER
+              value: "{{ .Values.vcsProvider }}"
+            - name: HIVEMIND_API_KEY
+              value: "{{ .Values.hivemindApiKey }}"
+            - name: MODEL_ROUTING_ENABLED
+              value: "{{ .Values.modelRouting.enabled }}"
+            - name: SIMPLE_MODEL
+              value: "{{ .Values.modelRouting.simpleModel }}"
+            - name: COMPLEX_MODEL
+              value: "{{ .Values.modelRouting.complexModel }}"
+            - name: RATE_LIMIT_PER_MINUTE
+              value: "{{ .Values.rateLimit.perMinute }}"
+            - name: AGENT_RETRY_DELAY
+              value: "{{ .Values.agent.retryDelay }}"
+            - name: AGENT_MAX_RETRIES
+              value: "{{ .Values.agent.maxRetries }}"
+            - name: AGENT_STALE_TIMEOUT
+              value: "{{ .Values.agent.staleTimeout }}"
+            - name: TEST_COMMAND
+              value: "{{ .Values.agent.testCommand }}"
+            - name: DATABASE_URL
+              value: "{{ .Values.config.database_url }}"
           volumeMounts:
             - name: workspace
               mountPath: {{ .Values.config.work_dir }}

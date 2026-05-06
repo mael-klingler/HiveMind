@@ -116,7 +116,56 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      ticketservice-db:
+  orchestrator-serve:
+    build:
+      context: ./Orchestrator
+      dockerfile: Dockerfile
+    image: hivemind/orchestrator:latest
+    container_name: orchestrator-serve
+    command: ["serve"]
+    environment:
+      - DATABASE_URL=postgresql://hivemind:hivemind@hivemind-postgres-local:5432/hivemind
+      - GITLAB_HOST=${GITLAB_HOST}
+      - GITLAB_TOKEN=${GITLAB_TOKEN}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-glm-5.1:cloud}
+      - OPENCODE_MODEL=${OPENCODE_MODEL:-glm-5.1:cloud}
+      - AGENT_NAMESPACE=hivemind
+      - AGENT_IMAGE=hivemind-opencode:latest
+      - HIVEMIND_API_KEY=${HIVEMIND_API_KEY:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Orchestrator/orchestrator_config.json:/app/config/orchestrator_config.json:ro
+      - repo-storage:/app/workspace/repos
+      - ${SSH_KEY_PATH:-~/.ssh}:/home/hivemind/.ssh:ro
+    depends_on:
+      hivemind-postgres-local:
+        condition: service_healthy
+    profiles:
+      - full-local
+
+  hivemind-postgres-local:
+    image: postgres:16-alpine
+    container_name: hivemind-postgres-local
+    environment:
+      POSTGRES_USER: hivemind
+      POSTGRES_PASSWORD: hivemind
+      POSTGRES_DB: hivemind
+    volumes:
+      - hivemind-pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hivemind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - full-local
+
+  ticketservice-db:
         condition: service_healthy
     profiles:
       - tickets
@@ -125,3 +174,4 @@ volumes:
   repo-storage:
   workspace:
   ticketservice-db-data:
+  hivemind-pgdata:

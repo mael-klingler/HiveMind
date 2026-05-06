@@ -236,6 +236,28 @@ def init_db():
         )
         """)
 
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS ticket_groups (
+            id TEXT PRIMARY KEY,
+            parent_ticket_id TEXT NOT NULL REFERENCES tickets(id),
+            title TEXT,
+            description TEXT,
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS team_channel_messages (
+            id SERIAL PRIMARY KEY,
+            group_id TEXT NOT NULL REFERENCES ticket_groups(id),
+            sender_agent_id TEXT NOT NULL,
+            message_type TEXT DEFAULT 'info',
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
         c.execute("INSERT INTO config (key, value) VALUES ('max_agents', '3') ON CONFLICT (key) DO NOTHING")
         c.execute("INSERT INTO config (key, value) VALUES ('polling_interval_seconds', '5') ON CONFLICT (key) DO NOTHING")
         c.execute("INSERT INTO mcp_servers (name, server_type, command, description) VALUES ('leankg-mcp', 'local', 'leankg mcp-stdio', 'LeanKG code search and dependency analysis') ON CONFLICT (name) DO NOTHING")
@@ -1476,6 +1498,62 @@ def seed_default_memory_blocks(agent_id: str):
     ]
     for repo_name, label, content, desc in defaults:
         set_agent_memory_block(agent_id, repo_name, label, content, desc)
+
+
+# ── Ticket Groups & Team Channel ────────────────────────
+
+def create_ticket_group(group_id, parent_ticket_id, title="", description=""):
+    conn = get_db()
+    try:
+        with conn.cursor() as c:
+            c.execute("""INSERT INTO ticket_groups (id, parent_ticket_id, title, description)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, description=EXCLUDED.description""",
+                      (group_id, parent_ticket_id, title, description))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+    return group_id
+
+
+def get_ticket_group(group_id):
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+            c.execute("SELECT * FROM ticket_groups WHERE id = %s", (group_id,))
+            row = c.fetchone()
+            return _row_to_dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def add_team_message(group_id, sender_agent_id, content, message_type="info"):
+    conn = get_db()
+    try:
+        with conn.cursor() as c:
+            c.execute("""INSERT INTO team_channel_messages (group_id, sender_agent_id, message_type, content)
+                        VALUES (%s, %s, %s, %s) RETURNING id""",
+                      (group_id, sender_agent_id, message_type, content))
+            row_id = c.fetchone()[0]
+        conn.commit()
+        return row_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_team_messages(group_id, limit=50):
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+            c.execute("SELECT * FROM team_channel_messages WHERE group_id = %s ORDER BY created_at DESC LIMIT %s", (group_id, limit))
+            return [_row_to_dict(r) for r in c.fetchall()]
+    finally:
+        conn.close()
 
 
 # ── Init ──

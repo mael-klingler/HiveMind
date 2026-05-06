@@ -22,6 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
+RUN mkdir -p /home/hivemind/.ssh /scripts /workspace /etc/agent && \
+    usermod -d /home/hivemind -l hivemind node 2>/dev/null || true && \
+    chown -R 1000:1000 /home/hivemind /scripts /workspace /etc/agent
+
 RUN npm install -g @gitbeaker/rest
 RUN npm install -g opencode-ai@latest
 ENV NODE_PATH=/usr/local/lib/node_modules
@@ -34,9 +38,8 @@ RUN leankg --version
 RUN curl -fsSL https://raw.githubusercontent.com/edouard-claude/snip/master/install.sh | sh \
     && snip --version 2>/dev/null || echo "snip installed"
 
-RUN mkdir -p /root/.ssh /scripts /workspace /etc/agent
-RUN ssh-keyscan gitlab.com >> /root/.ssh/known_hosts 2>/dev/null || true
-RUN printf "Host *.gitlab.com\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /root/.ssh/known_hosts\n" >> /root/.ssh/config
+RUN ssh-keyscan gitlab.com >> /home/hivemind/.ssh/known_hosts 2>/dev/null || true
+RUN printf "Host *.gitlab.com\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /home/hivemind/.ssh/known_hosts\n" >> /home/hivemind/.ssh/config
 
 RUN echo '#!/usr/bin/env node\n'\
 'const { Gitlab } = require("@gitbeaker/rest");\n'\
@@ -62,6 +65,7 @@ COPY opencode.json.template /etc/agent/opencode.json.template
 COPY entrypoint.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
 
+USER hivemind
 EXPOSE 4096
 
 WORKDIR /workspace

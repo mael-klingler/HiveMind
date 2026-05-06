@@ -14,10 +14,19 @@ spec:
         app: orchestrator
     spec:
       serviceAccountName: orchestrator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       initContainers:
       - name: repo-init
         image: hivemind-orchestrator:latest
         imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
         command: ["python3", "-m", "main", "init"]
         envFrom:
         - secretRef:
@@ -39,6 +48,10 @@ spec:
       - name: orchestrator
         image: hivemind-orchestrator:latest
         imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
         ports:
         - containerPort: 8080
           name: http

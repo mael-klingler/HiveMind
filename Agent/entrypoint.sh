@@ -188,7 +188,7 @@ if [ "$MERGE_CONFLICT" = "true" ]; then
 fi
 
 # ── OpenCode Config ──────────────────────────────────────────────────────
-mkdir -p /root/.config/opencode
+mkdir -p /home/hivemind/.config/opencode
 
 if [ -z "${OPENCODE_PLUGINS:-}" ]; then
   export OPENCODE_PLUGINS='["opencode-snip","opencode-agent-memory","opencode-handoff"]'
@@ -196,19 +196,19 @@ fi
 
 if [ -f /mnt/opencode-config/opencode.json ]; then
   echo "📄 Using opencode.json from ConfigMap (/mnt/opencode-config)"
-  cp /mnt/opencode-config/opencode.json /root/.config/opencode/opencode.json
+  cp /mnt/opencode-config/opencode.json /home/hivemind/.config/opencode/opencode.json
 elif [ -f /etc/agent/opencode.json.template ]; then
   echo "📄 Using opencode.json.template (fallback)"
-  envsubst '$OPENCODE_MODEL $OLLAMA_BASE_URL $OPENCODE_PLUGINS' < /etc/agent/opencode.json.template > /root/.config/opencode/opencode.json
+  envsubst '$OPENCODE_MODEL $OLLAMA_BASE_URL $OPENCODE_PLUGINS' < /etc/agent/opencode.json.template > /home/hivemind/.config/opencode/opencode.json
 else
   echo "❌ No opencode config found"
   exit 1
 fi
-export OPENCODE_CONFIG=/root/.config/opencode/opencode.json
+export OPENCODE_CONFIG=/home/hivemind/.config/opencode/opencode.json
 
 # ── Agent Memory Blocks ──────────────────────────────────────────────────
-mkdir -p /root/.config/opencode/memory
-MEMORY_DIR="/root/.config/opencode/memory"
+mkdir -p /home/hivemind/.config/opencode/memory
+MEMORY_DIR="/home/hivemind/.config/opencode/memory"
 
 # Restore memory blocks from mounted config if available
 if [ -d "/mnt/memory-blocks" ]; then
@@ -255,8 +255,8 @@ MEMEOF
 fi
 
 # Agent-memory journal config (optional)
-if [ ! -f /root/.config/opencode/agent-memory.json ]; then
-  cat > /root/.config/opencode/agent-memory.json << 'JEOF'
+if [ ! -f /home/hivemind/.config/opencode/agent-memory.json ]; then
+  cat > /home/hivemind/.config/opencode/agent-memory.json << 'JEOF'
 {
   "journal": {
     "enabled": true,
@@ -348,8 +348,8 @@ inject_git_credentials() {
   done
 }
 
-echo "https://${GITLAB_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}" > /root/.git-credentials
-chmod 600 /root/.git-credentials
+echo "https://${GITLAB_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}" > /home/hivemind/.git-credentials
+chmod 600 /home/hivemind/.git-credentials
 
 inject_git_credentials
 
@@ -452,6 +452,50 @@ fi
 
 echo "✅ opencode task completed"
 post_progress "✅ opencode task completed – starting commit/push/MR phase" "system"
+
+# ── Phase 1.5: Run Tests (optional) ──────────────────────────────────
+if [ -n "${TEST_COMMAND:-}" ]; then
+  echo "🧪 Running test command: $TEST_COMMAND"
+  post_progress "🧪 Running tests: $TEST_COMMAND" "system"
+
+  TEST_EXIT=0
+  cd "$PRIMARY_REPO" 2>/dev/null || true
+  eval "$TEST_COMMAND" || TEST_EXIT=$?
+
+  if [ "$TEST_EXIT" -ne 0 ]; then
+    echo "❌ Tests failed (exit: $TEST_EXIT) — starting self-correction..."
+    post_progress "❌ Tests failed — starting self-correction" "system"
+
+    FAILURE_PROMPT="# Tests failed for ticket ${TICKET_ID}:
+
+The following test command failed with exit code ${TEST_EXIT}:
+\`\`\`
+${TEST_COMMAND}
+\`\`\`
+
+Please fix the code so that these tests pass. Do NOT change the test expectations unless they are clearly wrong.
+Commit and push the fixes to the same branch."
+
+    unset OPENCODE_SERVER_PASSWORD
+    opencode run \
+      --title "[${TICKET_ID}] Fix failing tests" \
+      --dangerously-skip-permissions \
+      "$FAILURE_PROMPT" || echo "⚠️  Test fix opencode run failed (Exit: $?)"
+
+    echo "🔑 Re-inject Git credentials after test fix..."
+    inject_git_credentials
+
+    # Re-run tests after fix attempt
+    cd "$PRIMARY_REPO" 2>/dev/null || true
+    eval "$TEST_COMMAND" || {
+      echo "⚠️  Tests still failing after fix attempt — proceeding with push anyway"
+      post_progress "⚠️ Tests still failing after fix — proceeding with push" "system"
+    }
+  else
+    echo "✅ Tests passed"
+    post_progress "✅ Tests passed" "system"
+  fi
+fi
 
 echo "🔑 Re-inject Git credentials (opencode may have modified remote URLs)..."
 inject_git_credentials
@@ -690,9 +734,9 @@ Commit and push the changes to the same branch."
 fi
 
 # ── Memory Sync-Back ──────────────────────────────────────────────
-if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/root/.config/opencode/memory" ]; then
+if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/home/hivemind/.config/opencode/memory" ]; then
   echo "📝 Syncing memory blocks back to orchestrator..."
-  SYNC_BODY=$(jq -n --arg dir "/root/.config/opencode/memory" --arg repo "_global" '{memory_dir: $dir, repo_name: $repo}')
+  SYNC_BODY=$(jq -n --arg dir "/home/hivemind/.config/opencode/memory" --arg repo "_global" '{memory_dir: $dir, repo_name: $repo}')
   curl -sS -X POST \
     -H "Content-Type: application/json" \
     -d "$SYNC_BODY" \
