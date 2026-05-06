@@ -1,4 +1,4 @@
-# Copyright 2025 Mael Klingler
+# Copyright 2026 Mael Klingler
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -143,6 +143,13 @@ class WorkspaceBuilder:
             enriched_description = f"{ticket.description}\n\n---\n**Repositories selected:**\n{repo_context}"
             update_ticket_description(ticket.id, enriched_description)
             ticket.description = enriched_description
+            analysis = {
+                "selected_repos": manual_repos,
+                "primary_repo": manual_repos[0],
+                "complexity": "Medium",
+                "estimated_hours": 2,
+                "reasoning": "Repositories manually selected by user",
+            }
             selected_names = set(manual_repos)
         else:
             analysis = None
