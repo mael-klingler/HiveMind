@@ -168,24 +168,82 @@ async def agent_pod_monitor():
                 namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
 
                 try:
-                    rc, out, err = _get_worker()._main._kubectl(f"get pods {pod_name} -n {namespace} -o jsonpath='{{.status.phase}}'")
+                    from k8s_client import get_pod as _get_pod, delete_pod as _delete_pod
+                    pod = _get_pod(pod_name, namespace)
                 except Exception:
                     continue
-                if rc != 0:
+                if not pod:
                     continue
 
-                phase = out.strip().strip("'\"")
-                if phase not in ("Running", "Pending", "ContainerCreating"):
+                phase = pod.status.phase if pod.status else "Unknown"
+
+                # If pod is in a terminal or error state, clean it up and re-queue
+                if phase in ("Failed", "Succeeded"):
+                    agent_id = t.get("agent_id", "") or ticket_id.lower()
+                    log.info(f"Ticket {ticket_id}: Pod is {phase}, deleting and re-queuing", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
+                    try:
+                        _delete_pod(pod_name, namespace)
+                    except Exception:
+                        pass
+                    cleanup_agent_resources(ticket_id)
+                    if t.get("retry_count", 0) < AGENT_MAX_RETRIES:
+                        requeue_ticket(ticket_id, AGENT_MAX_RETRIES)
+                        set_agent_status(agent_id, "idle")
+                        await _broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": f"Pod {phase}, cleaned up"})
+                        await _broadcast_event("queue_updated", get_queue())
+                    else:
+                        log.error(f"Ticket {ticket_id}: Pod {phase}, max retries reached → failed", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
+                        update_ticket_status(ticket_id, "failed")
+                        set_agent_status(agent_id, "idle")
+                        await _broadcast_event("ticket_failed", {"ticket_id": ticket_id})
                     continue
 
-                agent_id = t.get("agent_id", "") or ticket_id.lower()
-                old_status = t.get("status", "unknown")
-                log.info(f"Ticket {ticket_id}: Pod is {phase} but ticket is '{old_status}' → recovering to running", extra={"ticket_id": ticket_id, "event": "ticket_recovered"})
-                update_ticket_status(ticket_id, "running")
-                set_agent_status(agent_id, "running", ticket_id)
-                add_ticket_comment(ticket_id, author="system", comment_type="system", content=f"Pod detected as {phase} while ticket was '{old_status}'. Recovered to running.")
-                await _broadcast_event("ticket_updated", {"ticket_id": ticket_id, "status": "running", "reason": f"pod_{phase}_recovered_from_{old_status}"})
-                await _broadcast_event("queue_updated", get_queue())
+                # Pod is Running/Pending — check if containers are actually ready
+                if phase in ("Running", "Pending", "ContainerCreating"):
+                    container_ready = False
+                    init_ok = True
+                    if pod.status and pod.status.container_statuses:
+                        for cs in pod.status.container_statuses:
+                            if cs.ready:
+                                container_ready = True
+                                break
+                    if pod.status and pod.status.init_container_statuses:
+                        for ics in pod.status.init_container_statuses:
+                            if ics.state and ics.state.terminated and ics.state.terminated.exit_code != 0:
+                                init_ok = False
+                                break
+                            if ics.state and ics.state.waiting and ics.state.waiting.reason in ("CrashLoopBackOff", "ImagePullBackOff"):
+                                init_ok = False
+                                break
+
+                    if init_ok and (container_ready or phase == "Pending"):
+                        agent_id = t.get("agent_id", "") or ticket_id.lower()
+                        old_status = t.get("status", "unknown")
+                        log.info(f"Ticket {ticket_id}: Pod is {phase} but ticket is '{old_status}' → recovering to running", extra={"ticket_id": ticket_id, "event": "ticket_recovered"})
+                        update_ticket_status(ticket_id, "running")
+                        set_agent_status(agent_id, "running", ticket_id)
+                        add_ticket_comment(ticket_id, author="system", comment_type="system", content=f"Pod detected as {phase} while ticket was '{old_status}'. Recovered to running.")
+                        await _broadcast_event("ticket_updated", {"ticket_id": ticket_id, "status": "running", "reason": f"pod_{phase}_recovered_from_{old_status}"})
+                        await _broadcast_event("queue_updated", get_queue())
+                    elif not init_ok or (phase == "Running" and not container_ready):
+                        # Pod stuck (init failed or container not ready) — nuke and re-queue
+                        agent_id = t.get("agent_id", "") or ticket_id.lower()
+                        log.warning(f"Ticket {ticket_id}: Pod is {phase} but containers not ready (init_ok={init_ok}, container_ready={container_ready}), deleting and re-queuing", extra={"ticket_id": ticket_id, "event": "ticket_requeued"})
+                        try:
+                            _delete_pod(pod_name, namespace)
+                        except Exception:
+                            pass
+                        cleanup_agent_resources(ticket_id)
+                        if t.get("retry_count", 0) < AGENT_MAX_RETRIES:
+                            requeue_ticket(ticket_id, AGENT_MAX_RETRIES)
+                            set_agent_status(agent_id, "idle")
+                            await _broadcast_event("ticket_requeued", {"ticket_id": ticket_id, "reason": "Pod containers not ready"})
+                            await _broadcast_event("queue_updated", get_queue())
+                        else:
+                            log.error(f"Ticket {ticket_id}: Pod stuck, max retries reached → failed", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
+                            update_ticket_status(ticket_id, "failed")
+                            set_agent_status(agent_id, "idle")
+                            await _broadcast_event("ticket_failed", {"ticket_id": ticket_id})
 
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
             gitlab_host = os.getenv("GITLAB_HOST") or ""
