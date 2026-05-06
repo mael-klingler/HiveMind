@@ -1214,15 +1214,19 @@ def _resolve_pod_url(ticket_id: str) -> Optional[str]:
     pod_name = f"agent-worker-{ticket_id.lower()}"
     namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
 
-    # Try DNS first (works when hostname+subdomain are set in pod spec)
-    dns_url = f"http://{pod_name}.agent-session.{namespace}.svc.cluster.local:4096"
-
-    # Fallback: resolve pod IP via kubectl
+    # Resolve pod IP via kubectl first (most reliable)
     rc, pod_ip, _ = _get_main()._kubectl(f"get pod {pod_name} -n {namespace} -o jsonpath='{{.status.podIP}}'")
     if rc == 0 and pod_ip.strip():
         return f"http://{pod_ip.strip()}:4096"
 
-    return dns_url
+    # Check pod status before trying DNS
+    rc2, phase, _ = _get_main()._kubectl(f"get pod {pod_name} -n {namespace} -o jsonpath='{{.status.phase}}'")
+    if rc2 != 0 or not phase.strip().strip("'\""):
+        return None
+
+    # Pod exists but we don't have its IP yet — may still be starting
+    # Return DNS URL as last resort (only works with hostname+subdomain)
+    return f"http://{pod_name}.agent-session.{namespace}.svc.cluster.local:4096"
 
 
 async def _proxy_request(ticket_id: str, path: str, request: Request) -> Response:
@@ -1251,6 +1255,9 @@ async def _proxy_request(ticket_id: str, path: str, request: Request) -> Respons
             content=body,
         )
     except (httpx.ConnectError, httpx.TimeoutException) as e:
+        err_msg = str(e)
+        if "Name or service not known" in err_msg or "Connection refused" in err_msg:
+            raise HTTPException(status_code=503, detail=f"Agent pod not ready yet (still starting): {e}")
         raise HTTPException(status_code=502, detail=f"Agent pod not reachable: {e}")
 
     metrics.inc("hivemind_proxy_requests_total", labels={"method": request.method})
