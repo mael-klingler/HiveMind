@@ -29,6 +29,11 @@ USE_POSTGRES = os.getenv("DATABASE_URL", "").startswith("postgresql")
 
 if USE_POSTGRES:
     from database_pg import *  # noqa: F401,F403
+    # Compatibility alias used by callers expecting db_delete_agent
+    try:
+        db_delete_agent = delete_agent
+    except NameError:
+        pass
 else:
     import json
     import sqlite3
@@ -39,6 +44,8 @@ else:
     DB_PATH = Path(os.getenv("DB_PATH", "/app/data/orchestrator.db"))
 
     def get_db():
+        if str(DB_PATH) != ":memory:":
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
