@@ -1,3 +1,17 @@
+# Copyright 2025 Mael Klingler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -159,6 +173,15 @@ def set_ticket_ai_planning(ticket_id: str, planning: Dict):
     c = conn.cursor()
     c.execute("UPDATE tickets SET ai_planning = ?, updated_at = ? WHERE id = ?",
               (json.dumps(planning, ensure_ascii=False), datetime.now().isoformat(), ticket_id))
+    conn.commit()
+    conn.close()
+
+
+def update_ticket_description(ticket_id: str, description: str):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE tickets SET description = ?, updated_at = ? WHERE id = ?",
+              (description, datetime.now().isoformat(), ticket_id))
     conn.commit()
     conn.close()
 

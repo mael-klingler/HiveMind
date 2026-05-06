@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-0.7.0-blue)](.version)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF)](.github/workflows/ci.yaml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![K8s](https://img.shields.io/badge/platform-Kubernetes-326ce5)](Orchestrator/k8s/)
 
 > **The problem:** You prompt an AI agent, it writes code, you push a branch, someone reviews the MR and says "fix this" — and the loop breaks. The agent session is gone. Context is lost. Start over.

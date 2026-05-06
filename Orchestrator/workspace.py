@@ -1,3 +1,17 @@
+# Copyright 2025 Mael Klingler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 WorkspaceBuilder – builds workspaces and spawns K8s pods when a ticket starts.
 """
@@ -10,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from database import (
-    get_all_repos, get_setting, set_ticket_ai_planning,
+    get_all_repos, get_setting, set_ticket_ai_planning, update_ticket_description,
 )
 from config import (
     ORCHESTRATOR_CONFIG, OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_TIMEOUT,
@@ -119,13 +133,16 @@ class WorkspaceBuilder:
                 else:
                     log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
                     return "failed: no matching repositories", None, None
-            analysis = {
-                "selected_repos": manual_repos,
-                "primary_repo": manual_repos[0],
-                "complexity": "Medium",
-                "estimated_hours": 2,
-                "reasoning": "Repositories manually selected by user",
-            }
+
+            repo_context_parts = []
+            for r in selected_configs:
+                desc = r.description or "No description"
+                tags = ", ".join(r.tags) if r.tags else ""
+                repo_context_parts.append(f"- **{r.name}**: {desc}" + (f" (Tags: {tags})" if tags else ""))
+            repo_context = "\n".join(repo_context_parts)
+            enriched_description = f"{ticket.description}\n\n---\n**Repositories selected:**\n{repo_context}"
+            update_ticket_description(ticket.id, enriched_description)
+            ticket.description = enriched_description
             selected_names = set(manual_repos)
         else:
             analysis = None
@@ -167,6 +184,17 @@ class WorkspaceBuilder:
             if not selected_configs:
                 log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
                 return "failed: no matching repositories", None, None
+
+            repo_context_parts = []
+            for r in selected_configs:
+                desc = r.description or "No description"
+                tags = ", ".join(r.tags) if r.tags else ""
+                repo_context_parts.append(f"- **{r.name}**: {desc}" + (f" (Tags: {tags})" if tags else ""))
+            repo_context = "\n".join(repo_context_parts)
+            reasoning = analysis.get("reasoning", "")
+            enriched_description = f"{ticket.description}\n\n---\n**Repositories:**\n{repo_context}\n\n**AI Assessment:** {reasoning}"
+            update_ticket_description(ticket.id, enriched_description)
+            ticket.description = enriched_description
 
         prompt = self._main.generate_assignment_prompt(ticket, analysis, selected_configs)
 
