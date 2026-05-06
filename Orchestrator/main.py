@@ -418,11 +418,19 @@ class OllamaClient:
         raw = self._post(body)
         content = raw.get("message", {}).get("content", "")
         if not content:
+            choices = raw.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+        if not content:
             raise RuntimeError(f"Ollama returned no answer: {raw}")
+        content = content.strip()
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*\n?", "", content)
+            content = re.sub(r"\n?\s*```\s*$", "", content)
+            content = content.strip()
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            import re
             m = re.search(r'\{.*\}', content, re.DOTALL)
             if m:
                 return json.loads(m.group(0))
