@@ -15,7 +15,7 @@ import subprocess
 import sys
 import traceback
 import uuid as _uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -731,6 +731,19 @@ async def agent_pod_monitor():
                 ticket_id = t["id"]
                 pod_name = f"agent-worker-{ticket_id.lower()}"
                 namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+
+                # Grace period: skip pod check if ticket was just marked running (within 60s)
+                updated_at = t.get("updated_at") or t.get("created_at") or ""
+                if updated_at:
+                    try:
+                        started = datetime.fromisoformat(updated_at)
+                        if started.tzinfo is None:
+                            started = started.replace(tzinfo=timezone.utc)
+                        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                        if elapsed < 60:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
 
                 rc, out, err = _get_main()._kubectl(f"get pod {pod_name} -n {namespace} -o jsonpath='{{.status.phase}}' 2>/dev/null")
                 if rc != 0:

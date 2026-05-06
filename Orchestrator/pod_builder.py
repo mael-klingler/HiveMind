@@ -126,7 +126,59 @@ def build_pod_spec(
         ],
         env=opencode_env,
         command=["/bin/bash", "-c"],
-        args=[_build_agent_script(ticket_id, agent_id, queue_id)],
+        args=[
+            "set -e\n"
+            "echo '🚀 Starting opencode agent for ticket $TICKET_ID'\n"
+            "TASK_FILE=/etc/task/task.md\n"
+            "if [ ! -f \"$TASK_FILE\" ]; then\n"
+            "  echo '❌ No task file found at $TASK_FILE'\n"
+            "  exit 1\n"
+            "fi\n"
+            "mkdir -p /root/.config/opencode\n"
+            "if [ -f /mnt/opencode-config/opencode.json ]; then\n"
+            "  cp /mnt/opencode-config/opencode.json /root/.config/opencode/opencode.json\n"
+            "fi\n"
+            "mkdir -p /root/.config/opencode/memory\n"
+            "if [ -d /mnt/memory-blocks ]; then\n"
+            "  cp /mnt/memory-blocks/*.md /root/.config/opencode/memory/ 2>/dev/null || true\n"
+            "fi\n"
+            "if [ -n \"${OLLAMA_CLOUD_API_KEY:-}\" ]; then\n"
+            "  export OLLAMA_API_KEY=\"$OLLAMA_CLOUD_API_KEY\"\n"
+            "fi\n"
+            "export OPENCODE_CONFIG=/root/.config/opencode/opencode.json\n"
+            "export GITLAB_TOKEN GITLAB_HOST GIT_USER GITLAB_USER BRANCH\n"
+            "export GITLAB_USER=${GITLAB_USER:-$GIT_USER}\n"
+            "git config --global user.email 'hivemind-agents@example.com'\n"
+            "git config --global user.name 'HiveMind'\n"
+            "git config --global credential.helper store\n"
+            "echo \"https://${GIT_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}\" > /root/.git-credentials\n"
+            "chmod 600 /root/.git-credentials\n"
+            "for repo in $(jq -r 'keys[]' /config/repos.json); do\n"
+            "  url=$(jq -r --arg r \"$repo\" '.[$r].url' /config/repos.json)\n"
+            "  branch=$(jq -r --arg r \"$repo\" '.[$r].branch' /config/repos.json)\n"
+            "  if echo \"$url\" | grep -qE '^https?://'; then\n"
+            "    url=$(echo \"$url\" | sed -E \"s|^(https?://)|\\\\1${GIT_USER}:${GITLAB_TOKEN}@|\")\n"
+            "  fi\n"
+            "  if [ -d \"/workspace/$repo\" ] && [ -d \"/workspace/$repo/.git\" ]; then\n"
+            "    cd \"/workspace/$repo\"\n"
+            "  fi\n"
+            "done\n"
+            "PRIMARY_REPO=$(jq -r '.repositories[] | select(.primary == true) | .name' /root/.config/opencode/opencode.json 2>/dev/null | head -1 || true)\n"
+            "if [ -n \"$PRIMARY_REPO\" ] && [ -d \"/workspace/$PRIMARY_REPO\" ]; then\n"
+            "  cd \"/workspace/$PRIMARY_REPO\"\n"
+            "fi\n"
+            "TASK_PROMPT=$(cat \"$TASK_FILE\")\n"
+            "opencode web --hostname 0.0.0.0 --port 4096 &\n"
+            "WEB_PID=$!\n"
+            "sleep 3\n"
+            "opencode run --attach \"http://localhost:4096\" ${OPENCODE_SERVER_PASSWORD:+--password \"$OPENCODE_SERVER_PASSWORD\"} --title \"[${TICKET_ID}] ${TICKET_TITLE:-}\" --dangerously-skip-permissions \"$TASK_PROMPT\" || true\n"
+            "RC=$?\n"
+            "echo \"🛑 opencode exited with code $RC\"\n"
+            "echo '📡 Notifying orchestrator of completion...'\n"
+            "AGENT_ID_VAL=\"${AGENT_ID:-$TICKET_ID}\"\n"
+            "curl -s -X POST \"http://orchestrator." + AGENT_NAMESPACE + ".svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete\" -H 'Content-Type: application/json' -d \"{\\\"agent_id\\\": \\\"$AGENT_ID_VAL\\\", \\\"ticket_id\\\": \\\"$TICKET_ID\\\", \\\"queue_id\\\": \\\"$QUEUE_ID\\\"}\" || echo '⚠️ Failed to notify orchestrator'\n"
+            "echo '✅ Completion notification sent'\n"
+        ],
         ports=[kclient.V1ContainerPort(name="opencode-web", container_port=4096)],
         resources=kclient.V1ResourceRequirements(
             requests={"cpu": "500m", "memory": "1Gi"},
@@ -171,24 +223,6 @@ for repo in $(jq -r 'keys[]' /config/repos.json); do
   leankg index .
 done
 echo "All repos processed"
-"""
-
-
-def _build_agent_script(ticket_id: str, agent_id: str, queue_id: str) -> str:
-    agent_id_default = "$" + "{AGENT_ID:-$TICKET_ID}"
-    agent_id_val = agent_id or agent_id_default
-    return f"""echo "🚀 Starting opencode agent for ticket $TICKET_ID"
-ORIG_CMD=$(cat /proc/1/cmdline 2>/dev/null || true)
-exec /usr/local/bin/opencode-agent || true
-RC=$?
-echo "🛑 opencode exited with code $RC"
-echo "📡 Notifying orchestrator of completion..."
-AGENT_ID_VAL="{agent_id_val}"
-QUEUE_ID="{queue_id}"
-curl -s -X POST "http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete" \
-  -H "Content-Type: application/json" \
-  -d '{{"agent_id": "'"$AGENT_ID_VAL"'", "ticket_id": "'"$TICKET_ID"'", "queue_id": "'"$QUEUE_ID"'"}}' || echo "⚠️ Failed to notify orchestrator"
-echo "✅ Completion notification sent"
 """
 
 
