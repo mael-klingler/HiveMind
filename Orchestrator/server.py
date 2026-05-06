@@ -328,8 +328,13 @@ class WorkspaceBuilder:
             log.info(f"Ticket {ticket.id} has manual repo selection", extra={"ticket_id": ticket.id})
             selected_configs = [r for r in self.repositories if r.name in manual_repos]
             if not selected_configs:
-                log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
-                return "failed: no matching repositories", None, None
+                selected_configs = [r for r in self.repositories if r.active]
+                if selected_configs:
+                    log.warning(f"Manual repos {manual_repos} not found, falling back to all active repos for ticket {ticket.id}", extra={"ticket_id": ticket.id})
+                    manual_repos = [r.name for r in selected_configs]
+                else:
+                    log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
+                    return "failed: no matching repositories", None, None
             analysis = {
                 "selected_repos": manual_repos,
                 "primary_repo": manual_repos[0],
@@ -370,6 +375,11 @@ class WorkspaceBuilder:
 
             selected_names = set(analysis.get("selected_repos", []))
             selected_configs = [r for r in self.repositories if r.name in selected_names]
+            if not selected_configs and self.repositories:
+                log.warning(f"LLM returned no matching repos for ticket {ticket.id}, falling back to all active repos", extra={"ticket_id": ticket.id})
+                selected_configs = [r for r in self.repositories if r.active]
+                analysis["selected_repos"] = [r.name for r in selected_configs]
+                analysis["primary_repo"] = selected_configs[0].name if selected_configs else None
             if not selected_configs:
                 log.error(f"No matching repositories for ticket {ticket.id}", extra={"ticket_id": ticket.id})
                 return "failed: no matching repositories", None, None
@@ -566,6 +576,13 @@ async def review_lifecycle_monitor():
 
                 if not mr_url or "gitlab" not in mr_url:
                     continue
+
+                if status == "running":
+                    pod_name = f"agent-worker-{ticket_id.lower()}"
+                    ns = os.getenv("AGENT_NAMESPACE", "hivemind")
+                    rc, out, _ = _get_main()._kubectl(f"get pod {pod_name} -n {ns} -o jsonpath='{{.status.phase}}'")
+                    if rc == 0 and out.strip().strip("'\"") in ("Running", "Pending", "ContainerCreating"):
+                        continue
 
                 try:
                     mr_data = _fetch_mr(gitlab_host, gitlab_token, mr_url)

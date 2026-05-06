@@ -461,8 +461,6 @@ class OllamaClient:
     def _make_prompt(self, ticket: Ticket, repo_contexts: List[RepoStatus], leankg: LeanKGManager) -> str:
         blocks = []
         for ctx in repo_contexts:
-            if ctx.error:
-                continue
             keywords = (ticket.title + " " + ticket.description).lower().split()[:20]
             leankg_files = []
             if ctx.leankg_ready:
@@ -471,8 +469,18 @@ class OllamaClient:
                 "name": ctx.config.name,
                 "description": ctx.config.description or "No description",
                 "tags": ctx.config.tags,
+                "available": not bool(ctx.error),
                 "leankg_context": {"indexed": ctx.leankg_ready, "recent_files": leankg_files[:5]},
             })
+        if not blocks:
+            for r in self._repos:
+                blocks.append({
+                    "name": r.name,
+                    "description": r.description or "No description",
+                    "tags": r.tags,
+                    "available": True,
+                    "leankg_context": {"indexed": False, "recent_files": []},
+                })
 
         return json.dumps({
             "instruction": ("Select 1–4 repositories for this ticket. "
