@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from database import (
     get_tickets, get_ticket, set_agent_status, update_ticket_status,
     requeue_ticket, add_ticket_comment, get_all_agents,
-    get_db,
+    get_db, get_queue,
 )
 from background.queue_processor import _get_worker
 from background.sse import broadcast_event as _broadcast_event
@@ -76,7 +76,7 @@ async def agent_pod_monitor():
                     except (ValueError, TypeError):
                         pass
 
-                rc, out, err = _get_worker()._main._kubectl(f"get pod {pod_name} -n {namespace} -o jsonpath='{{.status.phase}}' 2>/dev/null")
+                rc, out, err = _get_worker()._main._kubectl(f"get pod {pod_name} -n {namespace} -o jsonpath='{{.status.phase}}'")
                 if rc != 0:
                     if ticket_id.lower() in completed_pod_ids or ticket_id in completed_pod_ids:
                         update_ticket_status(ticket_id, "completed")
@@ -160,6 +160,32 @@ async def agent_pod_monitor():
                     except Exception:
                         pass
                     cleanup_agent_resources(ticket_id)
+
+            # ── Recover: if ticket is failed/queued but pod is still running, resume it ──
+            for t in [t for t in get_tickets(status=None) if t.get("status") in ("failed", "queued")]:
+                ticket_id = t["id"]
+                pod_name = f"agent-worker-{ticket_id.lower()}"
+                namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+
+                try:
+                    rc, out, err = _get_worker()._main._kubectl(f"get pods {pod_name} -n {namespace} -o jsonpath='{{.status.phase}}'")
+                except Exception:
+                    continue
+                if rc != 0:
+                    continue
+
+                phase = out.strip().strip("'\"")
+                if phase not in ("Running", "Pending", "ContainerCreating"):
+                    continue
+
+                agent_id = t.get("agent_id", "") or ticket_id.lower()
+                old_status = t.get("status", "unknown")
+                log.info(f"Ticket {ticket_id}: Pod is {phase} but ticket is '{old_status}' → recovering to running", extra={"ticket_id": ticket_id, "event": "ticket_recovered"})
+                update_ticket_status(ticket_id, "running")
+                set_agent_status(agent_id, "running", ticket_id)
+                add_ticket_comment(ticket_id, author="system", comment_type="system", content=f"Pod detected as {phase} while ticket was '{old_status}'. Recovered to running.")
+                await _broadcast_event("ticket_updated", {"ticket_id": ticket_id, "status": "running", "reason": f"pod_{phase}_recovered_from_{old_status}"})
+                await _broadcast_event("queue_updated", get_queue())
 
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
             gitlab_host = os.getenv("GITLAB_HOST") or ""

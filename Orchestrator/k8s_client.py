@@ -205,8 +205,14 @@ def kubectl_compat(args: str) -> Tuple[int, str, str]:
     Accepts the same args string format used by the old subprocess calls
     and dispatches to the Python client. Returns (rc, stdout, stderr).
     """
-    parts = args.strip().split()
+    import re
+    cleaned = re.sub(r'\s*2>/dev/null\s*', ' ', args).strip()
+    parts = cleaned.split()
     cmd = parts[0] if parts else ""
+
+    # Normalize "pod" to "pods" for kubectl compatibility
+    if len(parts) >= 2 and parts[1] == "pod":
+        parts[1] = "pods"
 
     try:
         if cmd == "get":
@@ -318,7 +324,7 @@ def _handle_delete(parts: List[str]) -> Tuple[int, str, str]:
     if "--grace-period=0" in parts:
         grace_period = 0
 
-    if resource == "pod" and name:
+    if resource in ("pod", "pods") and name:
         try:
             delete_pod(name, ns, grace_period=grace_period, force=force)
             return 0, f"pod {name} deleted", ""
