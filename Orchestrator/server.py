@@ -2362,6 +2362,35 @@ async def api_add_repo(req: Request):
     return {"ok": True, "name": name}
 
 
+@app.patch("/api/repos")
+async def api_bulk_update_repos(req: Request):
+    data = await req.json()
+    branch = data.get("branch", "").strip()
+    active = data.get("active")
+    if not branch and active is None:
+        raise HTTPException(status_code=400, detail="Provide 'branch' and/or 'active' to update")
+
+    all_repos = get_all_repos()
+    updated = []
+    for repo in all_repos:
+        fields = {}
+        if branch:
+            fields["branch"] = branch
+        if active is not None:
+            if isinstance(active, bool):
+                fields["active"] = 1 if active else 0
+            elif isinstance(active, int):
+                fields["active"] = active
+        if fields:
+            db_update_repo(repo["name"], **fields)
+            updated.append(repo["name"])
+
+    global _worker
+    _worker = None
+
+    return {"ok": True, "updated": updated, "count": len(updated)}
+
+
 @app.delete("/api/repos/{name}")
 def api_delete_repo(name: str):
     deleted = db_delete_repo(name)

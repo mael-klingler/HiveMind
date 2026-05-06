@@ -255,6 +255,7 @@
       <div class="page-header">
         <h2>Repositories</h2>
         <div style="display:flex;gap:0.5rem">
+          <button class="btn btn-secondary" onclick="openBulkBranchModal()">&#128256; Switch Branches</button>
           <button class="btn btn-secondary" onclick="initFromGitlab()">&#128270; Import from GitLab</button>
           <button class="btn btn-primary" onclick="openAddRepoModal()">+ Add Repository</button>
         </div>
@@ -382,9 +383,59 @@
 
   <div id="toast" class="toast"></div>
 
+  <div class="modal-overlay" id="bulkBranchModal" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <h3>&#128256; Switch All Branches</h3>
+        <button class="modal-close" onclick="document.getElementById('bulkBranchModal').classList.remove('open')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:0.85rem;color:var(--text2);margin-bottom:1rem">Set the tracking branch for <strong>all</strong> repositories at once.</p>
+        <div class="form-group">
+          <label>New Branch</label>
+          <input id="bulkBranchInput" placeholder="development" value="development" list="bulkBranchList" autocomplete="off">
+          <datalist id="bulkBranchList">
+            <option value="development">
+            <option value="main">
+            <option value="master">
+            <option value="qa">
+            <option value="staging">
+          </datalist>
+          <div class="help">This will update the branch for every repo. Existing checkouts will re-clone on next pull.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('bulkBranchModal').classList.remove('open')">Cancel</button>
+        <button class="btn btn-primary" onclick="bulkSwitchBranch()">Switch All</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let repos = [];
     let defaultBranch = "development";
+
+    async function openBulkBranchModal() {
+      if (!repos.length) { showToast("No repositories", true); return; }
+      document.getElementById("bulkBranchInput").value = defaultBranch;
+      document.getElementById("bulkBranchModal").classList.add("open");
+    }
+
+    async function bulkSwitchBranch() {
+      const branch = document.getElementById("bulkBranchInput").value.trim();
+      if (!branch) { showToast("Branch name required", true); return; }
+      const n = repos.length;
+      if (!confirm(`Switch all ${n} repos to branch "${branch}"?`)) return;
+      document.getElementById("bulkBranchModal").classList.remove("open");
+      showToast(`Switching ${n} repos to "${branch}"...`);
+      try {
+        const result = await api("/repos", "PATCH", { branch });
+        showToast(`${result.count} repos switched to "${branch}"`);
+        await loadRepos();
+      } catch(e) {
+        showToast("Error: " + e.message, true);
+      }
+    }
 
     async function loadDefaultBranch() {
       try {

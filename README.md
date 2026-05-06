@@ -470,7 +470,10 @@ All config flows through `.env` (single source of truth):
 | `/api/agent-sessions` | GET | List active agent sessions |
 | `/api/agent-profiles` | GET/POST | Agent profiles with skills & memory |
 | `/api/agent-memory/{id}` | GET/POST/DELETE | Agent memory blocks |
-| `/api/repos` | GET/POST/PUT/DELETE | Repository management |
+| `/api/repos` | GET/POST | List or add repositories |
+| `/api/repos` | PATCH | Bulk update all repos (e.g. switch branch) |
+| `/api/repos/{name}` | GET/PUT/PATCH | Get or update a repository |
+| `/api/repos/{name}` | DELETE | Remove a repository |
 | `/api/repos/{name}/branches` | GET | List repo branches from VCS |
 | `/api/config` | GET/POST | Max agent slots, version |
 | `/api/settings` | GET/POST | Runtime settings |
