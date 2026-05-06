@@ -18,6 +18,22 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request'
+    env:
+      DATABASE_URL: postgresql://github:github@localhost:5432/hivemind
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: hivemind
+          POSTGRES_USER: github
+          POSTGRES_PASSWORD: github
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,118 +51,3 @@ jobs:
 
       - name: Lint (py_compile)
         run: cd Orchestrator && python -m py_compile server.py main.py database.py database_pg.py pod_builder.py gitlab_client.py k8s_client.py
-
-  build:
-    name: Build ${{ matrix.image }}
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
-    strategy:
-      matrix:
-        image: [orchestrator, agent]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push (${{ matrix.image }})
-        run: |
-          if [ "${{ matrix.image }}" = "orchestrator" ]; then
-            CONTEXT="Orchestrator"
-            DOCKERFILE="Orchestrator/Dockerfile"
-          else
-            CONTEXT="Agent"
-            DOCKERFILE="Agent/Dockerfile"
-          fi
-
-          docker build \
-            -t ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }} \
-            -t ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest \
-            -f "$DOCKERFILE" \
-            "$CONTEXT"
-
-          docker push ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
-          docker push ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
-
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Scan orchestrator image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.IMAGE_PREFIX }}/orchestrator:${{ github.sha }}
-          severity: 'HIGH,CRITICAL'
-          exit-code: '1'
-          format: 'sarif'
-          output: 'trivy-orchestrator-results.sarif'
-
-      - name: Scan agent image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.IMAGE_PREFIX }}/agent:${{ github.sha }}
-          severity: 'HIGH,CRITICAL'
-          exit-code: '1'
-          format: 'sarif'
-          output: 'trivy-agent-results.sarif'
-
-      - name: Upload orchestrator SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: trivy-orchestrator-results.sarif
-
-      - name: Upload agent SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: trivy-agent-results.sarif
-
-  deploy:
-    name: Deploy
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release' && github.event.action == 'published'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'latest'
-
-      - name: Set kubeconfig
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
-
-      - name: Apply K8s manifests
-        run: kubectl apply -f Orchestrator/k8s/
-
-      - name: Wait for rollout
-        run: kubectl rollout status deployment/orchestrator -n hivemind --timeout=120s
-
-      - name: Verify deployment
-        run: kubectl get pods -n hivemind

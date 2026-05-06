@@ -39,12 +39,21 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
-COPY database.py .
-COPY database_pg.py .
 COPY server.py .
+COPY config.py .
+COPY logging_setup.py .
+COPY middleware.py .
+COPY git_manager.py .
+COPY git_credentials.py .
+COPY llm.py .
+COPY workspace.py .
+COPY workspace_utils.py .
 COPY k8s_client.py .
 COPY gitlab_client.py .
 COPY pod_builder.py .
+COPY database/ ./database/
+COPY api/ ./api/
+COPY background/ ./background/
 COPY vcs/ ./vcs/
 COPY static/ ./static/
 

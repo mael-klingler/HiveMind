@@ -1,0 +1,173 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Agent Success Rate (%)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 50, "color": "orange" },
+              { "value": 80, "color": "green" }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "hivemind_agent_success_rate", "legendFormat": "Success Rate", "refId": "A" }]
+    },
+    {
+      "title": "Test First-Pass Rate (%)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 40, "color": "orange" },
+              { "value": 70, "color": "green" }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "hivemind_test_first_pass_rate", "legendFormat": "First-Pass Rate", "refId": "A" }]
+    },
+    {
+      "title": "Avg Review Cycles",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 10,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 3, "color": "orange" },
+              { "value": 5, "color": "red" }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "hivemind_avg_review_cycles", "legendFormat": "Avg Cycles", "refId": "A" }]
+    },
+    {
+      "title": "Avg Retry Count",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 2, "color": "orange" },
+              { "value": 3, "color": "red" }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "hivemind_avg_retry_count", "legendFormat": "Avg Retries", "refId": "A" }]
+    },
+    {
+      "title": "Tickets by Status",
+      "type": "barchart",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [{ "expr": "hivemind_tickets", "legendFormat": "{{status}}", "refId": "A" }],
+      "options": { "orientation": "horizontal", "groupWidth": 0.7 }
+    },
+    {
+      "title": "Ticket Lifecycle Events (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [
+        { "expr": "rate(hivemind_tickets_created_total[5m])", "legendFormat": "Created", "refId": "A" },
+        { "expr": "rate(hivemind_tickets_completed_total[5m])", "legendFormat": "Completed", "refId": "B" },
+        { "expr": "rate(hivemind_tickets_failed_total[5m])", "legendFormat": "Failed", "refId": "C" },
+        { "expr": "rate(hivemind_tickets_merged_total[5m])", "legendFormat": "Merged", "refId": "D" }
+      ]
+    },
+    {
+      "title": "Review Cycles Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [
+        { "expr": "rate(hivemind_review_cycles_total[5m])", "legendFormat": "Review Cycles", "refId": "A" }
+      ]
+    },
+    {
+      "title": "LLM Token Usage (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [
+        { "expr": "rate(hivemind_llm_prompt_tokens_total[5m])", "legendFormat": "Prompt Tokens ({{model}})", "refId": "A" },
+        { "expr": "rate(hivemind_llm_completion_tokens_total[5m])", "legendFormat": "Completion Tokens ({{model}})", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Queue Wait Time",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 26 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "hivemind_queue_wait_seconds", "legendFormat": "Queue Wait", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Phase Transitions (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 26 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [
+        { "expr": "rate(hivemind_phase_transitions_total[5m])", "legendFormat": "{{phase}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Proxy Requests (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 35 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [
+        { "expr": "rate(hivemind_proxy_requests_total[5m])", "legendFormat": "{{method}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Retry Rate (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 35 },
+      "fieldConfig": { "defaults": {} },
+      "targets": [
+        { "expr": "rate(hivemind_ticket_retries_total[5m])", "legendFormat": "Retries", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["hivemind", "agents"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "HiveMind Agent Metrics",
+  "uid": "hivemind-agent-metrics",
+  "version": 1
+}

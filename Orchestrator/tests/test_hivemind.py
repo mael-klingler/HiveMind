@@ -1,3 +1,17 @@
+# Copyright 2026 Mael Klingler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Comprehensive test suite for HiveMind project.
 Covers API authentication, rate limiting, database routing,
@@ -25,10 +39,15 @@ class TestAPIAuthentication(unittest.TestCase):
     def setUp(self):
         _reset_env()
         os.environ["HIVEMIND_API_KEY"] = "test-secret-key"
+        import config as _cfg
+        importlib.reload(_cfg)
+        import middleware as _mw
+        importlib.reload(_mw)
         import server as _srv
         importlib.reload(_srv)
         self.app = _srv.app
-        self.client = _srv.TestClient(self.app)
+        from fastapi.testclient import TestClient
+        self.client = TestClient(self.app)
 
     def tearDown(self):
         _reset_env()
@@ -89,6 +108,10 @@ class TestAPIKeyOptionalWhenUnset(unittest.TestCase):
         _reset_env()
         os.environ.pop("HIVEMIND_API_KEY", None)
         os.environ.pop("DATABASE_URL", None)
+        import config as _cfg
+        importlib.reload(_cfg)
+        import middleware as _mw
+        importlib.reload(_mw)
         import server as _srv
         importlib.reload(_srv)
 
@@ -106,9 +129,19 @@ class TestAPIKeyOptionalWhenUnset(unittest.TestCase):
 class TestRateLimiting(unittest.TestCase):
     """Verify rate limit is enforced after threshold."""
 
-    def test_rate_limit_enforcement(self):
+    def setUp(self):
+        _reset_env()
         os.environ.pop("HIVEMIND_API_KEY", None)
+
+    def tearDown(self):
+        _reset_env()
+
+    def test_rate_limit_enforcement(self):
         os.environ["RATE_LIMIT_PER_MINUTE"] = "3"
+        import config as _cfg
+        importlib.reload(_cfg)
+        import middleware as _mw
+        importlib.reload(_mw)
         import server as _srv
         importlib.reload(_srv)
         from fastapi.testclient import TestClient
@@ -243,7 +276,7 @@ class TestVCSProviderSelection(unittest.TestCase):
 
 class TestMetrics(unittest.TestCase):
     def test_counter_increment(self):
-        from server import Metrics
+        from logging_setup import Metrics
         m = Metrics()
         m.inc("test_counter")
         m.inc("test_counter")
@@ -251,14 +284,14 @@ class TestMetrics(unittest.TestCase):
         self.assertIn("test_counter 2", output)
 
     def test_gauge_set(self):
-        from server import Metrics
+        from logging_setup import Metrics
         m = Metrics()
         m.set("test_gauge", 42)
         output = m.render()
         self.assertIn("test_gauge 42", output)
 
     def test_histogram_observe(self):
-        from server import Metrics
+        from logging_setup import Metrics
         m = Metrics()
         for v in [1.0, 2.0, 3.0, 4.0, 5.0]:
             m.observe("test_hist", v)
@@ -267,14 +300,14 @@ class TestMetrics(unittest.TestCase):
         self.assertIn("test_hist_sum 15.0", output)
 
     def test_labeled_metric(self):
-        from server import Metrics
+        from logging_setup import Metrics
         m = Metrics()
         m.inc("http_requests", labels={"method": "GET"})
         output = m.render()
         self.assertIn('http_requests{method="GET"}', output)
 
     def test_counter_with_value(self):
-        from server import Metrics
+        from logging_setup import Metrics
         m = Metrics()
         m.inc("batch_counter", value=5)
         m.inc("batch_counter", value=3)
@@ -282,7 +315,7 @@ class TestMetrics(unittest.TestCase):
         self.assertIn("batch_counter 8", output)
 
     def test_render_empty_metrics(self):
-        from server import Metrics
+        from logging_setup import Metrics
         m = Metrics()
         output = m.render()
         self.assertEqual(output, "\n")
@@ -310,11 +343,13 @@ class TestSecurityContext(unittest.TestCase):
 
 class TestGracefulShutdown(unittest.TestCase):
     def test_shutdown_event_sets_running_flag(self):
+        import asyncio
         import server as _srv
-        _srv._running = True
-        _srv.shutdown_event()
-        self.assertFalse(_srv._running)
-        _srv._running = True
+        from background.queue_processor import set_running, _running
+        set_running(True)
+        asyncio.get_event_loop().run_until_complete(_srv.shutdown_event())
+        self.assertFalse(_running)
+        set_running(True)
 
     def test_sigterm_handler_registered(self):
         import signal

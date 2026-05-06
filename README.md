@@ -1,75 +1,65 @@
 # HiveMind
 
-**Autonomous AI coding agents on Kubernetes. Ticket in, merge request out.**
+**Submit a ticket, get a merge request. AI coding agents that run themselves on Kubernetes.**
 
 [![Version](https://img.shields.io/badge/version-0.7.0-blue)](.version)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF)](.github/workflows/ci.yaml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![K8s](https://img.shields.io/badge/platform-Kubernetes-326ce5)](Orchestrator/k8s/)
 
+> **The problem:** You prompt an AI agent, it writes code, you push a branch, someone reviews the MR and says "fix this" — and the loop breaks. The agent session is gone. Context is lost. Start over.
+>
+> **HiveMind closes the loop.** Agent picks up your review comments, pushes a fix. Pipeline fails? Agent self-corrects. Merge conflict? Agent rebases. All in isolated K8s pods, in parallel, across multiple repos. Nobody babysits a terminal.
+
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="HiveMind Dashboard" width="800">
+</p>
+
 ---
 
-## Why HiveMind?
+## 30-Second Demo
 
-Your team uses AI coding agents. A developer opens Copilot, writes a prompt, waits, reviews the output, pushes a branch, creates a merge request. Then someone reviews the MR, finds issues, and... the loop breaks. The agent session is gone. Context is lost. Someone has to start over.
+```bash
+# 1. Deploy (5 minutes)
+./setup.sh && ./redeploy.sh
 
-**HiveMind closes that loop.** It turns AI coding from a manual, single-user, single-session tool into a production-grade parallel workforce:
+# 2. Submit a ticket
+curl -X POST http://localhost:8080/api/tickets \
+  -H "Content-Type: application/json" \
+  -d '{"id":"PROJ-123","title":"Fix login error on mobile"}'
 
-| Without HiveMind | With HiveMind |
+# 3. Watch the agent work — it clones, analyzes, codes, tests, pushes, opens the MR
+# 4. You review the MR — agent automatically addresses your feedback
+# 5. You merge — done
+```
+
+---
+
+## What It Does — By Example
+
+| You want this | How HiveMind handles it |
 |---|---|
-| One person prompts one agent at a time | Submit 10 tickets, 3 agents work in parallel |
-| Agent edits your working tree, conflicts with your changes | Each task runs in an isolated K8s pod with a fresh workspace |
-| Agent crashes, you re-prompt from scratch | Automatic retry with full context (merge conflicts, pipeline failures, review feedback) |
-| You review the MR, paste feedback into a new agent session | Review comments trigger follow-up sessions automatically |
-| Agent only works in one repo | One ticket spans multiple repos -- the LLM picks which ones |
-| Context dies when the tab closes | Per-agent memory blocks survive across sessions |
-| You stare at a terminal to monitor progress | Web dashboard with live logs, MR tracking, pipeline status |
-
-**The result:** Your AI agents go from "helpful assistant for one developer" to "autonomous workforce for the entire team." Tickets come in from GitLab issues, GitHub issues, webhooks, or the API. Merge requests come out. Humans review. Agents iterate. Nobody babysits a terminal.
+| **Bug fix across frontend + backend** | LLM analyzes both repos, picks relevant ones, agent works across all of them in one session |
+| **10 backlog items, 1 senior dev** | Submit 10 tickets — N agents work in parallel, each in its own isolated pod |
+| **CI pipeline fails on the MR** | Agent detects the failure, re-queues itself with "fix the tests" context, pushes a fix |
+| **Reviewer says "rename this variable"** | Review comment triggers a follow-up agent session, pushes the rename |
+| **Merge conflict on the branch** | Agent detects the conflict, rebases, resolves, and force-pushes |
+| **New team member joins** | Agents carry memory blocks (project conventions, tech stack, preferences) — no hand-holding needed |
 
 ---
 
-## What's New in v0.7.0
+## What Makes This Different from Copilot/Cursor?
 
-### Security Hardening
-- **API Key Authentication** — Optional `X-API-Key` / `Bearer` token auth via `HIVEMIND_API_KEY` env var; if unset, a warning is logged and all routes remain open (backward compat)
-- **Rate Limiting** — In-memory 30 req/min on `POST /api/tickets`, configurable via `RATE_LIMIT_PER_MINUTE`
-- **Non-Root Containers** — All images run as UID 1000 (`hivemind`), K8s manifests enforce `runAsNonRoot: true`
-- **Network Policies** — Default-deny ingress + egress, agent pods allow DNS and VCS egress only
-- **ResourceQuota** — Namespace-level CPU/memory/pod limits
-- **Trivy Container Scanning** — CI pipeline scans images for CVEs
-
-### Resilience & Operations
-- **Graceful Shutdown** — SIGTERM handler drains loops and closes HTTP clients cleanly
-- **Orphan Recovery** — On startup, scans for agent pods without active tickets and re-queues them
-- **Configurable Stale Timeout** — `AGENT_STALE_TIMEOUT` env var (default 3600s)
-- **SQLite DB Persistence** — PVC-backed `/app/data` for durable state across pod restarts
-- **PostgreSQL Support** — K8s manifests for `postgres:16-alpine` StatefulSet; `DATABASE_URL=postgresql://...` auto-switches to `database_pg.py`
-
-### Multi-VCS Provider
-- **Pluggable VCS abstraction** — `Orchestrator/vcs/` package with `base.py` (abstract interface), `gitlab.py`, `github.py`
-- **GitHub webhook** — `POST /webhooks/github` auto-creates tickets from GitHub issues
-- **Backward compatible** — `gitlab_client.py` still works; select provider via `VCS_PROVIDER` env var (default: `gitlab`)
-
-### Agent Test Phase
-- **Phase 1.5 (Test)** — Agent runs `TEST_COMMAND` env var before committing; self-corrects on failure
-
-### CLI Tool
-- **`cli/hivemind`** — Pure-stdlib Python CLI (277 lines): ticket, agent, repo, stream, version commands
-
-### Model Routing
-- **Multi-LLM routing** — `MODEL_ROUTING_ENABLED` + `SIMPLE_MODEL` / `COMPLEX_MODEL` env vars; orchestrator picks model by ticket complexity
-
-### Observability & Collaboration
-- **Structured Logging** — JSON logs (`timestamp`, `level`, `message`, `logger`) throughout server.py and main.py
-- **Expanded Prometheus Metrics** — `hivemind_agents_running`, `hivemind_agents_idle`, `hivemind_agents_total`
-- **Dry-Run Preview** — `POST /api/tickets/preview` shows LLM analysis without spawning a pod
-- **Collaboration Schema** — `ticket_groups` + `team_channel_messages` tables for multi-agent coordination
-
-### Helm Chart & CI/CD
-- **Helm chart maturity** — Full env var coverage in `values.yaml`, network policy template, security context
-- **GitHub Actions CI** — `ci.yaml`: test → build → Trivy scan → deploy
-- **Docker Compose full-local** — `--profile full-local` runs orchestrator + PostgreSQL on Docker
+| | ChatGPT / Copilot / Cursor | HiveMind |
+|---|---|---|
+| Who runs it? | You, one prompt at a time | Orchestrator, in parallel |
+| Where does it run? | Your laptop, your working tree | Isolated K8s pod per task |
+| How many tasks? | One at a time, one person | N agents, N tickets simultaneously |
+| What happens when it fails? | You re-prompt from scratch | Auto-retry with full context (3 retries) |
+| What about review feedback? | Copy-paste into a new session | Agent picks up comments automatically |
+| Multi-repo? | No — one repo per session | Yes — LLM selects repos, agent works across all |
+| Persistent memory? | No | Per-agent memory blocks survive across sessions |
+| Monitoring? | You watch a terminal | Web dashboard, live logs, MR tracking, Prometheus |
 
 ---
 
@@ -124,53 +114,59 @@ Your team uses AI coding agents. A developer opens Copilot, writes a prompt, wai
 
 ---
 
-## What Makes This Different?
+## What's New in v0.7.0
 
-### 1. Autonomous, Not Interactive
+### Security Hardening
+- **API Key Authentication** — Optional `X-API-Key` / `Bearer` token auth via `HIVEMIND_API_KEY` env var; if unset, a warning is logged and all routes remain open (backward compat)
+- **Rate Limiting** — In-memory 30 req/min on `POST /api/tickets`, configurable via `RATE_LIMIT_PER_MINUTE`
+- **Non-Root Containers** — All images run as UID 1000 (`hivemind`), K8s manifests enforce `runAsNonRoot: true`
+- **Network Policies** — Default-deny ingress + egress, agent pods allow DNS and VCS egress only
+- **ResourceQuota** — Namespace-level CPU/memory/pod limits
+- **Trivy Container Scanning** — CI pipeline scans images for CVEs
 
-The agent doesn't need you to hold its hand. Submit a ticket and walk away. It clones repos, analyzes the codebase with LeanKG, makes changes, runs tests, commits, pushes, creates the MR, and waits for review. You only get involved when you review the MR.
+### Resilience & Operations
+- **Graceful Shutdown** — SIGTERM handler drains loops and closes HTTP clients cleanly
+- **Orphan Recovery** — On startup, scans for agent pods without active tickets and re-queues them
+- **Configurable Stale Timeout** — `AGENT_STALE_TIMEOUT` env var (default 3600s)
+- **SQLite DB Persistence** — PVC-backed `/app/data` for durable state across pod restarts
+- **PostgreSQL Support** — K8s manifests for `postgres:16-alpine` StatefulSet; `DATABASE_URL=postgresql://...` auto-switches to `database_pg.py`
 
-### 2. Built-In Feedback Loops
+### Multi-VCS Provider
+- **Pluggable VCS abstraction** — `Orchestrator/vcs/` package with `base.py` (abstract interface), `gitlab.py`, `github.py`
+- **GitHub webhook** — `POST /webhooks/github` auto-creates tickets from GitHub issues
+- **Backward compatible** — `gitlab_client.py` still works; select provider via `VCS_PROVIDER` env var (default: `gitlab`)
 
-This is the key differentiator. Most AI coding tools are fire-and-forget. HiveMind agents listen for feedback:
+### Agent Test Phase
+- **Phase 1.5 (Test)** — Agent runs `TEST_COMMAND` env var before committing; self-corrects on failure
 
-- **VCS review comments** trigger automatic follow-up sessions
-- **Pipeline failures** re-queue the ticket with "fix the tests" context
-- **Merge conflicts** re-queue with "rebase on target branch" instructions
-- Up to **3 automatic retries** with full context from previous attempts
+### CLI Tool
+- **`cli/hivemind`** — Pure-stdlib Python CLI (277 lines): ticket, agent, repo, stream, version commands
 
-### 3. Multi-Repo Awareness
+### Model Routing
+- **Multi-LLM routing** — `MODEL_ROUTING_ENABLED` + `SIMPLE_MODEL` / `COMPLEX_MODEL` env vars; orchestrator picks model by ticket complexity
 
-One ticket often touches multiple repositories (frontend + backend + shared types). The LLM analyzes which repos are relevant and the agent works across all of them in a single session. One commit per repo, one MR per repo, one ticket.
+### Observability & Collaboration
+- **Structured Logging** — JSON logs (`timestamp`, `level`, `message`, `logger`) throughout server.py and main.py
+- **Expanded Prometheus Metrics** — `hivemind_agents_running`, `hivemind_agents_idle`, `hivemind_agents_total`
+- **Dry-Run Preview** — `POST /api/tickets/preview` shows LLM analysis without spawning a pod
+- **Collaboration Schema** — `ticket_groups` + `team_channel_messages` tables for multi-agent coordination
 
-### 4. Multi-VCS Support
+### Helm Chart & CI/CD
+- **Helm chart maturity** — Full env var coverage in `values.yaml`, network policy template, security context
+- **GitHub Actions CI** — `ci.yaml`: test → build → Trivy scan → deploy
+- **Docker Compose full-local** — `--profile full-local` runs orchestrator + PostgreSQL on Docker
 
-Works with both **GitLab** and **GitHub** (including GitHub Enterprise Server). Set `VCS_PROVIDER=github` or `gitlab` and the orchestrator handles the rest — webhooks, MR creation, review tracking all work through the same abstraction.
+---
 
-### 5. Persistent Agent Memory
+## Key Features
 
-Agents aren't blank slates. Each agent carries memory blocks that survive across sessions:
-
-- **Persona** — how the agent writes code (style, conventions)
-- **Human preferences** — "use conventional commits", "no emojis in commit messages"
-- **Project context** — tech stack, test commands, architecture decisions
-
-These persist on the orchestrator and are injected into every pod.
-
-### 6. Code Intelligence with LeanKG
-
-Before the agent starts, the init container indexes every selected repo with LeanKG. This gives the agent semantic code search — it can find relevant functions, understand dependencies, and navigate the codebase without guessing.
-
-### 7. Infrastructure, Not a Plugin
-
-HiveMind doesn't run inside your IDE. It runs on your Kubernetes cluster. That means:
-
-- **Parallelism** — N agents working simultaneously, not one at a time
-- **Isolation** — each task gets a fresh workspace, no state leaks
-- **Security** — non-root containers, network policies, RBAC, API auth
-- **Observability** — structured JSON logs, Prometheus metrics, web dashboard, SSE events
-- **Scalability** — add more agent slots by changing one config value
-- **Team access** — anyone can submit tickets, anyone can review MRs
+- **Autonomous feedback loops** — review comments, pipeline failures, and merge conflicts auto-re-queue with context
+- **Multi-repo tickets** — LLM picks relevant repos, agent works across all of them in one session
+- **GitLab + GitHub** — pluggable VCS provider (`VCS_PROVIDER=gitlab|github`)
+- **Persistent agent memory** — persona, preferences, and project context survive across sessions
+- **Code intelligence** — LeanKG indexes repos before the agent starts
+- **K8s-native** — isolated pods, RBAC, network policies, Prometheus metrics, SSE events
+- **Interactive sessions** — proxy to each agent's live opencode web UI at `/agent-session/{ticket_id}/`
 
 ---
 
@@ -313,107 +309,79 @@ spec:
 ### Prerequisites
 
 - Kubernetes cluster (RKE2, k3s, Docker Desktop, minikube, etc.)
-- `kubectl` configured
+- `kubectl` configured and pointing at your cluster
 - Docker (for building images)
 - GitLab or GitHub instance + Personal Access Token
 - Ollama endpoint (or any OpenAI-compatible LLM API)
 
-### 1. Configure
+### Quickstart (5 commands)
 
 ```bash
+# 1. Configure — interactive, reads from .env, creates K8s secrets
 ./setup.sh
-```
 
-Interactive script that collects config values and creates K8s secrets. Reads defaults from `.env` so you only enter values once.
+# 2. Build & deploy — semver bump, Docker build, manifest apply, rollout wait
+./redeploy.sh
 
-### 2. Build & Deploy
-
-```bash
-./redeploy.sh              # patch bump + build + deploy
-```
-
-Handles the full pipeline: semver bump, Docker build, K8s secret update, image import to worker nodes, manifest apply, rollout wait, git tag.
-
-| Flag | What it does |
-|------|-------------|
-| `--minor` | Bump minor version (0.x.0) |
-| `--major` | Bump major version (x.0.0) |
-| `--version 2.0.0` | Use explicit version |
-| `--no-cache` | Clean build |
-| `--skip-build` | Re-deploy current version without rebuild |
-| `--docker` | Build via docker-compose (local testing) |
-| `--tag` | Create git tag for current version |
-| `--changelog` | Show changelog since last tag |
-
-### 3. Open the Dashboard
-
-```bash
+# 3. Open the dashboard
 kubectl port-forward -n hivemind deployment/orchestrator 8080:8080
-```
 
-Open [http://localhost:8080](http://localhost:8080) — dashboard with idle agent slots ready.
+# 4. Verify
+curl http://localhost:8080/healthz   # {"status":"ok"}
 
-### 4. Verify Endpoints
-
-```bash
-curl http://localhost:8080/healthz          # {"status":"ok"}
-curl http://localhost:8080/readyz           # {"status":"ok","repos_initialized":true}
-curl http://localhost:8080/metrics          # Prometheus metrics
-```
-
-### 5. Submit Tickets
-
-**Via Web UI** — Kanban board at `/tickets`
-
-**Via API:**
-
-```bash
+# 5. Submit your first ticket
 curl -X POST http://localhost:8080/api/tickets \
   -H "Content-Type: application/json" \
-  -d '{
-    "id": "PROJ-123",
-    "title": "Fix login error on mobile",
-    "description": "Login button does not show validation errors on mobile viewport...",
-    "labels": ["bug", "frontend"],
-    "priority": "High"
-  }'
+  -d '{"id":"PROJ-123","title":"Fix login error on mobile","description":"Login button does not show validation errors on mobile viewport..."}'
 ```
 
-**With API key (if configured):**
+Open [http://localhost:8080](http://localhost:8080) — you'll see the dashboard with idle agent slots ready. The Kanban board at `/tickets` shows live status.
+
+### More ways to submit tickets
+
+**With API key (if `HIVEMIND_API_KEY` is set):**
 
 ```bash
 curl -X POST http://localhost:8080/api/tickets \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
-  -d '{ ... }'
+  -d '{"id":"PROJ-456","title":"Add dark mode toggle"}'
 ```
 
 **Via Webhook** — configure your VCS project to send Issue events:
 - GitLab: `http://<orchestrator>/webhooks/gitlab`
 - GitHub: `http://<orchestrator>/webhooks/github`
 
-### 6. CLI Tool
+**Via CLI:**
 
 ```bash
-./cli/hivemind ticket list
 ./cli/hivemind ticket create PROJ-123 "Fix login error"
-./cli/hivemind agent list
-./cli/hivemind repo list
 ./cli/hivemind stream                    # Live SSE event stream
-./cli/hivemind version
 ```
 
-### 7. Watch & Interact
+### Watch & Interact
 
 ```bash
 # Agent pod logs
 kubectl -n hivemind logs -f agent-worker-proj-123
 
-# Or access the agent's live opencode session through the orchestrator proxy
+# Or access the agent's live opencode session
 # Open: http://localhost:8080/agent-session/PROJ-123/
 ```
 
-The agent will: test → analyze the codebase → make changes → run tests → commit & push → create MR → wait for your review. When you comment on the MR, the agent picks it up automatically.
+The agent will: analyze the codebase → make changes → run tests → commit & push → create MR → wait for your review. When you comment on the MR, the agent picks it up automatically.
+
+### Deploy flags
+
+`./redeploy.sh` handles the full pipeline. Optional flags:
+
+| Flag | What it does |
+|------|-------------|
+| `--minor` | Bump minor version (0.x.0) |
+| `--major` | Bump major version (x.0.0) |
+| `--no-cache` | Clean build |
+| `--skip-build` | Re-deploy current version without rebuild |
+| `--docker` | Build via docker-compose (local testing) |
 
 ---
 

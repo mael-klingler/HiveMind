@@ -97,6 +97,13 @@ AGENT_IMAGE=$(prompt_val "AGENT_IMAGE" "Agent Image" "$(env_val AGENT_IMAGE)")
 BRANCH_FALLBACK_ORDER=$(prompt_val "BRANCH_FALLBACK_ORDER" "Branch Fallback Order" "$(env_val BRANCH_FALLBACK_ORDER)")
 DRY_RUN=$(prompt_val "DRY_RUN" "Dry Run (true/false)" "$(env_val DRY_RUN)")
 
+MONITORING_DEFAULT="n"
+MONITORING_VAL=$(env_val ENABLE_MONITORING)
+if [[ "$MONITORING_VAL" == "true" || "$MONITORING_VAL" == "y" ]]; then
+  MONITORING_DEFAULT="y"
+fi
+ENABLE_MONITORING=$(prompt_val "ENABLE_MONITORING" "Prometheus + Grafana installieren? (y/n)" "$MONITORING_DEFAULT")
+
 MISSING=""
 [[ -z "$GITLAB_HOST" ]] && MISSING="$MISSING GITLAB_HOST"
 [[ -z "$OLLAMA_HOST" ]] && MISSING="$MISSING OLLAMA_HOST"
@@ -109,34 +116,10 @@ if [[ -n "$MISSING" ]]; then
 fi
 
 echo ""
-echo -e "${BOLD}  K8s Secret erstellen${NC}"
+echo -e "${BOLD}  Konfiguration${NC}"
 echo "  ───────────────────────────────────────────────────────────"
-
-SECRET_ARGS=(
-  --from-literal=GIT_HOST="$GITLAB_HOST"
-  --from-literal=GIT_USER="$GIT_USER"
-  --from-literal=GIT_TOKEN="$GITLAB_TOKEN"
-  --from-literal=OLLAMA_HOST="$OLLAMA_HOST"
-  --from-literal=OLLAMA_BASE_URL="$OLLAMA_BASE_URL"
-  --from-literal=OLLAMA_MODEL="$OLLAMA_MODEL"
-  --from-literal=OPENCODE_MODEL="$OPENCODE_MODEL"
-  --from-literal=AGENT_IMAGE="$AGENT_IMAGE"
-  --from-literal=BRANCH_FALLBACK_ORDER="$BRANCH_FALLBACK_ORDER"
-  --from-literal=DRY_RUN="$DRY_RUN"
-)
-
-if [[ -n "$OLLAMA_CLOUD_API_KEY" ]]; then
-  SECRET_ARGS+=(--from-literal=OLLAMA_CLOUD_API_KEY="$OLLAMA_CLOUD_API_KEY")
-fi
-
-if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &>/dev/null 2>&1; then
-  warn "Secret '$SECRET_NAME' existiert bereits – wird ersetzt"
-  kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE"
-fi
-
-kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" "${SECRET_ARGS[@]}"
-ok "Secret '$SECRET_NAME' erstellt"
-
+echo "  Werte aus .env werden als Defaults vorgeschlagen."
+echo "  Leere Eingabe uebernimmt den Default-Wert."
 echo ""
 
 update_env_line() {
@@ -163,11 +146,55 @@ update_env_line "BRANCH_FALLBACK_ORDER" "$BRANCH_FALLBACK_ORDER"
 update_env_line "DRY_RUN" "$DRY_RUN"
 ok ".env aktualisiert"
 
+# ── Monitoring (Prometheus + Grafana) ────────────────────────────────────────
+if [[ "$ENABLE_MONITORING" == "y" || "$ENABLE_MONITORING" == "true" ]]; then
+  echo ""
+  echo -e "${BOLD}  Monitoring (Prometheus + Grafana)${NC}"
+  echo "  ───────────────────────────────────────────────────────────"
+
+  MONITORING_YAML="$SCRIPT_DIR/Orchestrator/k8s/monitoring.yaml"
+  if [[ -f "$MONITORING_YAML" ]]; then
+    kubectl apply -f "$MONITORING_YAML"
+    ok "Prometheus + Grafana Manifests angewendet"
+
+    echo "  Warte auf Grafana-Start..."
+    for i in $(seq 1 30); do
+      if kubectl get pods -n "$NAMESPACE" -l app=grafana -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Running"; then
+        break
+      fi
+      sleep 2
+    done
+
+    GF_POD=$(kubectl get pods -n "$NAMESPACE" -l app=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    PROM_POD=$(kubectl get pods -n "$NAMESPACE" -l app=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+    ok "Grafana Pod:  ${GF_POD:-pending...}"
+    ok "Prometheus Pod: ${PROM_POD:-pending...}"
+    echo ""
+    info "Port-Forward:"
+    echo "    Grafana:     kubectl port-forward -n $NAMESPACE svc/grafana 3000:3000"
+    echo "    Prometheus:  kubectl port-forward -n $NAMESPACE svc/prometheus 9090:9090"
+    echo "    Dashboard:   http://localhost:3000  (admin/hivemind)"
+  else
+    warn "monitoring.yaml nicht gefunden – ueberspringe"
+  fi
+
+  update_env_line "ENABLE_MONITORING" "true"
+else
+  update_env_line "ENABLE_MONITORING" "false"
+fi
+
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo -e "  ${GREEN}Setup abgeschlossen${NC}"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "  Secret:     $SECRET_NAME (namespace: $NAMESPACE)"
+if [[ "$ENABLE_MONITORING" == "y" || "$ENABLE_MONITORING" == "true" ]]; then
+echo "  Monitoring: Prometheus + Grafana (namespace: $NAMESPACE)"
+echo "    Grafana:     kubectl port-forward -n $NAMESPACE svc/grafana 3000:3000"
+echo "    Prometheus:  kubectl port-forward -n $NAMESPACE svc/prometheus 9090:9090"
+echo "    Dashboard:   http://localhost:3000  (admin/hivemind)"
+fi
 echo "  Naechster Schritt:  ./redeploy.sh"
 echo ""

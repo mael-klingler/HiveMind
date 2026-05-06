@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+
+# Copyright 2026 Mael Klingler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Pod builder – uses kubernetes Python client to build Pod specs
 instead of f-string YAML templates.
@@ -217,7 +232,8 @@ def build_pod_spec(
 
 
 def _build_clone_script(repos_json: str) -> str:
-    return """set -euo pipefail
+    return """set -uo pipefail
+FALLBACK_BRANCHES="development qa main master"
 for repo in $(jq -r 'keys[]' /config/repos.json); do
   url=$(jq -r --arg r "$repo" '.[$r].url' /config/repos.json)
   branch=$(jq -r --arg r "$repo" '.[$r].branch' /config/repos.json)
@@ -225,12 +241,36 @@ for repo in $(jq -r 'keys[]' /config/repos.json); do
     url=$(echo "$url" | sed -E "s|^(https?://)|\\1${GIT_USER}:${GITLAB_TOKEN}@|")
   fi
   echo "Cloning $repo (branch: $branch) ..."
-  git clone -b "$branch" --single-branch "$url" "/workspace/$repo"
+  if git clone -b "$branch" --single-branch "$url" "/workspace/$repo" 2>&1; then
+    echo "✅ Cloned $repo on branch $branch"
+  else
+    echo "⚠️ Branch $branch not found for $repo, trying fallback branches..."
+    CLONED=false
+    for fb in $branch $FALLBACK_BRANCHES; do
+      if [ "$fb" = "$branch" ]; then continue; fi
+      rm -rf "/workspace/$repo" 2>/dev/null || true
+      if git clone -b "$fb" --single-branch "$url" "/workspace/$repo" 2>&1; then
+        echo "✅ Cloned $repo on fallback branch $fb"
+        CLONED=true
+        break
+      fi
+    done
+    if [ "$CLONED" = "false" ]; then
+      rm -rf "/workspace/$repo" 2>/dev/null || true
+      echo "⚠️ No fallback branch worked for $repo, cloning default branch..."
+      if git clone "$url" "/workspace/$repo" 2>&1; then
+        echo "✅ Cloned $repo on default branch"
+      else
+        echo "❌ Failed to clone $repo – skipping"
+        continue
+      fi
+    fi
+  fi
   echo "Init leankg $repo ..."
   cd "/workspace/$repo"
-  leankg init
+  leankg init || echo "⚠️ leankg init failed for $repo"
   echo "Index leankg $repo ..."
-  leankg index .
+  leankg index . || echo "⚠️ leankg index failed for $repo"
 done
 echo "All repos processed"
 """

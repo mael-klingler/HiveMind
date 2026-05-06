@@ -1,0 +1,376 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: hivemind
+  labels:
+    app: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: 'hivemind-orchestrator'
+        static_configs:
+          - targets: ['orchestrator:8080']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: hivemind
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          ports:
+            - containerPort: 9090
+              name: http
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+            - '--web.enable-lifecycle'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: hivemind
+  labels:
+    app: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning-datasources
+  namespace: hivemind
+  labels:
+    app: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning-dashboards
+  namespace: hivemind
+  labels:
+    app: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: HiveMind
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-hivemind
+  namespace: hivemind
+  labels:
+    app: grafana
+    grafana_dashboard: "1"
+data:
+  hivemind-metrics.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Agent Success Rate (%)",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0, "max": 100,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "value": null, "color": "red" },
+                { "value": 50, "color": "orange" },
+                { "value": 80, "color": "green" }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "hivemind_agent_success_rate", "legendFormat": "Success Rate", "refId": "A" }]
+        },
+        {
+          "title": "Test First-Pass Rate (%)",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0, "max": 100,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "value": null, "color": "red" },
+                { "value": 40, "color": "orange" },
+                { "value": 70, "color": "green" }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "hivemind_test_first_pass_rate", "legendFormat": "First-Pass Rate", "refId": "A" }]
+        },
+        {
+          "title": "Avg Review Cycles",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "min": 0, "max": 10,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "value": null, "color": "green" },
+                { "value": 3, "color": "orange" },
+                { "value": 5, "color": "red" }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "hivemind_avg_review_cycles", "legendFormat": "Avg Cycles", "refId": "A" }]
+        },
+        {
+          "title": "Avg Retry Count",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "min": 0, "max": 5,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "value": null, "color": "green" },
+                { "value": 2, "color": "orange" },
+                { "value": 3, "color": "red" }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "hivemind_avg_retry_count", "legendFormat": "Avg Retries", "refId": "A" }]
+        },
+        {
+          "title": "Tickets by Status",
+          "type": "barchart",
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 },
+          "targets": [{ "expr": "hivemind_tickets", "legendFormat": "{{status}}", "refId": "A" }],
+          "options": { "orientation": "horizontal" }
+        },
+        {
+          "title": "Ticket Lifecycle Events (rate)",
+          "type": "timeseries",
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            { "expr": "rate(hivemind_tickets_created_total[5m])", "legendFormat": "Created", "refId": "A" },
+            { "expr": "rate(hivemind_tickets_completed_total[5m])", "legendFormat": "Completed", "refId": "B" },
+            { "expr": "rate(hivemind_tickets_failed_total[5m])", "legendFormat": "Failed", "refId": "C" },
+            { "expr": "rate(hivemind_tickets_merged_total[5m])", "legendFormat": "Merged", "refId": "D" }
+          ]
+        },
+        {
+          "title": "LLM Token Usage (rate)",
+          "type": "timeseries",
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 17 },
+          "targets": [
+            { "expr": "rate(hivemind_llm_prompt_tokens_total[5m])", "legendFormat": "Prompt Tokens ({{model}})", "refId": "A" },
+            { "expr": "rate(hivemind_llm_completion_tokens_total[5m])", "legendFormat": "Completion Tokens ({{model}})", "refId": "B" }
+          ]
+        },
+        {
+          "title": "Phase Transitions (rate)",
+          "type": "timeseries",
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 17 },
+          "targets": [
+            { "expr": "rate(hivemind_phase_transitions_total[5m])", "legendFormat": "{{phase}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Queue Wait Time",
+          "type": "timeseries",
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 26 },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [
+            { "expr": "hivemind_queue_wait_seconds", "legendFormat": "Queue Wait", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Retry & Review Cycles (rate)",
+          "type": "timeseries",
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 26 },
+          "targets": [
+            { "expr": "rate(hivemind_ticket_retries_total[5m])", "legendFormat": "Retries", "refId": "A" },
+            { "expr": "rate(hivemind_review_cycles_total[5m])", "legendFormat": "Review Cycles", "refId": "B" }
+          ]
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "tags": ["hivemind", "agents"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "HiveMind Agent Metrics",
+      "uid": "hivemind-agent-metrics",
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: hivemind
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: hivemind
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+            - name: data
+              mountPath: /var/lib/grafana
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-provisioning-datasources
+        - name: dashboard-providers
+          configMap:
+            name: grafana-provisioning-dashboards
+        - name: dashboards
+          configMap:
+            name: grafana-dashboard-hivemind
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: hivemind
+  labels:
+    app: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

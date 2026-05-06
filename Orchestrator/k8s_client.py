@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+
+# Copyright 2026 Mael Klingler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Kubernetes client wrapper – replaces all kubectl subprocess calls
 with the official kubernetes Python client.
@@ -117,6 +132,14 @@ def delete_configmap(name: str, namespace: str = None):
             log.warning(f"Failed to delete configmap {name}: {e}")
 
 
+def cleanup_agent_resources(ticket_id: str):
+    namespace = _namespace
+    pod_name = f"agent-worker-{ticket_id.lower()}"
+    for suffix in ("repos", "assignment", "opencode", "memory"):
+        delete_configmap(f"{pod_name}-{suffix}", namespace)
+    log.info(f"ConfigMaps cleaned up for {pod_name}")
+
+
 def get_configmap(name: str, namespace: str = None) -> Optional[kclient.V1ConfigMap]:
     ns = namespace or _namespace
     try:
@@ -182,8 +205,14 @@ def kubectl_compat(args: str) -> Tuple[int, str, str]:
     Accepts the same args string format used by the old subprocess calls
     and dispatches to the Python client. Returns (rc, stdout, stderr).
     """
-    parts = args.strip().split()
+    import re
+    cleaned = re.sub(r'\s*2>/dev/null\s*', ' ', args).strip()
+    parts = cleaned.split()
     cmd = parts[0] if parts else ""
+
+    # Normalize "pod" to "pods" for kubectl compatibility
+    if len(parts) >= 2 and parts[1] == "pod":
+        parts[1] = "pods"
 
     try:
         if cmd == "get":
@@ -295,7 +324,7 @@ def _handle_delete(parts: List[str]) -> Tuple[int, str, str]:
     if "--grace-period=0" in parts:
         grace_period = 0
 
-    if resource == "pod" and name:
+    if resource in ("pod", "pods") and name:
         try:
             delete_pod(name, ns, grace_period=grace_period, force=force)
             return 0, f"pod {name} deleted", ""
