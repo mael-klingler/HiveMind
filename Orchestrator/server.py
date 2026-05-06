@@ -801,7 +801,6 @@ async def agent_pod_monitor():
                     retry_count = t.get("retry_count", 0)
                     updated_at = t.get("updated_at")
                     if updated_at:
-                        from datetime import timezone
                         try:
                             failed_at = datetime.fromisoformat(updated_at)
                             if failed_at.tzinfo is None:
@@ -877,7 +876,6 @@ async def agent_pod_monitor():
                             pass
 
             # Stale tickets: Running tickets without active pod, older than 60 min → completed
-            from datetime import timezone as _tz
             stale_threshold = 3600  # 60 minutes (increased from 30min since long-running agents are normal)
             for t in [t for t in get_tickets(status=None) if t.get("status") == "running"]:
                 ticket_id = t["id"]
@@ -906,8 +904,8 @@ async def agent_pod_monitor():
                     try:
                         updated_dt = datetime.fromisoformat(updated_at)
                         if updated_dt.tzinfo is None:
-                            updated_dt = updated_dt.replace(tzinfo=_tz.utc)
-                        elapsed = (datetime.now(_tz.utc) - updated_dt).total_seconds()
+                            updated_dt = updated_dt.replace(tzinfo=timezone.utc)
+                        elapsed = (datetime.now(timezone.utc) - updated_dt).total_seconds()
                         if elapsed > stale_threshold:
                             update_ticket_status(ticket_id, "completed")
                             _cleanup_agent_resources(ticket_id)
