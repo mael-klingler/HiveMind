@@ -216,12 +216,10 @@ def tickets_page():
 
 @router.get("/api/tickets/{ticket_id}/logs")
 async def api_ticket_logs(ticket_id: str):
-    from k8s_client import kubectl_exec
+    from k8s_client import get_pod_logs
     ns = os.getenv("AGENT_NAMESPACE", "hivemind")
     pod_name = f"agent-worker-{ticket_id.lower()}"
-    rc, out, err = kubectl_exec(f"logs -n {ns} {pod_name} --tail=100")
-    if rc != 0:
-        if "NotFound" in err or "not found" in err.lower():
-            return {"logs": "", "pod": pod_name, "status": "not_found"}
-        return {"logs": f"Error: {err}", "pod": pod_name, "status": "error"}
-    return {"logs": out, "pod": pod_name, "status": "ok"}
+    logs = get_pod_logs(pod_name, ns, tail_lines=100)
+    if not logs:
+        return {"logs": "", "pod": pod_name, "status": "not_found"}
+    return {"logs": logs, "pod": pod_name, "status": "ok"}
