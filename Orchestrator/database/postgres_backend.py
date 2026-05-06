@@ -82,20 +82,7 @@ def init_db():
             mr_project_path TEXT,
             mr_iid INTEGER,
             mr_conflict_status TEXT DEFAULT 'none',
-            selected_repos TEXT,
-            phase_work_started_at TIMESTAMP,
-            phase_test_started_at TIMESTAMP,
-            phase_ship_started_at TIMESTAMP,
-            phase_listen_started_at TIMESTAMP,
-            completed_at TIMESTAMP,
-            merged_at TIMESTAMP,
-            first_pipeline_status TEXT DEFAULT 'unknown',
-            review_cycle_count INTEGER DEFAULT 0,
-            model_used TEXT,
-            llm_prompt_tokens INTEGER DEFAULT 0,
-            llm_completion_tokens INTEGER DEFAULT 0,
-            llm_total_cost_usd REAL DEFAULT 0.0,
-            primary_repo TEXT
+            selected_repos TEXT
         )
         """)
 
@@ -271,52 +258,12 @@ def init_db():
         )
         """)
 
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS metric_events (
-            id SERIAL PRIMARY KEY,
-            event_type TEXT NOT NULL,
-            ticket_id TEXT REFERENCES tickets(id),
-            agent_id TEXT,
-            phase TEXT,
-            duration_seconds REAL,
-            labels TEXT,
-            value REAL,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-        """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_type ON metric_events(event_type)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_ticket ON metric_events(ticket_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_created ON metric_events(created_at)")
-
         c.execute("INSERT INTO config (key, value) VALUES ('max_agents', '3') ON CONFLICT (key) DO NOTHING")
         c.execute("INSERT INTO config (key, value) VALUES ('polling_interval_seconds', '5') ON CONFLICT (key) DO NOTHING")
         c.execute("INSERT INTO mcp_servers (name, server_type, command, description) VALUES ('leankg-mcp', 'local', 'leankg mcp-stdio', 'LeanKG code search and dependency analysis') ON CONFLICT (name) DO NOTHING")
         c.execute("INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-snip', 'Compress shell output (60-97%% token savings)', 'snip') ON CONFLICT (name) DO NOTHING")
         c.execute("INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-agent-memory', 'Persistent memory blocks for agents (Letta-inspired)', '') ON CONFLICT (name) DO NOTHING")
         c.execute("INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-handoff', 'Session handoff for contextual transitions on retries', '') ON CONFLICT (name) DO NOTHING")
-
-        # Migrate new columns for metrics
-        new_columns = [
-            ("tickets", "phase_work_started_at", "TIMESTAMP"),
-            ("tickets", "phase_test_started_at", "TIMESTAMP"),
-            ("tickets", "phase_ship_started_at", "TIMESTAMP"),
-            ("tickets", "phase_listen_started_at", "TIMESTAMP"),
-            ("tickets", "completed_at", "TIMESTAMP"),
-            ("tickets", "merged_at", "TIMESTAMP"),
-            ("tickets", "first_pipeline_status", "TEXT DEFAULT 'unknown'"),
-            ("tickets", "review_cycle_count", "INTEGER DEFAULT 0"),
-            ("tickets", "model_used", "TEXT"),
-            ("tickets", "llm_prompt_tokens", "INTEGER DEFAULT 0"),
-            ("tickets", "llm_completion_tokens", "INTEGER DEFAULT 0"),
-            ("tickets", "llm_total_cost_usd", "REAL DEFAULT 0.0"),
-            ("tickets", "primary_repo", "TEXT"),
-            ("repos", "active", "INTEGER DEFAULT 1"),
-        ]
-        for table, column, definition in new_columns:
-            try:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
-            except Exception:
-                pass
 
         conn.commit()
     except Exception:

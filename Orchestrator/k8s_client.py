@@ -117,6 +117,14 @@ def delete_configmap(name: str, namespace: str = None):
             log.warning(f"Failed to delete configmap {name}: {e}")
 
 
+def cleanup_agent_resources(ticket_id: str):
+    namespace = _namespace
+    pod_name = f"agent-worker-{ticket_id.lower()}"
+    for suffix in ("repos", "assignment", "opencode", "memory"):
+        delete_configmap(f"{pod_name}-{suffix}", namespace)
+    log.info(f"ConfigMaps cleaned up for {pod_name}")
+
+
 def get_configmap(name: str, namespace: str = None) -> Optional[kclient.V1ConfigMap]:
     ns = namespace or _namespace
     try:

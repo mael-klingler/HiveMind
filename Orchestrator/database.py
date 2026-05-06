@@ -79,6 +79,39 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "mr_iid", "INTEGER")
     _add_column_if_not_exists(c, "tickets", "mr_conflict_status", "TEXT DEFAULT 'none'")
     _add_column_if_not_exists(c, "tickets", "selected_repos", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_work_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_test_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_ship_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_listen_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "completed_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "merged_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "first_pipeline_status", "TEXT DEFAULT 'unknown'")
+    _add_column_if_not_exists(c, "tickets", "review_cycle_count", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "model_used", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "llm_prompt_tokens", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "llm_completion_tokens", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "llm_total_cost_usd", "REAL DEFAULT 0.0")
+    _add_column_if_not_exists(c, "tickets", "primary_repo", "TEXT")
+
+    # Metric events table
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS metric_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        ticket_id TEXT,
+        agent_id TEXT,
+        phase TEXT,
+        duration_seconds REAL,
+        labels TEXT,
+        value REAL,
+        created_at TEXT,
+        FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_type ON metric_events(event_type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_ticket ON metric_events(ticket_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_created ON metric_events(created_at)")
 
     # Tickets table (with MR + Review Lifecycle)
     c.execute("""
@@ -112,6 +145,19 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "agent_id", "TEXT")
     _add_column_if_not_exists(c, "tickets", "ai_planning", "TEXT")
     _add_column_if_not_exists(c, "tickets", "selected_repos", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_work_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_test_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_ship_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "phase_listen_started_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "completed_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "merged_at", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "first_pipeline_status", "TEXT DEFAULT 'unknown'")
+    _add_column_if_not_exists(c, "tickets", "review_cycle_count", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "model_used", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "llm_prompt_tokens", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "llm_completion_tokens", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "llm_total_cost_usd", "REAL DEFAULT 0.0")
+    _add_column_if_not_exists(c, "tickets", "primary_repo", "TEXT")
 
     # Agents table
     c.execute("""
@@ -1536,6 +1582,175 @@ def get_team_messages(group_id, limit=50):
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Metrics Events ──────────────────────────────────────────
+
+def record_metric_event(event_type: str, ticket_id: str = None, agent_id: str = None,
+                         phase: str = None, duration_seconds: float = None,
+                         labels: dict = None, value: float = None):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute("""INSERT INTO metric_events (event_type, ticket_id, agent_id, phase, duration_seconds, labels, value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+              (event_type, ticket_id, agent_id, phase, duration_seconds,
+               json.dumps(labels) if labels else None, value, now))
+    conn.commit()
+    conn.close()
+
+
+def get_metric_events(event_type: str = None, ticket_id: str = None,
+                       agent_id: str = None, phase: str = None,
+                       since: str = None, limit: int = 1000) -> List[Dict]:
+    conn = get_db()
+    c = conn.cursor()
+    conditions = []
+    params = []
+    if event_type:
+        conditions.append("event_type = ?")
+        params.append(event_type)
+    if ticket_id:
+        conditions.append("ticket_id = ?")
+        params.append(ticket_id)
+    if agent_id:
+        conditions.append("agent_id = ?")
+        params.append(agent_id)
+    if phase:
+        conditions.append("phase = ?")
+        params.append(phase)
+    if since:
+        conditions.append("created_at >= ?")
+        params.append(since)
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    c.execute(f"SELECT * FROM metric_events {where} ORDER BY created_at DESC LIMIT ?", params + [limit])
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_metrics_summary(since: str = None) -> Dict:
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+
+    if since:
+        tickets_since = f"AND created_at >= '{since}'"
+        events_since = f"AND me.created_at >= '{since}'"
+    else:
+        tickets_since = ""
+        events_since = ""
+
+    total = c.execute(f"SELECT COUNT(*) FROM tickets WHERE 1=1 {tickets_since}").fetchone()[0]
+    merged = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'merged' {tickets_since}").fetchone()[0]
+    completed = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'completed' {tickets_since}").fetchone()[0]
+    failed = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'failed' {tickets_since}").fetchone()[0]
+
+    avg_retries = c.execute(f"SELECT AVG(CAST(retry_count AS REAL)) FROM tickets WHERE retry_count > 0 {tickets_since}").fetchone()[0] or 0
+    total_retries = c.execute(f"SELECT SUM(retry_count) FROM tickets WHERE 1=1 {tickets_since}").fetchone()[0] or 0
+
+    first_pipeline_passes = c.execute(f"SELECT COUNT(*) FROM tickets WHERE first_pipeline_status = 'passed' {tickets_since}").fetchone()[0]
+    first_pipeline_total = c.execute(f"SELECT COUNT(*) FROM tickets WHERE first_pipeline_status != 'unknown' AND first_pipeline_status IS NOT NULL {tickets_since}").fetchone()[0]
+
+    avg_review_cycles = c.execute(f"SELECT AVG(CAST(review_cycle_count AS REAL)) FROM tickets WHERE review_cycle_count > 0 {tickets_since}").fetchone()[0] or 0
+
+    avg_llm_cost = c.execute(f"SELECT AVG(llm_total_cost_usd) FROM tickets WHERE llm_total_cost_usd > 0 {tickets_since}").fetchone()[0] or 0
+    total_llm_cost = c.execute(f"SELECT SUM(llm_total_cost_usd) FROM tickets WHERE 1=1 {tickets_since}").fetchone()[0] or 0.0
+    total_prompt_tokens = c.execute(f"SELECT SUM(llm_prompt_tokens) FROM tickets WHERE 1=1 {tickets_since}").fetchone()[0] or 0
+    total_completion_tokens = c.execute(f"SELECT SUM(llm_completion_tokens) FROM tickets WHERE 1=1 {tickets_since}").fetchone()[0] or 0
+
+    conn.close()
+
+    return {
+        "timestamp": now,
+        "success_rate": (merged / total * 100) if total > 0 else 0,
+        "merge_rate": (merged / total * 100) if total > 0 else 0,
+        "failure_rate": (failed / total * 100) if total > 0 else 0,
+        "total_tickets": total,
+        "merged_tickets": merged,
+        "completed_tickets": completed,
+        "failed_tickets": failed,
+        "avg_retries": round(avg_retries, 2),
+        "total_retries": total_retries,
+        "first_pipeline_pass_rate": (first_pipeline_passes / first_pipeline_total * 100) if first_pipeline_total > 0 else 0,
+        "avg_review_cycles": round(avg_review_cycles, 2),
+        "avg_llm_cost_usd": round(avg_llm_cost, 4),
+        "total_llm_cost_usd": round(total_llm_cost, 4),
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+    }
+
+
+def update_ticket_phase_timestamp(ticket_id: str, phase: str):
+    phase_columns = {
+        "work": "phase_work_started_at",
+        "test": "phase_test_started_at",
+        "ship": "phase_ship_started_at",
+        "listen": "phase_listen_started_at",
+    }
+    col = phase_columns.get(phase)
+    if not col:
+        return
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute(f"UPDATE tickets SET {col} = ?, updated_at = ? WHERE id = ? AND {col} IS NULL", (now, now, ticket_id))
+    conn.commit()
+    conn.close()
+
+
+def update_ticket_llm_usage(ticket_id: str, prompt_tokens: int = 0, completion_tokens: int = 0, cost_usd: float = 0.0, model: str = ""):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    sets = ["llm_prompt_tokens = llm_prompt_tokens + ?", "llm_completion_tokens = llm_completion_tokens + ?",
+            "llm_total_cost_usd = llm_total_cost_usd + ?", "updated_at = ?"]
+    params = [prompt_tokens, completion_tokens, cost_usd, now]
+    if model:
+        sets.append("model_used = ?")
+        params.append(model)
+    params.append(ticket_id)
+    c.execute(f"UPDATE tickets SET {', '.join(sets)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
+
+
+def increment_review_cycle_count(ticket_id: str):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute("UPDATE tickets SET review_cycle_count = review_cycle_count + 1, updated_at = ? WHERE id = ?", (now, ticket_id))
+    conn.commit()
+    conn.close()
+
+
+def set_ticket_first_pipeline_status(ticket_id: str, status: str):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute("UPDATE tickets SET first_pipeline_status = ?, updated_at = ? WHERE id = ? AND (first_pipeline_status IS NULL OR first_pipeline_status = 'unknown')",
+              (status, now, ticket_id))
+    conn.commit()
+    conn.close()
+
+
+def set_ticket_completed_at(ticket_id: str, status: str = None):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    col = "merged_at" if status == "merged" else "completed_at"
+    c.execute(f"UPDATE tickets SET {col} = ?, updated_at = ? WHERE id = ?", (now, now, ticket_id))
+    conn.commit()
+    conn.close()
+
+
+def set_ticket_primary_repo(ticket_id: str, primary_repo: str):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute("UPDATE tickets SET primary_repo = ?, updated_at = ? WHERE id = ?", (primary_repo, now, ticket_id))
+    conn.commit()
+    conn.close()
 
 
 # ── Init ──

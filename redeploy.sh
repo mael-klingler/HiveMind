@@ -344,6 +344,14 @@ if ! $DOCKER_MODE; then
   echo "--- Applying Kustomize manifests ---"
   kubectl apply -k "$SCRIPT_DIR/Orchestrator/kustomize/base/"
 
+  # ── Monitoring (if enabled) ────────────────────────────────────
+  ENABLE_MONITORING=$(grep "^ENABLE_MONITORING=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d= -f2- || echo "false")
+  if [[ "$ENABLE_MONITORING" == "true" || "$ENABLE_MONITORING" == "y" ]]; then
+    echo ""
+    echo "--- Applying monitoring manifests ---"
+    kubectl apply -f "$SCRIPT_DIR/Orchestrator/k8s/monitoring.yaml"
+  fi
+
   echo ""
   echo "--- Waiting for rollout ---"
   kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$NAMESPACE" --timeout=120s
@@ -358,8 +366,15 @@ if ! $DOCKER_MODE; then
   echo "   Status:   $(kubectl get pods -n "$NAMESPACE" -l app=orchestrator -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'pending...')"
   echo "   Service:  $(kubectl get svc -n "$NAMESPACE" orchestrator -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo 'N/A'):8080"
   echo ""
-  echo "   Port-forward:   kubectl port-forward -n $NAMESPACE deployment/$DEPLOYMENT_NAME 8080:8080"
-  echo "   Web UI:         http://localhost:8080"
+   echo "   Port-forward:   kubectl port-forward -n $NAMESPACE deployment/$DEPLOYMENT_NAME 8080:8080"
+   echo "   Web UI:         http://localhost:8080"
+   if [[ "$ENABLE_MONITORING" == "true" || "$ENABLE_MONITORING" == "y" ]]; then
+   echo ""
+   echo "   Monitoring:"
+   echo "     Grafana:      kubectl port-forward -n $NAMESPACE svc/grafana 3000:3000"
+   echo "     Prometheus:   kubectl port-forward -n $NAMESPACE svc/prometheus 9090:9090"
+   echo "     Dashboard:    http://localhost:3000  (admin/hivemind)"
+   fi
   echo ""
 
   # ── Git commit + tag ──────────────────────────────────────────────────────
