@@ -1266,7 +1266,7 @@ def _get_agent_http_client() -> httpx.AsyncClient:
 
 def _resolve_pod_url(ticket_id: str) -> Optional[str]:
     ticket = get_ticket(ticket_id)
-    if not ticket or ticket.get("status") not in ("running", "queued"):
+    if not ticket:
         return None
     pod_name = f"agent-worker-{ticket_id.lower()}"
     namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
