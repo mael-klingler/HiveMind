@@ -526,4 +526,4 @@ All config flows through `.env` (single source of truth):
 
 ## License
 
-MIT
+Apache License 2.0. See [LICENSE](LICENSE) for details.
