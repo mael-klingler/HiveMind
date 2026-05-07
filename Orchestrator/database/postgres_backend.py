@@ -402,12 +402,14 @@ def create_ticket(ticket: Dict[str, Any]) -> str:
     try:
         with conn.cursor() as c:
             now = datetime.now().isoformat()
+            ticket_id = ticket.get("id") or f"TASK-{int(datetime.now().timestamp() * 1000)}"
+            ticket["id"] = ticket_id
             selected_repos = _ensure_json(ticket.get("selected_repos", []))
             c.execute("""
             INSERT INTO tickets (id, title, description, labels, issue_type, priority, status, created_at, updated_at, selected_repos)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                ticket["id"], ticket["title"], ticket.get("description", ""),
+                ticket_id, ticket["title"], ticket.get("description", ""),
                 json.dumps(ticket.get("labels", [])), ticket.get("issue_type", "Task"),
                 ticket.get("priority", "Medium"), "queued", now, now,
                 selected_repos,
@@ -417,9 +419,9 @@ def create_ticket(ticket: Dict[str, Any]) -> str:
             c.execute("""
             INSERT INTO queue (ticket_id, position, status, created_at)
             VALUES (%s, %s, %s, %s)
-            """, (ticket["id"], pos, "waiting", now))
+            """, (ticket_id, pos, "waiting", now))
         conn.commit()
-        return ticket["id"]
+        return ticket_id
     except Exception:
         conn.rollback()
         raise
