@@ -330,6 +330,10 @@ spec:
               value: "true"
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
               value: Viewer
+            - name: GF_PLUGINS_PREINSTALL
+              value: ""
+            - name: GF_PLUGIN_UPGRADE_CHECK_ENABLED
+              value: "false"
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources

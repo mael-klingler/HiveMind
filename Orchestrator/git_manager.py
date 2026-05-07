@@ -38,6 +38,7 @@ class RepoConfig:
     branch: str
     description: str
     tags: List[str]
+    active: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> "RepoConfig":
@@ -47,6 +48,7 @@ class RepoConfig:
             branch=data.get("branch", "development"),
             description=data.get("description", ""),
             tags=data.get("tags", []),
+            active=data.get("active", True),
         )
 
 
