@@ -81,20 +81,44 @@ class Metrics:
         parts = [f'{k}="{v}"' for k, v in sorted(labels.items())]
         return f'{name}{{{",".join(parts)}}}'
 
+    COUNTER_NAMES = {
+        "hivemind_tickets_created_total", "hivemind_tickets_completed_total",
+        "hivemind_tickets_failed_total", "hivemind_tickets_merged_total",
+        "hivemind_tickets_recovered_total", "hivemind_ticket_retries_total",
+        "hivemind_review_cycles_total", "hivemind_phase_transitions_total",
+        "hivemind_proxy_requests_total", "hivemind_webhooks_received_total",
+    }
+
+    SUMMARY_NAMES = {
+        "hivemind_ticket_duration_seconds", "hivemind_ticket_age_seconds",
+        "hivemind_queue_wait_seconds", "hivemind_ticket_lines_added",
+        "hivemind_ticket_lines_removed", "hivemind_ticket_files_changed",
+        "hivemind_llm_prompt_tokens", "hivemind_llm_completion_tokens",
+    }
+
+    def _classify(self, base):
+        if base in self.COUNTER_NAMES or base.endswith("_total") and base not in ("hivemind_files_changed_total", "hivemind_lines_added_total", "hivemind_lines_removed_total", "hivemind_llm_prompt_tokens_total", "hivemind_llm_completion_tokens_total", "hivemind_llm_cost_usd_total"):
+            return "counter"
+        if base in self.SUMMARY_NAMES:
+            return "summary"
+        return "gauge"
+
     def render(self) -> str:
         lines = []
         with self._lock:
             seen = set()
             for key, value in sorted(self._counters.items()):
                 base = key.split("{")[0] if "{" in key else key
+                mtype = "counter" if base in self.COUNTER_NAMES else "gauge"
                 if base not in seen:
-                    lines.append(f"# TYPE {base} counter")
+                    lines.append(f"# TYPE {base} {mtype}")
                     seen.add(base)
                 lines.append(f"{key} {value}")
             for key, value in sorted(self._gauges.items()):
                 base = key.split("{")[0] if "{" in key else key
+                mtype = self._classify(base)
                 if base not in seen:
-                    lines.append(f"# TYPE {base} gauge")
+                    lines.append(f"# TYPE {base} {mtype}")
                     seen.add(base)
                 lines.append(f"{key} {value}")
             for key, values in sorted(self._histograms.items()):

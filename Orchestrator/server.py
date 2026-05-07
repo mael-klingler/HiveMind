@@ -77,7 +77,7 @@ def readyz():
 
 @app.get("/metrics")
 def api_metrics():
-    from database import get_all_agents
+    from database import get_all_agents, get_metrics_summary
     from datetime import datetime, timezone
     all_agents = get_all_agents()
     idle_agents = [a for a in all_agents if a.get("status") == "idle"]
@@ -88,51 +88,81 @@ def api_metrics():
     metrics.set("hivemind_queue_length", len(get_queue()))
     all_tickets = get_tickets(status=None)
     now = datetime.now(timezone.utc)
-    total_prompt = 0
-    total_completion = 0
-    total_cost = 0.0
+
+    summary = get_metrics_summary()
+
+    metrics.set("hivemind_tickets_created_total", summary["total_tickets"])
+    metrics.set("hivemind_tickets_completed_total", summary["completed_tickets"])
+    metrics.set("hivemind_tickets_failed_total", summary["failed_tickets"])
+    metrics.set("hivemind_tickets_merged_total", summary["merged_tickets"])
+    metrics.set("hivemind_ticket_retries_total", summary["total_retries"])
+    metrics.set("hivemind_review_cycles_total", summary["avg_review_cycles"])
+    metrics.set("hivemind_llm_prompt_tokens_total", summary["total_prompt_tokens"])
+    metrics.set("hivemind_llm_completion_tokens_total", summary["total_completion_tokens"])
+    metrics.set("hivemind_llm_cost_usd_total", summary["total_llm_cost_usd"])
+
     total_added = 0
     total_removed = 0
     total_files = 0
-    for status in ("queued", "running", "completed", "failed", "merged", "stopped"):
-        count = sum(1 for t in all_tickets if t.get("status") == status)
-        metrics.set("hivemind_tickets", count, labels={"status": status})
     for t in all_tickets:
-        total_prompt += (t.get("llm_prompt_tokens") or 0)
-        total_completion += (t.get("llm_completion_tokens") or 0)
-        total_cost += (t.get("llm_total_cost_usd") or 0.0)
         total_added += (t.get("lines_added") or 0)
         total_removed += (t.get("lines_removed") or 0)
         total_files += (t.get("files_changed") or 0)
-        if t.get("status") in ("completed", "merged") and t.get("created_at"):
-            try:
-                created = datetime.fromisoformat(t["created_at"])
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-                completed_at = t.get("completed_at") or t.get("merged_at") or t.get("updated_at", "")
-                if completed_at:
-                    end = datetime.fromisoformat(completed_at)
-                    if end.tzinfo is None:
-                        end = end.replace(tzinfo=timezone.utc)
-                    duration = (end - created).total_seconds()
-                    metrics.observe("hivemind_ticket_duration_seconds", duration, labels={"status": t["status"]})
-            except (ValueError, TypeError):
-                pass
-        if t.get("status") in ("queued", "running") and t.get("created_at"):
-            try:
-                created = datetime.fromisoformat(t["created_at"])
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-                age = (now - created).total_seconds()
-                metrics.observe("hivemind_ticket_age_seconds", age, labels={"status": t["status"]})
-            except (ValueError, TypeError):
-                pass
-    metrics.set("hivemind_llm_prompt_tokens_total", total_prompt)
-    metrics.set("hivemind_llm_completion_tokens_total", total_completion)
-    metrics.set("hivemind_llm_cost_usd_total", total_cost)
+
     metrics.set("hivemind_lines_added_total", total_added)
     metrics.set("hivemind_lines_removed_total", total_removed)
     metrics.set("hivemind_files_changed_total", total_files)
+
+    for status in ("queued", "running", "completed", "failed", "merged", "stopped"):
+        count = sum(1 for t in all_tickets if t.get("status") == status)
+        metrics.set("hivemind_tickets", count, labels={"status": status})
+
+    completed_tickets = [t for t in all_tickets if t.get("status") in ("completed", "merged")]
+    if completed_tickets:
+        durations = []
+        for t in completed_tickets:
+            try:
+                created = datetime.fromisoformat(t.get("created_at", ""))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                end_str = t.get("completed_at") or t.get("merged_at") or t.get("updated_at", "")
+                if end_str:
+                    end = datetime.fromisoformat(end_str)
+                    if end.tzinfo is None:
+                        end = end.replace(tzinfo=timezone.utc)
+                    durations.append((end - created).total_seconds())
+            except (ValueError, TypeError):
+                pass
+        if durations:
+            d = sorted(durations)
+            for q, v in [(0.5, d[len(d)//2]), (0.9, d[int(len(d)*0.9)]), (0.99, d[int(len(d)*0.99)])]:
+                metrics.set("hivemind_ticket_duration_seconds", v, labels={"status": "completed", "quantile": str(q)})
+            metrics.set("hivemind_ticket_duration_seconds_count", len(d), labels={"status": "completed"})
+            metrics.set("hivemind_ticket_duration_seconds_sum", sum(d), labels={"status": "completed"})
+
+    active_tickets = [t for t in all_tickets if t.get("status") in ("queued", "running")]
+    if active_tickets:
+        ages = []
+        for t in active_tickets:
+            try:
+                created = datetime.fromisoformat(t.get("created_at", ""))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                ages.append((now - created).total_seconds())
+            except (ValueError, TypeError):
+                pass
+        if ages:
+            a = sorted(ages)
+            for q, v in [(0.5, a[len(a)//2]), (0.9, a[int(len(a)*0.9)]), (0.99, a[int(len(a)*0.99)])]:
+                metrics.set("hivemind_ticket_age_seconds", v, labels={"status": "running", "quantile": str(q)})
+            metrics.set("hivemind_ticket_age_seconds_count", len(a), labels={"status": "running"})
+            metrics.set("hivemind_ticket_age_seconds_sum", sum(a), labels={"status": "running"})
+
+    metrics.set("hivemind_tickets_recovered_total", 0)
+    metrics.set("hivemind_phase_transitions_total", 0)
+    metrics.set("hivemind_queue_wait_seconds", 0)
+    metrics.set("hivemind_proxy_requests_total", 0)
+
     return PlainTextResponse(content=metrics.render(), media_type="text/plain")
 
 
