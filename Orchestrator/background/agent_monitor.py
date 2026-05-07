@@ -194,6 +194,7 @@ async def agent_pod_monitor():
                     else:
                         log.error(f"Ticket {ticket_id}: Pod {phase}, max retries reached → failed", extra={"ticket_id": ticket_id, "event": "ticket_failed"})
                         update_ticket_status(ticket_id, "failed")
+                        metrics.inc("hivemind_tickets_failed_total")
                         set_agent_status(agent_id, "idle")
                         await _broadcast_event("ticket_failed", {"ticket_id": ticket_id})
                     continue
@@ -223,6 +224,7 @@ async def agent_pod_monitor():
                         update_ticket_status(ticket_id, "running")
                         set_agent_status(agent_id, "running", ticket_id)
                         add_ticket_comment(ticket_id, author="system", comment_type="system", content=f"Pod detected as {phase} while ticket was '{old_status}'. Recovered to running.")
+                        metrics.inc("hivemind_tickets_recovered_total", labels={"from_status": old_status})
                         await _broadcast_event("ticket_updated", {"ticket_id": ticket_id, "status": "running", "reason": f"pod_{phase}_recovered_from_{old_status}"})
                         await _broadcast_event("queue_updated", get_queue())
                     elif not init_ok or (phase == "Running" and not container_ready):

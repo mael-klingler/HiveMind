@@ -48,6 +48,18 @@ else:
         get_open_mr_tickets,
         update_ticket_mr_tracking,
     )
+    from database.metrics import (
+        record_metric_event,
+        get_metric_events,
+        get_metrics_summary,
+        update_ticket_phase_timestamp,
+        update_ticket_llm_usage,
+        increment_review_cycle_count,
+        set_ticket_first_pipeline_status,
+        set_ticket_completed_at,
+        set_ticket_primary_repo,
+        set_ticket_line_stats,
+    )
     from database.agents import (
         get_agent,
         get_or_create_agent,
@@ -202,4 +214,5 @@ __all__ = [
     "update_ticket_phase_timestamp", "update_ticket_llm_usage",
     "increment_review_cycle_count", "set_ticket_first_pipeline_status",
     "set_ticket_completed_at", "set_ticket_primary_repo",
+    "set_ticket_line_stats",
 ]

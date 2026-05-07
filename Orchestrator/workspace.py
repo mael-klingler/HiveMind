@@ -25,6 +25,7 @@ from typing import Optional
 
 from database import (
     get_all_repos, get_setting, set_ticket_ai_planning, update_ticket_description,
+    update_ticket_llm_usage,
 )
 from config import (
     ORCHESTRATOR_CONFIG, OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_TIMEOUT,
@@ -140,7 +141,10 @@ class WorkspaceBuilder:
                 tags = ", ".join(r.tags) if r.tags else ""
                 repo_context_parts.append(f"- **{r.name}**: {desc}" + (f" (Tags: {tags})" if tags else ""))
             repo_context = "\n".join(repo_context_parts)
-            enriched_description = f"{ticket.description}\n\n---\n**Repositories selected:**\n{repo_context}"
+            if "**Repositories selected:**" not in ticket.description and "**Repositories:**" not in ticket.description:
+                enriched_description = f"{ticket.description}\n\n---\n**Repositories selected:**\n{repo_context}"
+            else:
+                enriched_description = ticket.description
             update_ticket_description(ticket.id, enriched_description)
             ticket.description = enriched_description
             analysis = {
@@ -199,7 +203,10 @@ class WorkspaceBuilder:
                 repo_context_parts.append(f"- **{r.name}**: {desc}" + (f" (Tags: {tags})" if tags else ""))
             repo_context = "\n".join(repo_context_parts)
             reasoning = analysis.get("reasoning", "")
-            enriched_description = f"{ticket.description}\n\n---\n**Repositories:**\n{repo_context}\n\n**AI Assessment:** {reasoning}"
+            if "**Repositories:**" not in ticket.description and "**Repositories selected:**" not in ticket.description:
+                enriched_description = f"{ticket.description}\n\n---\n**Repositories:**\n{repo_context}\n\n**AI Assessment:** {reasoning}"
+            else:
+                enriched_description = ticket.description
             update_ticket_description(ticket.id, enriched_description)
             ticket.description = enriched_description
 
@@ -211,6 +218,16 @@ class WorkspaceBuilder:
             prompt = self._main.generate_assignment_prompt(ticket, analysis, selected_configs)
 
         set_ticket_ai_planning(ticket.id, analysis)
+
+        llm_usage = analysis.pop("_llm_usage", None)
+        if llm_usage:
+            update_ticket_llm_usage(
+                ticket.id,
+                prompt_tokens=llm_usage.get("prompt_tokens", 0),
+                completion_tokens=llm_usage.get("completion_tokens", 0),
+                cost_usd=0.0,
+                model=llm_usage.get("model", ""),
+            )
 
         workspace_dir = Path(self.config.work_dir) / f"workspace_{ticket.id}"
         workspace_dir.mkdir(parents=True, exist_ok=True)

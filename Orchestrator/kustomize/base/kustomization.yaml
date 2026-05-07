@@ -18,4 +18,4 @@ commonLabels:
 images:
   - name: hivemind-orchestrator
     newName: hivemind-orchestrator
-    newTag: 0.7.9
+    newTag: 0.7.10

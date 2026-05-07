@@ -115,11 +115,20 @@ class OllamaClient:
             "format": "json"
         }
         raw = self._post(body)
+
+        usage = raw.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+
         content = raw.get("message", {}).get("content", "")
         if not content:
             choices = raw.get("choices", [])
             if choices:
                 content = choices[0].get("message", {}).get("content", "")
+                if not usage and choices[0].get("usage"):
+                    usage = choices[0]["usage"]
+                    prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                    completion_tokens = usage.get("completion_tokens", completion_tokens)
         if not content:
             raise RuntimeError(f"Ollama returned no answer: {raw}")
         content = content.strip()
@@ -128,12 +137,21 @@ class OllamaClient:
             content = re.sub(r"\n?\s*```\s*$", "", content)
             content = content.strip()
         try:
-            return json.loads(content)
+            result = json.loads(content)
         except json.JSONDecodeError:
             m = re.search(r'\{.*\}', content, re.DOTALL)
             if m:
-                return json.loads(m.group(0))
-            raise RuntimeError(f"No JSON in Ollama response: {content[:300]}")
+                result = json.loads(m.group(0))
+            else:
+                raise RuntimeError(f"No JSON in Ollama response: {content[:300]}")
+
+        if prompt_tokens or completion_tokens:
+            result["_llm_usage"] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "model": self.model,
+            }
+        return result
 
     def _make_prompt(self, ticket: "Ticket", repo_contexts: List["RepoStatus"], leankg: "LeanKGManager") -> str:
         blocks = []

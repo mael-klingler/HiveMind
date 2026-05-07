@@ -733,6 +733,73 @@ Commit and push the changes to the same branch."
   COMMENT_POLL_PID=$!
 fi
 
+# ── Gather token usage from opencode DB ───────────────────────────
+TOKENS_PROMPT=0
+TOKENS_COMPLETION=0
+TOKENS_MODEL=""
+OC_DB_PATH=$(opencode db path 2>/dev/null || echo "")
+if [ -n "$OC_DB_PATH" ] && [ -f "$OC_DB_PATH" ]; then
+  OC_SESSION_ID=$(sqlite3 "$OC_DB_PATH" "SELECT id FROM session WHERE title LIKE '%${TICKET_ID}%' ORDER BY time_updated DESC LIMIT 1" 2>/dev/null || echo "")
+  if [ -n "$OC_SESSION_ID" ]; then
+    TOKEN_ROW=$(sqlite3 "$OC_DB_PATH" "
+      SELECT
+        COALESCE(SUM(json_extract(data, '$.tokens.input')), 0),
+        COALESCE(SUM(json_extract(data, '$.tokens.output')), 0)
+      FROM part
+      WHERE session_id='$OC_SESSION_ID' AND json_extract(data, '$.type')='step-finish'
+    " 2>/dev/null || echo "0|0")
+    TOKENS_PROMPT=$(echo "$TOKEN_ROW" | cut -d'|' -f1)
+    TOKENS_COMPLETION=$(echo "$TOKEN_ROW" | cut -d'|' -f2)
+    TOKENS_MODEL=$(sqlite3 "$OC_DB_PATH" "SELECT model FROM session WHERE id='$OC_SESSION_ID'" 2>/dev/null || echo "")
+    echo "📊 Tokens: prompt=$TOKENS_PROMPT completion=$TOKENS_COMPLETION model=$TOKENS_MODEL (session=$OC_SESSION_ID)"
+  else
+    echo "⚠️  No opencode session found for ticket $TICKET_ID"
+  fi
+else
+  echo "⚠️  opencode DB not found, skipping token collection"
+fi
+
+# ── Gather line stats and notify orchestrator ────────────────────
+STATS_LINES_ADDED=0
+STATS_LINES_REMOVED=0
+STATS_FILES_CHANGED=0
+SAVED_PWD_STATS="$PWD"
+for dir in /workspace/*/; do
+  repo="${dir%/}"
+  [ -d "$repo/.git" ] || continue
+  cd "$repo" || continue
+  BRANCH_REF=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$(git branch --show-current 2>/dev/null)" 2>/dev/null | sed 's|origin/||' || echo "main")
+  [ -z "$BRANCH_REF" ] && BRANCH_REF="main"
+  STATS=$(git diff --numstat "origin/$BRANCH_REF"..HEAD 2>/dev/null || echo '')
+  if [ -n "$STATS" ]; then
+    while IFS=$'\t' read -r ADD DEL FILE; do
+      STATS_LINES_ADDED=$((STATS_LINES_ADDED + ${ADD:-0}))
+      STATS_LINES_REMOVED=$((STATS_LINES_REMOVED + ${DEL:-0}))
+      STATS_FILES_CHANGED=$((STATS_FILES_CHANGED + 1))
+    done <<< "$STATS"
+  fi
+  cd "$SAVED_PWD_STATS" || true
+done
+echo "📊 Stats: +$STATS_LINES_ADDED -$STATS_LINES_REMOVED in $STATS_FILES_CHANGED files"
+
+if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
+  COMPLETE_BODY=$(jq -n \
+    --arg agent_id "${AGENT_ID:-$TICKET_ID}" \
+    --arg ticket_id "$TICKET_ID" \
+    --arg lines_added "$STATS_LINES_ADDED" \
+    --arg lines_removed "$STATS_LINES_REMOVED" \
+    --arg files_changed "$STATS_FILES_CHANGED" \
+    --arg prompt_tokens "$TOKENS_PROMPT" \
+    --arg completion_tokens "$TOKENS_COMPLETION" \
+    --arg model "$TOKENS_MODEL" \
+    '{agent_id: $agent_id, ticket_id: $ticket_id, lines_added: ($lines_added | tonumber), lines_removed: ($lines_removed | tonumber), files_changed: ($files_changed | tonumber), prompt_tokens: ($prompt_tokens | tonumber), completion_tokens: ($completion_tokens | tonumber), model: $model}')
+  curl -sS -X POST \
+    -H "Content-Type: application/json" \
+    -d "$COMPLETE_BODY" \
+    "${ORCHESTRATOR_URL}/api/agents/$AGENT_ID/complete" \
+    >/dev/null 2>&1 || echo "⚠️ Failed to notify orchestrator of completion"
+fi
+
 # ── Memory Sync-Back ──────────────────────────────────────────────
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/home/hivemind/.config/opencode/memory" ]; then
   echo "📝 Syncing memory blocks back to orchestrator..."

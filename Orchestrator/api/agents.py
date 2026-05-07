@@ -31,6 +31,8 @@ from database import (
     update_ticket_status,
     add_ticket_comment,
     get_queue,
+    update_ticket_llm_usage,
+    set_ticket_line_stats,
 )
 from logging_setup import log, metrics
 from background.sse import broadcast_event
@@ -98,6 +100,14 @@ async def api_agent_complete(agent_id: str, req: Request):
     queue_id = data.get("queue_id")
     ticket_id = data.get("ticket_id")
 
+    lines_added = data.get("lines_added", 0)
+    lines_removed = data.get("lines_removed", 0)
+    files_changed = data.get("files_changed", 0)
+    prompt_tokens = data.get("prompt_tokens", 0)
+    completion_tokens = data.get("completion_tokens", 0)
+    cost_usd = data.get("cost_usd", 0.0)
+    model = data.get("model", "")
+
     set_agent_status(agent_id, "idle", progress=100)
 
     if queue_id:
@@ -106,6 +116,21 @@ async def api_agent_complete(agent_id: str, req: Request):
     if ticket_id:
         update_ticket_status(ticket_id, "completed")
         add_ticket_comment(ticket_id, author=agent_id, comment_type="summary", content=f"Agent {agent_id} has completed the task.")
+
+        if lines_added or lines_removed or files_changed:
+            set_ticket_line_stats(ticket_id, lines_added, lines_removed, files_changed)
+
+        if prompt_tokens or completion_tokens:
+            update_ticket_llm_usage(ticket_id, prompt_tokens, completion_tokens, cost_usd, model)
+
+        metrics.inc("hivemind_tickets_completed_total")
+        if lines_added or lines_removed:
+            metrics.observe("hivemind_ticket_lines_added", lines_added or 0)
+            metrics.observe("hivemind_ticket_lines_removed", lines_removed or 0)
+            metrics.observe("hivemind_ticket_files_changed", files_changed or 0)
+        if prompt_tokens:
+            metrics.observe("hivemind_llm_prompt_tokens", prompt_tokens)
+            metrics.observe("hivemind_llm_completion_tokens", completion_tokens)
 
     next_item = get_next_queue_item()
     if next_item:

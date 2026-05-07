@@ -78,6 +78,7 @@ def readyz():
 @app.get("/metrics")
 def api_metrics():
     from database import get_all_agents
+    from datetime import datetime, timezone
     all_agents = get_all_agents()
     idle_agents = [a for a in all_agents if a.get("status") == "idle"]
     running_agents = [a for a in all_agents if a.get("status") == "running"]
@@ -86,9 +87,52 @@ def api_metrics():
     metrics.set("hivemind_agents_total", len(all_agents))
     metrics.set("hivemind_queue_length", len(get_queue()))
     all_tickets = get_tickets(status=None)
+    now = datetime.now(timezone.utc)
+    total_prompt = 0
+    total_completion = 0
+    total_cost = 0.0
+    total_added = 0
+    total_removed = 0
+    total_files = 0
     for status in ("queued", "running", "completed", "failed", "merged", "stopped"):
         count = sum(1 for t in all_tickets if t.get("status") == status)
         metrics.set("hivemind_tickets", count, labels={"status": status})
+    for t in all_tickets:
+        total_prompt += (t.get("llm_prompt_tokens") or 0)
+        total_completion += (t.get("llm_completion_tokens") or 0)
+        total_cost += (t.get("llm_total_cost_usd") or 0.0)
+        total_added += (t.get("lines_added") or 0)
+        total_removed += (t.get("lines_removed") or 0)
+        total_files += (t.get("files_changed") or 0)
+        if t.get("status") in ("completed", "merged") and t.get("created_at"):
+            try:
+                created = datetime.fromisoformat(t["created_at"])
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                completed_at = t.get("completed_at") or t.get("merged_at") or t.get("updated_at", "")
+                if completed_at:
+                    end = datetime.fromisoformat(completed_at)
+                    if end.tzinfo is None:
+                        end = end.replace(tzinfo=timezone.utc)
+                    duration = (end - created).total_seconds()
+                    metrics.observe("hivemind_ticket_duration_seconds", duration, labels={"status": t["status"]})
+            except (ValueError, TypeError):
+                pass
+        if t.get("status") in ("queued", "running") and t.get("created_at"):
+            try:
+                created = datetime.fromisoformat(t["created_at"])
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                age = (now - created).total_seconds()
+                metrics.observe("hivemind_ticket_age_seconds", age, labels={"status": t["status"]})
+            except (ValueError, TypeError):
+                pass
+    metrics.set("hivemind_llm_prompt_tokens_total", total_prompt)
+    metrics.set("hivemind_llm_completion_tokens_total", total_completion)
+    metrics.set("hivemind_llm_cost_usd_total", total_cost)
+    metrics.set("hivemind_lines_added_total", total_added)
+    metrics.set("hivemind_lines_removed_total", total_removed)
+    metrics.set("hivemind_files_changed_total", total_files)
     return PlainTextResponse(content=metrics.render(), media_type="text/plain")
 
 

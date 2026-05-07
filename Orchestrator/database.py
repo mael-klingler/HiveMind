@@ -179,6 +179,9 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "llm_completion_tokens", "INTEGER DEFAULT 0")
     _add_column_if_not_exists(c, "tickets", "llm_total_cost_usd", "REAL DEFAULT 0.0")
     _add_column_if_not_exists(c, "tickets", "primary_repo", "TEXT")
+    _add_column_if_not_exists(c, "tickets", "lines_added", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "lines_removed", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "tickets", "files_changed", "INTEGER DEFAULT 0")
 
     # Agents table
     c.execute("""

@@ -1788,6 +1788,19 @@ def set_ticket_primary_repo(ticket_id: str, primary_repo: str):
         conn.close()
 
 
+def set_ticket_line_stats(ticket_id: str, lines_added: int = 0, lines_removed: int = 0, files_changed: int = 0):
+    conn = get_db()
+    try:
+        with conn.cursor() as c:
+            c.execute("UPDATE tickets SET lines_added = %s, lines_removed = %s, files_changed = %s, updated_at = NOW() WHERE id = %s",
+                      (lines_added, lines_removed, files_changed, ticket_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 # ── Init ──
 try:
     init_db()

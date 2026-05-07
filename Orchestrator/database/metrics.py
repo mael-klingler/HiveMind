@@ -169,6 +169,16 @@ def set_ticket_first_pipeline_status(ticket_id: str, status: str):
     conn.close()
 
 
+def set_ticket_line_stats(ticket_id: str, lines_added: int = 0, lines_removed: int = 0, files_changed: int = 0):
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute("UPDATE tickets SET lines_added = ?, lines_removed = ?, files_changed = ?, updated_at = ? WHERE id = ?",
+              (lines_added, lines_removed, files_changed, now, ticket_id))
+    conn.commit()
+    conn.close()
+
+
 def set_ticket_completed_at(ticket_id: str, status: str = None):
     conn = get_db()
     c = conn.cursor()
