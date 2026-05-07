@@ -154,10 +154,17 @@ data:
       "links": [],
       "panels": [
         {
-          "title": "Agents",
+          "title": "🤖 Agents",
           "type": "stat",
-          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
-          "fieldConfig": { "defaults": { "mappings": [] } },
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }, { "value": 1, "color": "green" }] }, "mappings": [] },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "Idle" }, "properties": [{ "id": "color", "value": { "fixedColor": "super-light-blue", "mode": "fixed" } }] },
+              { "matcher": { "id": "byName", "options": "Running" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+              { "matcher": { "id": "byName", "options": "Total" }, "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] }
+            ]
+          },
           "targets": [
             { "expr": "hivemind_agents_idle", "legendFormat": "Idle", "refId": "A" },
             { "expr": "hivemind_agents_running", "legendFormat": "Running", "refId": "B" },
@@ -165,120 +172,136 @@ data:
           ]
         },
         {
-          "title": "Queue Depth",
+          "title": "📋 Queue",
           "type": "stat",
-          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+          "gridPos": { "h": 5, "w": 3, "x": 6, "y": 0 },
+          "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 5, "color": "yellow" }, { "value": 10, "color": "red" }] } } },
           "targets": [{ "expr": "hivemind_queue_length", "legendFormat": "Queued", "refId": "A" }]
         },
         {
-          "title": "Tickets by Status",
-          "type": "barchart",
-          "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
-          "targets": [{ "expr": "hivemind_tickets", "legendFormat": "{{status}}", "refId": "A" }],
-          "options": { "orientation": "horizontal" }
+          "title": "✅ Completed",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 3, "x": 9, "y": 0 },
+          "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "text" }, { "value": 1, "color": "green" }] }, "color": { "mode": "thresholds" } } },
+          "targets": [{ "expr": "hivemind_tickets_completed_total", "legendFormat": "Completed", "refId": "A" }]
         },
         {
-          "title": "Lines Changed (cumulative)",
+          "title": "❌ Failed",
           "type": "stat",
-          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
-          "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 1000, "color": "yellow" }, { "value": 5000, "color": "orange" }] } } },
-          "targets": [
-            { "expr": "hivemind_lines_added_total", "legendFormat": "Added", "refId": "A" },
-            { "expr": "hivemind_lines_removed_total", "legendFormat": "Removed", "refId": "B" },
-            { "expr": "hivemind_files_changed_total", "legendFormat": "Files", "refId": "C" }
-          ]
+          "gridPos": { "h": 5, "w": 3, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 1, "color": "red" }] }, "color": { "mode": "thresholds" } } },
+          "targets": [{ "expr": "hivemind_tickets_failed_total", "legendFormat": "Failed", "refId": "A" }]
         },
         {
-          "title": "LLM Tokens (cumulative)",
+          "title": "🔄 Retries",
           "type": "stat",
-          "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+          "gridPos": { "h": 5, "w": 3, "x": 15, "y": 0 },
+          "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 3, "color": "orange" }, { "value": 5, "color": "red" }] } } },
+          "targets": [{ "expr": "hivemind_ticket_retries_total", "legendFormat": "Retries", "refId": "A" }]
+        },
+        {
+          "title": "💰 LLM Cost",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 3, "x": 18, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 1, "color": "yellow" }, { "value": 10, "color": "red" }] } } },
+          "targets": [{ "expr": "hivemind_llm_cost_usd_total", "legendFormat": "Total", "refId": "A" }]
+        },
+        {
+          "title": "🧠 Tokens",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 3, "x": 21, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
           "targets": [
             { "expr": "hivemind_llm_prompt_tokens_total", "legendFormat": "Prompt", "refId": "A" },
             { "expr": "hivemind_llm_completion_tokens_total", "legendFormat": "Completion", "refId": "B" }
           ]
         },
         {
-          "title": "Ticket Duration (seconds)",
-          "type": "timeseries",
-          "gridPos": { "h": 9, "w": 8, "x": 0, "y": 4 },
-          "fieldConfig": { "defaults": { "unit": "s" } },
-          "targets": [
-            { "expr": "hivemind_ticket_duration_seconds", "legendFormat": "{{status}}", "refId": "A" }
-          ]
+          "title": "Tickets by Status",
+          "type": "piechart",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 5 },
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } },
+          "options": { "displayLabels": ["percent", "name"], "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{ "expr": "hivemind_tickets", "legendFormat": "{{status}}", "refId": "A" }]
         },
         {
-          "title": "Ticket Lifecycle Events (rate)",
+          "title": "Ticket Lifecycle (rate)",
           "type": "timeseries",
-          "gridPos": { "h": 9, "w": 8, "x": 8, "y": 4 },
+          "gridPos": { "h": 8, "w": 9, "x": 6, "y": 5 },
+          "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2 }, "unit": "ops" } },
           "targets": [
             { "expr": "rate(hivemind_tickets_created_total[5m])", "legendFormat": "Created", "refId": "A" },
             { "expr": "rate(hivemind_tickets_completed_total[5m])", "legendFormat": "Completed", "refId": "B" },
             { "expr": "rate(hivemind_tickets_failed_total[5m])", "legendFormat": "Failed", "refId": "C" },
-            { "expr": "rate(hivemind_tickets_recovered_total[5m])", "legendFormat": "Recovered", "refId": "D" }
+            { "expr": "rate(hivemind_tickets_merged_total[5m])", "legendFormat": "Merged", "refId": "D" },
+            { "expr": "rate(hivemind_tickets_recovered_total[5m])", "legendFormat": "Recovered", "refId": "E" }
           ]
-        },
-        {
-          "title": "LLM Cost (USD total)",
-          "type": "stat",
-          "gridPos": { "h": 9, "w": 4, "x": 16, "y": 4 },
-          "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 } },
-          "targets": [{ "expr": "hivemind_llm_cost_usd_total", "legendFormat": "Total Cost", "refId": "A" }]
         },
         {
           "title": "Tickets per Status (trend)",
           "type": "timeseries",
-          "gridPos": { "h": 9, "w": 4, "x": 20, "y": 4 },
+          "gridPos": { "h": 8, "w": 9, "x": 15, "y": 5 },
+          "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15, "lineWidth": 2 } } },
           "targets": [{ "expr": "hivemind_tickets", "legendFormat": "{{status}}", "refId": "A" }]
         },
         {
-          "title": "Lines Added per Ticket",
+          "title": "⏱ Ticket Duration",
           "type": "timeseries",
-          "gridPos": { "h": 9, "w": 8, "x": 0, "y": 13 },
-          "fieldConfig": { "defaults": {} },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 13 },
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 15 } } },
           "targets": [
-            { "expr": "hivemind_ticket_lines_added", "legendFormat": "Added", "refId": "A" },
-            { "expr": "hivemind_ticket_lines_removed", "legendFormat": "Removed", "refId": "B" }
+            { "expr": "hivemind_ticket_duration_seconds{quantile=\"0.5\"}", "legendFormat": "p50 {{status}}", "refId": "A" },
+            { "expr": "hivemind_ticket_duration_seconds{quantile=\"0.9\"}", "legendFormat": "p90 {{status}}", "refId": "B" },
+            { "expr": "hivemind_ticket_duration_seconds{quantile=\"0.99\"}", "legendFormat": "p99 {{status}}", "refId": "C" }
           ]
         },
         {
-          "title": "Files Changed per Ticket",
+          "title": "🧠 LLM Token Usage",
           "type": "timeseries",
-          "gridPos": { "h": 9, "w": 8, "x": 8, "y": 13 },
-          "targets": [
-            { "expr": "hivemind_ticket_files_changed", "legendFormat": "Files", "refId": "A" }
-          ]
-        },
-        {
-          "title": "LLM Token Usage (rate)",
-          "type": "timeseries",
-          "gridPos": { "h": 9, "w": 8, "x": 16, "y": 13 },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 13 },
+          "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 15 }, "unit": "short" } },
           "targets": [
             { "expr": "rate(hivemind_llm_prompt_tokens_total[5m])", "legendFormat": "Prompt tokens/s", "refId": "A" },
             { "expr": "rate(hivemind_llm_completion_tokens_total[5m])", "legendFormat": "Completion tokens/s", "refId": "B" }
           ]
         },
         {
-          "title": "Ticket Age (active tickets)",
+          "title": "📊 Code Changes (cumulative)",
           "type": "timeseries",
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 22 },
-          "fieldConfig": { "defaults": { "unit": "s" } },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 13 },
+          "fieldConfig": { "defaults": { "custom": { "lineWidth": 2 }, "unit": "short" } },
           "targets": [
-            { "expr": "hivemind_ticket_age_seconds", "legendFormat": "{{status}}", "refId": "A" }
+            { "expr": "hivemind_lines_added_total", "legendFormat": "Lines added", "refId": "A" },
+            { "expr": "hivemind_lines_removed_total", "legendFormat": "Lines removed", "refId": "B" },
+            { "expr": "hivemind_files_changed_total", "legendFormat": "Files changed", "refId": "C" }
           ]
         },
         {
-          "title": "Retry & Recovery (rate)",
+          "title": "⏳ Ticket Age (active)",
           "type": "timeseries",
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 22 },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 21 },
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2 } } },
+          "targets": [
+            { "expr": "hivemind_ticket_age_seconds{quantile=\"0.5\"}", "legendFormat": "p50 {{status}}", "refId": "A" },
+            { "expr": "hivemind_ticket_age_seconds{quantile=\"0.9\"}", "legendFormat": "p90 {{status}}", "refId": "B" }
+          ]
+        },
+        {
+          "title": "🔄 Retries & Recovery",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 21 },
+          "fieldConfig": { "defaults": { "custom": { "lineWidth": 2 }, "unit": "short" } },
           "targets": [
             { "expr": "rate(hivemind_ticket_retries_total[5m])", "legendFormat": "Retries", "refId": "A" },
-            { "expr": "rate(hivemind_tickets_recovered_total[5m])", "legendFormat": "Recovered", "refId": "B" }
+            { "expr": "rate(hivemind_tickets_recovered_total[5m])", "legendFormat": "Recovered", "refId": "B" },
+            { "expr": "rate(hivemind_review_cycles_total[5m])", "legendFormat": "Review cycles", "refId": "C" }
           ]
         },
         {
-          "title": "Proxy Requests",
+          "title": "🌐 Proxy Requests",
           "type": "timeseries",
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 22 },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 21 },
+          "fieldConfig": { "defaults": { "custom": { "lineWidth": 2 }, "unit": "reqps" } },
           "targets": [
             { "expr": "rate(hivemind_proxy_requests_total[5m])", "legendFormat": "{{method}}", "refId": "A" }
           ]
@@ -289,9 +312,9 @@ data:
       "tags": ["hivemind", "agents"],
       "templating": { "list": [] },
       "time": { "from": "now-1h", "to": "now" },
-      "title": "HiveMind Agent Metrics",
+      "title": "HiveMind Overview",
       "uid": "hivemind-agent-metrics",
-      "version": 2
+      "version": 3
     }
 ---
 apiVersion: apps/v1
