@@ -23,6 +23,7 @@ from database import (
     db_delete_agent,
     get_agent_with_profile,
     get_all_agents_with_profiles,
+    seed_default_memory_blocks,
     set_agent_instruction_assignments,
     set_agent_repo_affinities,
     set_agent_skills,
@@ -53,6 +54,7 @@ def api_create_agent_profile(data: dict):
     agent = create_agent(agent_id, name or agent_id, model_name=model_name,
                          skill_names=skills, instruction_ids=instruction_ids,
                          repo_affinities=repo_affinities)
+    seed_default_memory_blocks(agent_id)
     return {"ok": True, **agent}
 
 

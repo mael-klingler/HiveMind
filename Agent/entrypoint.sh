@@ -803,11 +803,35 @@ fi
 # ── Memory Sync-Back ──────────────────────────────────────────────
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/home/hivemind/.config/opencode/memory" ]; then
   echo "📝 Syncing memory blocks back to orchestrator..."
-  SYNC_BODY=$(jq -n --arg dir "/home/hivemind/.config/opencode/memory" --arg repo "_global" '{memory_dir: $dir, repo_name: $repo}')
+  SYNC_BLOCKS="["
+  _first=true
+  for md_file in /home/hivemind/.config/opencode/memory/*.md; do
+    [ -f "$md_file" ] || continue
+    _label=$(basename "$md_file" .md)
+    _content=$(cat "$md_file")
+    _description=""
+    _block_limit=5000
+    _read_only=false
+    if echo "$_content" | head -1 | grep -q '^---'; then
+      _front=$(echo "$_content" | sed -n '2,/^---$/p')
+      _body=$(echo "$_content" | sed '1,/^---$/d;1,/^---$/d')
+      _content="$_body"
+      _description=$(echo "$_front" | grep -i '^description:' | head -1 | sed 's/^description:[[:space:]]*//' 2>/dev/null || echo "")
+      _bl=$(echo "$_front" | grep -i '^limit:' | head -1 | sed 's/^limit:[[:space:]]*//' 2>/dev/null || echo "5000")
+      _block_limit=${_bl:-5000}
+      _ro=$(echo "$_front" | grep -i '^read_only:' | head -1 | sed 's/^read_only:[[:space:]]*//' 2>/dev/null || echo "false")
+      case "$_ro" in true|yes|1) _read_only=true ;; *) _read_only=false ;; esac
+      _lbl=$(echo "$_front" | grep -i '^label:' | head -1 | sed 's/^label:[[:space:]]*//' 2>/dev/null || echo "")
+      [ -n "$_lbl" ] && _label="$_lbl"
+    fi
+    if [ "$_first" = true ]; then _first=false; else SYNC_BLOCKS="${SYNC_BLOCKS},"; fi
+    SYNC_BLOCKS="${SYNC_BLOCKS}$(printf '%s' '{"label":"'"$_label"'","content":'"$(printf '%s' "$_content" | jq -Rs .)"',"description":"'"$_description"'","block_limit":'"$_block_limit"',"read_only":'"$_read_only"',"repo_name":"_global"}')"
+  done
+  SYNC_BLOCKS="${SYNC_BLOCKS}]"
   curl -sS -X POST \
     -H "Content-Type: application/json" \
-    -d "$SYNC_BODY" \
-    "${ORCHESTRATOR_URL}/api/agent-memory/${AGENT_ID}/sync-filesystem" \
+    -d "{\"blocks\": $SYNC_BLOCKS}" \
+    "${ORCHESTRATOR_URL}/api/agent-memory/${AGENT_ID}/sync" \
     >/dev/null 2>&1 || echo "⚠️ Memory sync-back failed"
   echo "✅ Memory sync-back complete"
 fi
