@@ -15,7 +15,7 @@ metadata:
   name: hivemind-postgres-data
   namespace: hivemind
 spec:
-  storageClassName: local-path
+  storageClassName: longhorn-fast
   accessModes:
     - ReadWriteOnce
   resources:

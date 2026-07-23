@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     lines_added INTEGER DEFAULT 0,
     lines_removed INTEGER DEFAULT 0,
     files_changed INTEGER DEFAULT 0,
+    current_phase TEXT DEFAULT 'work',
+    pipeline_group_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -54,6 +56,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     name TEXT,
+    role TEXT DEFAULT 'general',
     status TEXT DEFAULT 'idle',
     current_ticket_id TEXT REFERENCES tickets(id),
     started_at TIMESTAMPTZ,
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS queue (
     position INTEGER,
     assigned_agent_id TEXT REFERENCES agents(id),
     status TEXT DEFAULT 'waiting',
+    priority INTEGER DEFAULT 5,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ
@@ -251,6 +255,22 @@ INSERT INTO mcp_servers (name, server_type, command, description) VALUES ('leank
 INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-snip', 'Compress shell output (60-97% token savings)', 'snip') ON CONFLICT (name) DO NOTHING;
 INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-agent-memory', 'Persistent memory blocks for agents (Letta-inspired)', '') ON CONFLICT (name) DO NOTHING;
 INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-handoff', 'Session handoff for contextual transitions on retries', '') ON CONFLICT (name) DO NOTHING;
+
+-- ── Pipeline Steps ───────────────────────────────────
+CREATE TABLE IF NOT EXISTS pipeline_steps (
+    id BIGSERIAL PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id),
+    group_id TEXT REFERENCES ticket_groups(id),
+    phase TEXT NOT NULL,
+    agent_id TEXT,
+    status TEXT DEFAULT 'pending',
+    result TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_steps_ticket ON pipeline_steps(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_steps_status ON pipeline_steps(status);
 
 -- ── Auto-update timestamp trigger ───────────────────
 CREATE OR REPLACE FUNCTION update_updated_at()

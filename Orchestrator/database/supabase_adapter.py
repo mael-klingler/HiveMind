@@ -18,11 +18,21 @@ Replaces both database.py (SQLite) and database_pg.py (PostgreSQL raw SQL).
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from supabase import create_client, Client
+
+log = logging.getLogger("hivemind")
+
+_VALID_TRANSITIONS = {
+    "idle": {"running", "stopped"},
+    "running": {"idle", "error", "stopped"},
+    "error": {"idle", "running", "stopped"},
+    "stopped": {"idle"},
+}
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
@@ -311,6 +321,9 @@ def get_or_create_agent(agent_id: str, name: str = "") -> Dict:
 
 def set_agent_status(agent_id: str, status: str, ticket_id: Optional[str] = None, progress: int = 0):
     sb = _get_client()
+    current = sb.table("agents").select("status").eq("id", agent_id).execute()
+    if current.data and status not in _VALID_TRANSITIONS.get(current.data[0].get("status", ""), set()):
+        log.warning(f"Invalid agent state transition: {current.data[0].get('status')} → {status} for agent {agent_id}")
     if status == "running":
         sb.table("agents").update({
             "status": status, "current_ticket_id": ticket_id, "started_at": _now(), "progress": progress,
@@ -343,16 +356,22 @@ def set_max_agents(max_agents: int):
     set_setting("max_agents", str(max_agents))
 
 
+_DEFAULT_AGENT_ROLES = ["developer", "reviewer", "tester"]
+
+
 def ensure_agent_pool():
     max_agents = get_max_agents()
     sb = _get_client()
     for i in range(max_agents):
         agent_id = f"agent-{i+1}"
-        existing = sb.table("agents").select("id").eq("id", agent_id).execute()
+        role = _DEFAULT_AGENT_ROLES[i] if i < len(_DEFAULT_AGENT_ROLES) else "general"
+        existing = sb.table("agents").select("id, role").eq("id", agent_id).execute()
         if not existing.data:
             sb.table("agents").insert({
-                "id": agent_id, "name": f"Agent {i+1}", "status": "idle", "logs": [],
+                "id": agent_id, "name": f"Agent {i+1}", "role": role, "status": "idle", "logs": [],
             }).execute()
+        elif not existing.data[0].get("role") or existing.data[0].get("role") == "general":
+            sb.table("agents").update({"role": role}).eq("id", agent_id).execute()
     sb.table("agents").update({"status": "idle"}).eq("status", "disabled").execute()
 
 
@@ -384,6 +403,11 @@ def update_agent_profile(agent_id: str, name: Optional[str] = None, model_name: 
     if updates:
         sb.table("agents").update(updates).eq("id", agent_id).execute()
     return get_agent_with_profile(agent_id)
+
+
+def set_agent_role(agent_id: str, role: str):
+    sb = _get_client()
+    sb.table("agents").update({"role": role}).eq("id", agent_id).execute()
 
 
 def delete_agent(agent_id: str):
@@ -456,11 +480,28 @@ def get_next_queue_item() -> Optional[Dict]:
     return result.data[0] if result.data else None
 
 
+def assign_next_queue_item(agent_id: str) -> Optional[Dict]:
+    """Atomically claim the next waiting queue item for an agent.
+    Uses Supabase's .eq("status", "waiting") filter + update to claim.
+    Returns the claimed item dict or None if nothing available.
+    """
+    sb = _get_client()
+    next_item = get_next_queue_item()
+    if not next_item:
+        return None
+    result = sb.table("queue").update({
+        "status": "running", "assigned_agent_id": agent_id, "started_at": _now(),
+    }).eq("id", next_item["id"]).eq("status", "waiting").execute()
+    if not result.data:
+        return None
+    return result.data[0]
+
+
 def assign_queue_item(queue_id: int, agent_id: str) -> bool:
     sb = _get_client()
     result = sb.table("queue").update({
         "status": "running", "assigned_agent_id": agent_id, "started_at": _now(),
-    }).eq("id", queue_id).execute()
+    }).eq("id", queue_id).eq("status", "waiting").execute()
     return len(result.data) > 0
 
 
@@ -660,16 +701,24 @@ def get_all_repo_names() -> List[str]:
 
 
 def find_best_agent_for_repo(primary_repo: str, idle_agents: List[Dict]) -> Optional[str]:
-    best_agent = None
-    best_score = -1
+    if not primary_repo or not idle_agents:
+        return None
     sb = _get_client()
-    for agent in idle_agents:
-        result = sb.table("agent_repo_affinities").select("affinity").eq("agent_id", agent["id"]).eq("repo_name", primary_repo).execute()
-        score = len(result.data)
-        if score > best_score:
-            best_score = score
-            best_agent = agent["id"]
-    return best_agent
+    agent_ids = [a["id"] for a in idle_agents]
+    result = sb.table("agent_repo_affinities").select("agent_id, affinity").in_("agent_id", agent_ids).eq("repo_name", primary_repo).order("affinity", desc=True).limit(1).execute()
+    return result.data[0]["agent_id"] if result.data else None
+
+
+def score_agent_for_repo(agent_id: str, primary_repo: str, skill_names: List[str] = None) -> float:
+    score = 0.0
+    sb = _get_client()
+    result = sb.table("agent_repo_affinities").select("affinity").eq("agent_id", agent_id).eq("repo_name", primary_repo).execute()
+    if result.data:
+        score += result.data[0].get("affinity", 1) * 10.0
+    if skill_names:
+        skill_result = sb.table("agent_skills").select("id").eq("agent_id", agent_id).in_("mcp_server_name", skill_names).execute()
+        score += len(skill_result.data) * 2.0
+    return score
 
 
 # ── MCP Servers ────────────────────────────────────────

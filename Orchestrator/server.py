@@ -60,7 +60,9 @@ register_routes(app)
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    from redis_client import is_available
+    redis_ok = is_available()
+    return {"status": "ok", "redis": redis_ok}
 
 
 @app.get("/readyz")
@@ -68,8 +70,14 @@ def readyz():
     try:
         from database import get_db
         get_db()
+        from redis_client import is_available
+        redis_ok = is_available()
+        from config import REDIS_ENABLED
+        if REDIS_ENABLED and not redis_ok:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=503, content={"status": "degraded", "redis": False})
         w = _get_worker()
-        return {"status": "ok", "repos_initialized": w._init_done}
+        return {"status": "ok", "repos_initialized": w._init_done, "redis": redis_ok}
     except Exception:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=503, content={"status": "not ready"})
@@ -254,17 +262,23 @@ def startup_event():
     from background.queue_processor import queue_processor
     from background.review_monitor import review_lifecycle_monitor
     from background.agent_monitor import agent_pod_monitor
+    from background.workspace_cleanup import workspace_cleanup_loop
+    from background.sse import start_redis_subscriber
 
     setup_logging()
     import_repos_from_config(os.getenv("ORCHESTRATOR_CONFIG", "/app/config/orchestrator_config.json"))
     ensure_agent_pool()
+    start_redis_subscriber()
     asyncio.create_task(queue_processor())
     asyncio.create_task(review_lifecycle_monitor())
     asyncio.create_task(agent_pod_monitor())
     asyncio.create_task(_background_repo_init())
     asyncio.create_task(_orphan_recovery())
+    asyncio.create_task(workspace_cleanup_loop())
     log.info(f"GitLab Webhook Secret: {'enabled' if GITLAB_WEBHOOK_SECRET else 'disabled (insecure)'}")
     log.info(f"API Authentication: {'enabled' if HIVEMIND_API_KEY else 'disabled (insecure)'}")
+    from config import REDIS_ENABLED
+    log.info(f"Redis: {'enabled' if REDIS_ENABLED else 'disabled (in-memory fallback)'}")
 
 
 @app.on_event("shutdown")

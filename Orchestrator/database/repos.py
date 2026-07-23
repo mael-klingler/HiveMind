@@ -181,17 +181,36 @@ def get_all_repo_names() -> List[str]:
 
 
 def find_best_agent_for_repo(primary_repo: str, idle_agents: List[Dict]) -> str:
-    best_agent = None
-    best_score = -1
+    if not primary_repo or not idle_agents:
+        return None
+    agent_ids = [a["id"] for a in idle_agents]
+    placeholders = ",".join("?" * len(agent_ids))
     conn = get_db()
     c = conn.cursor()
-    for agent in idle_agents:
-        c.execute("SELECT COUNT(*) as cnt FROM agent_repo_affinities WHERE agent_id = ? AND repo_name = ?",
-                  (agent["id"], primary_repo))
-        row = c.fetchone()
-        score = row["cnt"] if row else 0
-        if score > best_score:
-            best_score = score
-            best_agent = agent["id"]
+    c.execute(
+        f"SELECT agent_id, affinity FROM agent_repo_affinities WHERE agent_id IN ({placeholders}) AND repo_name = ? ORDER BY affinity DESC",
+        (*agent_ids, primary_repo),
+    )
+    rows = c.fetchall()
     conn.close()
-    return best_agent
+    if not rows:
+        return None
+    return rows[0]["agent_id"]
+
+
+def score_agent_for_repo(agent_id: str, primary_repo: str, skill_names: List[str] = None) -> float:
+    """Score an agent for a given repo. Higher is better."""
+    score = 0.0
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT affinity FROM agent_repo_affinities WHERE agent_id = ? AND repo_name = ?", (agent_id, primary_repo))
+    row = c.fetchone()
+    if row:
+        score += row["affinity"] * 10.0
+    if skill_names:
+        c.execute("SELECT COUNT(*) as cnt FROM agent_skills WHERE agent_id = ? AND mcp_server_name IN ({})".format(
+            ",".join("?" * len(skill_names))), (agent_id, *skill_names))
+        row = c.fetchone()
+        score += row["cnt"] * 2.0
+    conn.close()
+    return score

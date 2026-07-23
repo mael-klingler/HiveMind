@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hivemind
+  namespace: argocd
+  labels:
+    app.kubernetes.io/component: ai-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+  finalizers:
+    - resources-finalizer.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://gitlab.capturecore.org/ai/hivemind.git
+    targetRevision: HEAD
+    path: Orchestrator/kustomize/base
+    kustomize:
+      images:
+        - hivemind-orchestrator=reg.capturecore.org/capturecore/hivemind-orchestrator:latest
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: hivemind
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

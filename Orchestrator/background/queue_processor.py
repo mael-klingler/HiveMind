@@ -14,6 +14,8 @@
 
 """
 Background task: Queue processor – assigns tickets to free agents and spawns K8s pods.
+Uses atomic assign_next_queue_item() to prevent race conditions.
+Selects the best agent based on repo affinity before claiming the queue item.
 """
 
 import asyncio
@@ -22,10 +24,12 @@ import logging
 from datetime import datetime, timezone
 
 from database import (
-    ensure_agent_pool, get_idle_agents, get_next_queue_item, get_ticket,
-    set_agent_status, get_tickets, assign_queue_item, fail_queue_item,
+    ensure_agent_pool, get_idle_agents, assign_next_queue_item, get_ticket,
+    set_agent_status, fail_queue_item, requeue_ticket,
     update_ticket_status, add_step, get_queue, get_agent_repo_affinities,
     set_ticket_ai_planning, set_ticket_workspace,
+    find_best_agent_for_repo, get_agent_with_profile, get_all_agents_with_profiles,
+    get_all_repos as _get_all_repos, assign_queue_item,
 )
 from config import AGENT_MAX_RETRIES
 from workspace import WorkspaceBuilder
@@ -54,18 +58,52 @@ def set_running(running: bool):
     _running = running
 
 
+def _select_best_agent(primary_repo: str, idle_agents: list) -> dict:
+    """Select the best idle agent for a given repo.
+    Uses repo affinity scoring with load-balancing fallback (pick agent
+    with fewest completed tickets for fairness).
+    """
+    if not idle_agents:
+        return None
+
+    if primary_repo:
+        best_id = find_best_agent_for_repo(primary_repo, idle_agents)
+        if best_id:
+            agent = next((a for a in idle_agents if a["id"] == best_id), None)
+            if agent:
+                return agent
+
+    # Load-balancing fallback: pick the agent that has been idle the longest
+    # (completed_at oldest = has been idle longest = next in rotation)
+    idle_agents_sorted = sorted(
+        idle_agents,
+        key=lambda a: a.get("completed_at") or a.get("started_at") or "",
+    )
+    return idle_agents_sorted[0]
+
+
 async def queue_processor():
-    """Background task: Assigns tickets to free agents and spawns K8s pods."""
+    """Background task: Assigns tickets to free agents and spawns K8s pods.
+    Uses Redis distributed lock when available to prevent duplicate processing.
+    """
     from background.sse import broadcast_event
-    from database import find_best_agent_for_repo, get_agent_with_profile, get_all_agents_with_profiles, get_all_repos as _get_all_repos
     from logging_setup import metrics
+    from config import REDIS_ENABLED
 
     global _running
     _running = True
     log.info("Queue processor started")
 
     while _running and not _shutdown_requested:
+        lock_acquired = False
         try:
+            if REDIS_ENABLED:
+                from redis_client import acquire_lock, release_lock, renew_lock
+                lock_acquired = acquire_lock("hivemind:queue_processor", timeout=30)
+                if not lock_acquired:
+                    await asyncio.sleep(5)
+                    continue
+
             ensure_agent_pool()
 
             idle = get_idle_agents()
@@ -73,14 +111,15 @@ async def queue_processor():
                 await asyncio.sleep(3)
                 continue
 
-            next_item = get_next_queue_item()
+            next_item = assign_next_queue_item(idle[0]["id"])
             if not next_item:
                 await asyncio.sleep(3)
                 continue
 
             ticket_data = get_ticket(next_item["ticket_id"])
             if ticket_data and ticket_data.get("status") == "stopped":
-                fail_queue_item(next_item["id"])
+                fail_queue_item(next_item["id"], "Ticket was stopped")
+                set_agent_status(idle[0]["id"], "idle")
                 continue
 
             primary_repo = ""
@@ -122,7 +161,7 @@ async def queue_processor():
                 if not primary_repo:
                     desc = (ticket_data.get("description", "") + " " + ticket_data.get("title", "")).lower()
                     for a in idle:
-                        agent_repos = get_agent_repo_affinities(a["id"]) if callable(get_agent_repo_affinities) else []
+                        agent_repos = get_agent_repo_affinities(a["id"])
                         if not agent_repos:
                             continue
                         for rn in agent_repos:
@@ -132,24 +171,15 @@ async def queue_processor():
                         if primary_repo:
                             break
 
-            best_agent_id = find_best_agent_for_repo(primary_repo, idle) if primary_repo else None
-            agent = next((a for a in idle if a["id"] == best_agent_id), idle[0]) if best_agent_id else idle[0]
+            # Select best agent based on repo affinity + load balancing
+            best_agent = _select_best_agent(primary_repo, idle)
 
-            fresh_idle = get_idle_agents()
-            if not any(a["id"] == agent["id"] for a in fresh_idle):
-                log.warning(f"Agent {agent['id']} is no longer idle after analysis, skipping", extra={"agent_id": agent["id"], "event": "agent_no_longer_idle"})
-                await asyncio.sleep(2)
-                continue
+            # If the initially claimed agent differs from best, reassign
+            initially_claimed = idle[0]["id"]
+            if best_agent["id"] != initially_claimed:
+                assign_queue_item(next_item["id"], best_agent["id"])
 
-            fresh_item = get_next_queue_item()
-            if not fresh_item or fresh_item["ticket_id"] != next_item["ticket_id"]:
-                log.warning(f"Ticket {next_item['ticket_id']} is no longer next in queue, skipping", extra={"ticket_id": next_item["ticket_id"], "event": "ticket_no_longer_next"})
-                continue
-
-            success = assign_queue_item(next_item["id"], agent["id"])
-            if not success:
-                await asyncio.sleep(2)
-                continue
+            agent = best_agent
 
             set_agent_status(agent["id"], "running", next_item["ticket_id"], 0)
             update_ticket_status(next_item["ticket_id"], "running")
@@ -162,7 +192,7 @@ async def queue_processor():
                 detail=f"Agent {agent['name']} is processing ticket"
             )
             metrics.inc("hivemind_tickets_assigned_total", labels={"agent_id": agent["id"]})
-            affinity_msg = f" (repo affinity: {primary_repo})" if best_agent_id else ""
+            affinity_msg = f" (repo affinity: {primary_repo})" if primary_repo else ""
             log.info(f"Ticket {next_item['ticket_id']} assigned to agent {agent['name']}{affinity_msg}", extra={"ticket_id": next_item['ticket_id'], "agent_id": agent['id'], "event": "ticket_assigned"})
 
             if ticket_data:
@@ -218,3 +248,7 @@ async def queue_processor():
         except Exception as e:
             log.error(f"Queue processor error: {e}", exc_info=True)
             await asyncio.sleep(5)
+        finally:
+            if lock_acquired:
+                from redis_client import release_lock
+                release_lock("hivemind:queue_processor")

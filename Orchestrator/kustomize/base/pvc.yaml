@@ -3,7 +3,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: orchestrator-repos
 spec:
-  storageClassName: standard
+  storageClassName: longhorn-fast
   accessModes:
     - ReadWriteOnce
   resources:
@@ -15,7 +15,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: orchestrator-db
 spec:
-  storageClassName: standard
+  storageClassName: longhorn-fast
   accessModes:
     - ReadWriteOnce
   resources:

@@ -25,6 +25,7 @@ from .repos_api import router as repos_router
 from .review_api import router as review_router
 from .proxy import router as proxy_router
 from .webhooks import router as webhooks_router
+from .pipeline import router as pipeline_router
 
 
 def register_routes(app):
@@ -41,3 +42,4 @@ def register_routes(app):
     app.include_router(review_router)
     app.include_router(proxy_router)
     app.include_router(webhooks_router)
+    app.include_router(pipeline_router)

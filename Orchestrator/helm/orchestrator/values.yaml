@@ -1,14 +1,16 @@
-# HiveMind Orchestrator Helm Chart – Values
+# HiveMind Orchestrator Helm Chart – Values (CaptureCore Cluster)
 
 image:
-  repository: hivemind/orchestrator
+  repository: reg.capturecore.org/capturecore/hivemind-orchestrator
   pullPolicy: Always
+  pullSecrets:
+    - name: harbor-registry-secret
   tag: "latest"
 
 replicaCount: 1
 
 git:
-  host: ""
+  host: "gitlab.capturecore.org"
   token: ""
 
 github:
@@ -50,16 +52,16 @@ config:
   track_branch: "main"
   auto_pull_interval_minutes: 60
   leankg_enabled: true
-  ollama_host: ""
-  ollama_model: ""
-  opencode_model: ""
-  ollama_timeout: 120
+  ollama_host: "http://ollama.kagent.svc.cluster.local:11434"
+  ollama_model: "llama3.2"
+  opencode_model: "llama3.2"
+  ollama_timeout: 300
   log_level: "INFO"
   database_url: ""
 
 persistence:
   enabled: true
-  storageClassName: "standard"
+  storageClassName: "longhorn-fast"
   accessMode: ReadWriteOnce
   size: 10Gi
 
@@ -76,19 +78,27 @@ service:
   port: 8080
 
 ingress:
-  enabled: false
+  enabled: true
   className: nginx
-  annotations: {}
+  annotations:
+    nginx.ingress.kubernetes.io/websocket-services: "orchestrator"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/issuer: capturecore-ca
+    cert-manager.io/issuer-kind: ClusterIssuer
   hosts:
-    - host: hivemind.local
+    - host: hivemind.capturecore.org
       paths:
         - path: /
           pathType: Prefix
+        - path: /agent-session
+          pathType: Prefix
   tls:
-    enabled: false
+    enabled: true
     certManager:
-      enabled: false
-      issuerName: letsencrypt-staging
+      enabled: true
+      issuerName: capturecore-ca
       issuerKind: ClusterIssuer
     existingSecret: ""
 
@@ -120,11 +130,11 @@ database:
   persistence:
     enabled: true
     size: 1Gi
-    storageClassName: local-path
+    storageClassName: longhorn-fast
 
 resourceQuota:
   enabled: true
   hard:
-    requests.cpu: "8"
-    requests.memory: 32Gi
-    pods: "20"
+    requests.cpu: "16"
+    requests.memory: 64Gi
+    pods: "30"

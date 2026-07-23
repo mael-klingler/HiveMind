@@ -14,6 +14,8 @@ spec:
         app: orchestrator
     spec:
       serviceAccountName: orchestrator
+      imagePullSecrets:
+        - name: harbor-registry-secret
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -21,8 +23,8 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: repo-init
-        image: hivemind-orchestrator:latest
-        imagePullPolicy: IfNotPresent
+        image: reg.capturecore.org/capturecore/hivemind-orchestrator:latest
+        imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true
           runAsUser: 1000
@@ -34,6 +36,10 @@ spec:
         env:
         - name: ORCHESTRATOR_CONFIG
           value: "/app/config/orchestrator_config.json"
+        - name: SSL_CERT_FILE
+          value: /etc/ssl/capturecore/ca.crt
+        - name: REQUESTS_CA_BUNDLE
+          value: /etc/ssl/capturecore/ca.crt
         volumeMounts:
         - name: config
           mountPath: /app/config
@@ -44,10 +50,13 @@ spec:
           mountPath: /app/workspace
         - name: db-storage
           mountPath: /app/data
+        - name: ca-cert
+          mountPath: /etc/ssl/capturecore
+          readOnly: true
       containers:
       - name: orchestrator
-        image: hivemind-orchestrator:latest
-        imagePullPolicy: IfNotPresent
+        image: reg.capturecore.org/capturecore/hivemind-orchestrator:latest
+        imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true
           runAsUser: 1000
@@ -61,6 +70,10 @@ spec:
         env:
         - name: ORCHESTRATOR_CONFIG
           value: "/app/config/orchestrator_config.json"
+        - name: SSL_CERT_FILE
+          value: /etc/ssl/capturecore/ca.crt
+        - name: REQUESTS_CA_BUNDLE
+          value: /etc/ssl/capturecore/ca.crt
         volumeMounts:
         - name: config
           mountPath: /app/config
@@ -71,6 +84,25 @@ spec:
           mountPath: /app/workspace
         - name: db-storage
           mountPath: /app/data
+        - name: ca-cert
+          mountPath: /etc/ssl/capturecore
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
       volumes:
       - name: config
         configMap:
@@ -83,3 +115,6 @@ spec:
       - name: db-storage
         persistentVolumeClaim:
           claimName: orchestrator-db
+      - name: ca-cert
+        configMap:
+          name: capturecore-ca

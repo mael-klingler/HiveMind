@@ -63,6 +63,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
         name TEXT,
+        role TEXT DEFAULT 'general',
         status TEXT DEFAULT 'idle',
         current_ticket_id TEXT,
         started_at TEXT,
@@ -81,6 +82,7 @@ def init_db():
         position INTEGER,
         assigned_agent_id TEXT,
         status TEXT DEFAULT 'waiting',
+        priority INTEGER DEFAULT 5,
         created_at TEXT,
         started_at TEXT,
         completed_at TEXT,
@@ -175,6 +177,9 @@ def init_db():
     """)
 
     _add_column_if_not_exists(c, "agents", "model_name", "TEXT")
+    _add_column_if_not_exists(c, "agents", "role", "TEXT DEFAULT 'general'")
+    _add_column_if_not_exists(c, "tickets", "current_phase", "TEXT DEFAULT 'work'")
+    _add_column_if_not_exists(c, "tickets", "pipeline_group_id", "TEXT")
 
     # Ticket Comments
     c.execute("""
@@ -247,6 +252,7 @@ def init_db():
     )
     """)
 
+    _add_column_if_not_exists(c, "queue", "priority", "INTEGER DEFAULT 5")
     _add_column_if_not_exists(c, "repos", "active", "INTEGER DEFAULT 0")
 
     # Metrics: ticket phase and lifecycle columns
@@ -292,10 +298,12 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_tickets_agent_id ON tickets(agent_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_queue_ticket_id ON queue(ticket_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_queue_priority ON queue(priority)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_steps_ticket_id ON steps(ticket_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_steps_agent_id ON steps(agent_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agents_role ON agents(role)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_id ON agent_skills(agent_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_repo_affinities_agent_id ON agent_repo_affinities(agent_id)")
 
@@ -322,6 +330,26 @@ def init_db():
         FOREIGN KEY (group_id) REFERENCES ticket_groups(id)
     )
     """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS pipeline_steps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id TEXT NOT NULL,
+        group_id TEXT,
+        phase TEXT NOT NULL,
+        agent_id TEXT,
+        status TEXT DEFAULT 'pending',
+        result TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ticket_id) REFERENCES tickets(id),
+        FOREIGN KEY (group_id) REFERENCES ticket_groups(id)
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_steps_ticket ON pipeline_steps(ticket_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_steps_status ON pipeline_steps(status)")
 
     conn.commit()
     conn.close()

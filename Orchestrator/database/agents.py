@@ -13,10 +13,25 @@
 # limitations under the License.
 
 import json
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from database.sqlite_backend import get_db
+
+log = logging.getLogger("hivemind")
+
+VALID_TRANSITIONS = {
+    "idle": {"running", "stopped"},
+    "running": {"idle", "error", "stopped"},
+    "error": {"idle", "running", "stopped"},
+    "stopped": {"idle"},
+}
+
+
+def _validate_transition(current: str, target: str) -> bool:
+    allowed = VALID_TRANSITIONS.get(current, set())
+    return target in allowed
 
 
 def get_agent(agent_id: str) -> Optional[Dict]:
@@ -48,6 +63,10 @@ def get_or_create_agent(agent_id: str, name: str = "") -> Dict:
 def set_agent_status(agent_id: str, status: str, ticket_id: Optional[str] = None, progress: int = 0):
     conn = get_db()
     c = conn.cursor()
+    c.execute("SELECT status FROM agents WHERE id = ?", (agent_id,))
+    row = c.fetchone()
+    if row and not _validate_transition(row["status"], status):
+        log.warning(f"Invalid agent state transition: {row['status']} → {status} for agent {agent_id}")
     now = datetime.now().isoformat()
 
     if status == "running":
@@ -102,6 +121,9 @@ def set_max_agents(max_agents: int):
     conn.close()
 
 
+DEFAULT_AGENT_ROLES = ["developer", "reviewer", "tester"]
+
+
 def ensure_agent_pool():
     """Ensures that default agents exist. max_agents = max concurrent running agents."""
     max_agents = get_max_agents()
@@ -110,14 +132,17 @@ def ensure_agent_pool():
 
     for i in range(max_agents):
         agent_id = f"agent-{i+1}"
+        role = DEFAULT_AGENT_ROLES[i] if i < len(DEFAULT_AGENT_ROLES) else "general"
         c.execute("SELECT id FROM agents WHERE id = ?", (agent_id,))
         if not c.fetchone():
             c.execute(
-                "INSERT INTO agents (id, name, status, logs) VALUES (?, ?, ?, ?)",
-                (agent_id, f"Agent {i+1}", "idle", json.dumps([]))
+                "INSERT INTO agents (id, name, role, status, logs) VALUES (?, ?, ?, ?, ?)",
+                (agent_id, f"Agent {i+1}", role, "idle", json.dumps([]))
             )
+        else:
+            c.execute("UPDATE agents SET role = COALESCE(NULLIF(role, ''), ?) WHERE id = ? AND (role IS NULL OR role = 'general')",
+                      (role, agent_id))
 
-    # Re-enable disabled agents (non-running)
     c.execute("UPDATE agents SET status = 'idle' WHERE status = 'disabled'")
 
     conn.commit()
@@ -161,6 +186,14 @@ def update_agent_profile(agent_id: str, name: str = None, model_name: str = None
         conn.commit()
     conn.close()
     return get_agent_with_profile(agent_id)
+
+
+def set_agent_role(agent_id: str, role: str):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE agents SET role = ? WHERE id = ?", (role, agent_id))
+    conn.commit()
+    conn.close()
 
 
 def delete_agent(agent_id: str):

@@ -21,22 +21,51 @@ Replaces SQLite with psycopg2 for better concurrency in parallel queue processor
 import json
 import os
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
+from psycopg2.pool import ThreadedConnectionPool
 
 log = logging.getLogger("hivemind.db")
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://hivemind:hivemind@localhost:5432/hivemind")
+_POOL_MIN = int(os.getenv("DB_POOL_MIN", "2"))
+_POOL_MAX = int(os.getenv("DB_POOL_MAX", "20"))
+
+_pg_pool: Optional[ThreadedConnectionPool] = None
+_pool_lock = threading.Lock()
+
+
+def _init_pool():
+    global _pg_pool
+    if _pg_pool is None:
+        with _pool_lock:
+            if _pg_pool is None:
+                _pg_pool = ThreadedConnectionPool(_POOL_MIN, _POOL_MAX, DB_URL)
 
 
 def get_db():
-    conn = psycopg2.connect(DB_URL)
+    """Get a connection from the thread-safe connection pool."""
+    global _pg_pool
+    if _pg_pool is None:
+        _init_pool()
+    conn = _pg_pool.getconn()
     conn.autocommit = False
     return conn
+
+
+def put_db(conn):
+    """Return a connection to the pool."""
+    global _pg_pool
+    if _pg_pool is not None and conn is not None:
+        try:
+            _pg_pool.putconn(conn)
+        except Exception:
+            pass
 
 
 def _row_to_dict(row) -> Optional[Dict]:
@@ -104,6 +133,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS agents (
             id TEXT PRIMARY KEY,
             name TEXT,
+            role TEXT DEFAULT 'general',
             status TEXT DEFAULT 'idle',
             current_ticket_id TEXT,
             started_at TIMESTAMP,
@@ -121,6 +151,7 @@ def init_db():
             position INTEGER,
             assigned_agent_id TEXT REFERENCES agents(id),
             status TEXT DEFAULT 'waiting',
+            priority INTEGER DEFAULT 5,
             created_at TIMESTAMP DEFAULT NOW(),
             started_at TIMESTAMP,
             completed_at TIMESTAMP
@@ -272,6 +303,21 @@ def init_db():
         )
         """)
 
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_steps (
+            id SERIAL PRIMARY KEY,
+            ticket_id TEXT NOT NULL REFERENCES tickets(id),
+            group_id TEXT REFERENCES ticket_groups(id),
+            phase TEXT NOT NULL,
+            agent_id TEXT,
+            status TEXT DEFAULT 'pending',
+            result TEXT,
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+        """)
+
         c.execute("INSERT INTO config (key, value) VALUES ('max_agents', '3') ON CONFLICT (key) DO NOTHING")
         c.execute("INSERT INTO config (key, value) VALUES ('polling_interval_seconds', '5') ON CONFLICT (key) DO NOTHING")
         c.execute("INSERT INTO mcp_servers (name, server_type, command, description) VALUES ('leankg-mcp', 'local', 'leankg mcp-stdio', 'LeanKG code search and dependency analysis') ON CONFLICT (name) DO NOTHING")
@@ -279,12 +325,18 @@ def init_db():
         c.execute("INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-agent-memory', 'Persistent memory blocks for agents (Letta-inspired)', '') ON CONFLICT (name) DO NOTHING")
         c.execute("INSERT INTO opencode_plugins (name, description, requires_binary) VALUES ('opencode-handoff', 'Session handoff for contextual transitions on retries', '') ON CONFLICT (name) DO NOTHING")
 
+        # Migrations for existing PG databases
+        c.execute("ALTER TABLE queue ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 5")
+        c.execute("ALTER TABLE agents ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'general'")
+        c.execute("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS current_phase TEXT DEFAULT 'work'")
+        c.execute("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pipeline_group_id TEXT")
+
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Repos ────────────────────────────────────────────────
@@ -302,7 +354,7 @@ def get_all_repos() -> List[Dict]:
                 result.append(d)
             return result
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_repo(name: str) -> Optional[Dict]:
@@ -317,7 +369,7 @@ def get_repo(name: str) -> Optional[Dict]:
             d["tags"] = _parse_json(d["tags"]) or []
             return d
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_repo(name: str, **fields) -> bool:
@@ -340,7 +392,7 @@ def update_repo(name: str, **fields) -> bool:
         conn.commit()
         return ok
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def add_repo(name: str, url: str, branch: str = "", description: str = "", tags: list = None) -> bool:
@@ -359,7 +411,7 @@ def add_repo(name: str, url: str, branch: str = "", description: str = "", tags:
         conn.rollback()
         return False
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def delete_repo(name: str) -> bool:
@@ -371,7 +423,7 @@ def delete_repo(name: str) -> bool:
         conn.commit()
         return deleted
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def import_repos_from_config(config_path: str):
@@ -426,7 +478,7 @@ def create_ticket(ticket: Dict[str, Any]) -> str:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_tickets(status: Optional[str] = None) -> List[Dict]:
@@ -439,7 +491,7 @@ def get_tickets(status: Optional[str] = None) -> List[Dict]:
                 c.execute("SELECT * FROM tickets ORDER BY created_at DESC")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_ticket(ticket_id: str) -> Optional[Dict]:
@@ -450,7 +502,7 @@ def get_ticket(ticket_id: str) -> Optional[Dict]:
             row = c.fetchone()
             return _row_to_dict(row) if row else None
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_ticket_status(ticket_id: str, status: str):
@@ -468,7 +520,7 @@ def update_ticket_status(ticket_id: str, status: str):
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def stop_ticket(ticket_id: str) -> bool:
@@ -488,7 +540,7 @@ def stop_ticket(ticket_id: str) -> bool:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Review / MR Lifecycle ──────────────────────────────────
@@ -505,7 +557,7 @@ def get_tickets_with_queue() -> List[Dict]:
             """)
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_ticket_review(ticket_id: str, review_status: str, notes: str = "", mr_url: str = ""):
@@ -535,7 +587,7 @@ def update_ticket_review(ticket_id: str, review_status: str, notes: str = "", mr
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_mr_url(ticket_id: str, mr_url: str):
@@ -545,7 +597,7 @@ def set_ticket_mr_url(ticket_id: str, mr_url: str):
             c.execute("UPDATE tickets SET mr_url = %s, mr_status = 'open', updated_at = NOW() WHERE id = %s", (mr_url, ticket_id))
         conn.commit()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_workspace(ticket_id: str, workspace_path: str, agent_id: str):
@@ -555,7 +607,7 @@ def set_ticket_workspace(ticket_id: str, workspace_path: str, agent_id: str):
             c.execute("UPDATE tickets SET workspace_path = %s, agent_id = %s WHERE id = %s", (workspace_path, agent_id, ticket_id))
         conn.commit()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_ai_planning(ticket_id: str, planning: Dict):
@@ -565,7 +617,7 @@ def set_ticket_ai_planning(ticket_id: str, planning: Dict):
             c.execute("UPDATE tickets SET ai_planning = %s, updated_at = NOW() WHERE id = %s", (json.dumps(planning, ensure_ascii=False), ticket_id))
         conn.commit()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_ticket_description(ticket_id: str, description: str):
@@ -575,7 +627,7 @@ def update_ticket_description(ticket_id: str, description: str):
             c.execute("UPDATE tickets SET description = %s, updated_at = NOW() WHERE id = %s", (description, ticket_id))
         conn.commit()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Agents ───────────────────────────────────────────────
@@ -588,7 +640,7 @@ def get_agent(agent_id: str) -> Optional[Dict]:
             row = c.fetchone()
             return _row_to_dict(row) if row else None
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_or_create_agent(agent_id: str, name: str = "") -> Dict:
@@ -604,14 +656,26 @@ def get_or_create_agent(agent_id: str, name: str = "") -> Dict:
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
     return get_agent(agent_id)
+
+
+VALID_TRANSITIONS = {
+    "idle": {"running", "stopped"},
+    "running": {"idle", "error", "stopped"},
+    "error": {"idle", "running", "stopped"},
+    "stopped": {"idle"},
+}
 
 
 def set_agent_status(agent_id: str, status: str, ticket_id: Optional[str] = None, progress: int = 0):
     conn = get_db()
     try:
         with conn.cursor() as c:
+            c.execute("SELECT status FROM agents WHERE id = %s", (agent_id,))
+            row = c.fetchone()
+            if row and status not in VALID_TRANSITIONS.get(row[0], set()):
+                log.warning(f"Invalid agent state transition: {row[0]} → {status} for agent {agent_id}")
             if status == "running":
                 c.execute("UPDATE agents SET status = %s, current_ticket_id = %s, started_at = NOW(), progress = %s WHERE id = %s",
                           (status, ticket_id, progress, agent_id))
@@ -625,7 +689,7 @@ def set_agent_status(agent_id: str, status: str, ticket_id: Optional[str] = None
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_all_agents() -> List[Dict]:
@@ -635,7 +699,7 @@ def get_all_agents() -> List[Dict]:
             c.execute("SELECT * FROM agents ORDER BY id")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_idle_agents() -> List[Dict]:
@@ -645,7 +709,7 @@ def get_idle_agents() -> List[Dict]:
             c.execute("SELECT * FROM agents WHERE status = 'idle' ORDER BY id")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_max_agents() -> int:
@@ -656,7 +720,7 @@ def get_max_agents() -> int:
             row = c.fetchone()
             return int(row[0]) if row else 3
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_max_agents(max_agents: int):
@@ -669,7 +733,10 @@ def set_max_agents(max_agents: int):
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
+
+
+_DEFAULT_AGENT_ROLES = ["developer", "reviewer", "tester"]
 
 
 def ensure_agent_pool():
@@ -677,17 +744,20 @@ def ensure_agent_pool():
     conn = get_db()
     try:
         with conn.cursor() as c:
-            for i in range(3):
+            for i in range(max_agents):
                 agent_id = f"agent-{i+1}"
-                c.execute("INSERT INTO agents (id, name, status, logs) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                          (agent_id, f"Agent {i+1}", "idle", json.dumps([])))
+                role = _DEFAULT_AGENT_ROLES[i] if i < len(_DEFAULT_AGENT_ROLES) else "general"
+                c.execute("INSERT INTO agents (id, name, role, status, logs) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                          (agent_id, f"Agent {i+1}", role, "idle", json.dumps([])))
+                c.execute("UPDATE agents SET role = COALESCE(NULLIF(role, ''), %s) WHERE id = %s AND (role IS NULL OR role = 'general')",
+                          (role, agent_id))
             c.execute("UPDATE agents SET status = 'idle' WHERE status = 'disabled'")
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Queue ──────────────────────────────────────────────
@@ -699,20 +769,49 @@ def get_next_queue_item() -> Optional[Dict]:
             c.execute("""
             SELECT * FROM queue
             WHERE status = 'waiting'
-            ORDER BY position ASC, id ASC
+            ORDER BY priority ASC NULLS LAST, position ASC, id ASC
             LIMIT 1
             """)
             row = c.fetchone()
             return _row_to_dict(row) if row else None
     finally:
-        conn.close()
+        put_db(conn)
+
+
+def assign_next_queue_item(agent_id: str) -> Optional[Dict]:
+    """Atomically claim the next waiting queue item for an agent.
+    Uses SELECT ... FOR UPDATE SKIP LOCKED to prevent race conditions.
+    Returns the claimed item dict or None if nothing available.
+    """
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+            c.execute("""
+            UPDATE queue SET status = 'running', assigned_agent_id = %s, started_at = NOW()
+            WHERE id = (
+                SELECT id FROM queue
+                WHERE status = 'waiting'
+                ORDER BY priority ASC NULLS LAST, position ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING *
+            """, (agent_id,))
+            row = c.fetchone()
+        conn.commit()
+        return _row_to_dict(row) if row else None
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        put_db(conn)
 
 
 def assign_queue_item(queue_id: int, agent_id: str) -> bool:
     conn = get_db()
     try:
         with conn.cursor() as c:
-            c.execute("UPDATE queue SET status = 'running', assigned_agent_id = %s, started_at = NOW() WHERE id = %s", (agent_id, queue_id))
+            c.execute("UPDATE queue SET status = 'running', assigned_agent_id = %s, started_at = NOW() WHERE id = %s AND status = 'waiting'", (agent_id, queue_id))
             ok = c.rowcount > 0
         conn.commit()
         return ok
@@ -720,7 +819,7 @@ def assign_queue_item(queue_id: int, agent_id: str) -> bool:
         conn.rollback()
         return False
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def complete_queue_item(queue_id: int):
@@ -732,7 +831,7 @@ def complete_queue_item(queue_id: int):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def fail_queue_item(queue_id: int, error: str):
@@ -746,7 +845,7 @@ def fail_queue_item(queue_id: int, error: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_queue() -> List[Dict]:
@@ -765,11 +864,12 @@ def get_queue() -> List[Dict]:
                 WHEN 'completed' THEN 3
                 WHEN 'failed' THEN 4
               END,
+              q.priority ASC NULLS LAST,
               q.position ASC
             """)
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Steps ──────────────────────────────────────────────
@@ -786,7 +886,7 @@ def add_step(queue_id: int, ticket_id: str, agent_id: str, step_name: str, statu
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_all_steps(ticket_id: Optional[str] = None, agent_id: Optional[str] = None, queue_id: Optional[int] = None) -> List[Dict]:
@@ -808,7 +908,7 @@ def get_all_steps(ticket_id: Optional[str] = None, agent_id: Optional[str] = Non
             c.execute(f"SELECT * FROM steps {where} ORDER BY timestamp DESC", params)
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Settings ────────────────────────────────────────────
@@ -836,7 +936,7 @@ def ensure_config_defaults():
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_all_settings() -> List[Dict]:
@@ -846,7 +946,7 @@ def get_all_settings() -> List[Dict]:
             c.execute("SELECT key, value FROM config ORDER BY key")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_setting(key: str) -> Optional[str]:
@@ -857,7 +957,7 @@ def get_setting(key: str) -> Optional[str]:
             row = c.fetchone()
             return row[0] if row else None
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_setting(key: str, value: str):
@@ -869,7 +969,7 @@ def set_setting(key: str, value: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def import_settings_from_env():
@@ -913,7 +1013,7 @@ def requeue_ticket(ticket_id: str, max_retries: int = 3) -> bool:
         conn.rollback()
         return False
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def reopen_ticket(ticket_id: str) -> bool:
@@ -939,7 +1039,7 @@ def reopen_ticket(ticket_id: str) -> bool:
         conn.rollback()
         return False
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_failed_tickets() -> List[Dict]:
@@ -949,7 +1049,7 @@ def get_failed_tickets() -> List[Dict]:
             c.execute("SELECT * FROM tickets WHERE status = 'failed'")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_open_mr_tickets() -> List[Dict]:
@@ -959,7 +1059,7 @@ def get_open_mr_tickets() -> List[Dict]:
             c.execute("SELECT * FROM tickets WHERE mr_status = 'open' OR mr_url IS NOT NULL")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_ticket_mr_tracking(ticket_id: str, pipeline_status: str = None, last_note_id: int = None, project_path: str = None, mr_iid: int = None, conflict_status: str = None):
@@ -992,7 +1092,7 @@ def update_ticket_mr_tracking(ticket_id: str, pipeline_status: str = None, last_
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_mcp_servers() -> List[Dict]:
@@ -1002,7 +1102,7 @@ def get_mcp_servers() -> List[Dict]:
             c.execute("SELECT * FROM mcp_servers ORDER BY name")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_enabled_mcp_servers() -> List[Dict]:
@@ -1012,7 +1112,7 @@ def get_enabled_mcp_servers() -> List[Dict]:
             c.execute("SELECT * FROM mcp_servers WHERE enabled = 1 ORDER BY name")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def add_mcp_server(data: Dict) -> str:
@@ -1030,7 +1130,7 @@ def add_mcp_server(data: Dict) -> str:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_mcp_server(name: str, data: Dict):
@@ -1056,7 +1156,7 @@ def update_mcp_server(name: str, data: Dict):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def delete_mcp_server(name: str):
@@ -1069,7 +1169,7 @@ def delete_mcp_server(name: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_agent_instructions() -> List[Dict]:
@@ -1079,7 +1179,7 @@ def get_agent_instructions() -> List[Dict]:
             c.execute("SELECT * FROM agent_instructions ORDER BY sort_order, id")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_enabled_agent_instructions() -> str:
@@ -1090,7 +1190,7 @@ def get_enabled_agent_instructions() -> str:
             rows = c.fetchall()
             return "\n\n".join(r[0] for r in rows)
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def add_agent_instruction(data: Dict) -> int:
@@ -1107,7 +1207,7 @@ def add_agent_instruction(data: Dict) -> int:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_agent_instruction(id: int, data: Dict):
@@ -1130,7 +1230,7 @@ def update_agent_instruction(id: int, data: Dict):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def delete_agent_instruction(id: int):
@@ -1143,7 +1243,7 @@ def delete_agent_instruction(id: int):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Agent CRUD with Skills ──────────────────────────────────
@@ -1167,7 +1267,7 @@ def create_agent(agent_id: str, name: str, model_name: str = "", skill_names: Li
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
     return get_agent_with_profile(agent_id)
 
 
@@ -1187,8 +1287,20 @@ def update_agent_profile(agent_id: str, name: str = None, model_name: str = None
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
     return get_agent_with_profile(agent_id)
+
+
+def set_agent_role(agent_id: str, role: str):
+    conn = get_db()
+    try:
+        with conn.cursor() as c:
+            c.execute("UPDATE agents SET role = %s WHERE id = %s", (role, agent_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        put_db(conn)
 
 
 def delete_agent(agent_id: str):
@@ -1203,7 +1315,7 @@ def delete_agent(agent_id: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_agent_skills(agent_id: str, skill_names: List[str]):
@@ -1217,7 +1329,7 @@ def set_agent_skills(agent_id: str, skill_names: List[str]):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_agent_instruction_assignments(agent_id: str, instruction_ids: List[int]):
@@ -1231,7 +1343,7 @@ def set_agent_instruction_assignments(agent_id: str, instruction_ids: List[int])
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_agent_with_profile(agent_id: str) -> Dict:
@@ -1248,7 +1360,7 @@ def get_agent_with_profile(agent_id: str) -> Dict:
             c.execute("SELECT repo_name FROM agent_repo_affinities WHERE agent_id = %s ORDER BY repo_name", (agent_id,))
             agent["repo_affinities"] = [r[0] for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
     return agent
 
 
@@ -1259,7 +1371,7 @@ def get_all_agents_with_profiles() -> List[Dict]:
             c.execute("SELECT id FROM agents ORDER BY id")
             agent_ids = [r[0] for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
     return [get_agent_with_profile(aid) for aid in agent_ids]
 
 
@@ -1272,7 +1384,7 @@ def get_agent_mcp_servers(agent_id: str) -> List[Dict]:
                          WHERE ask.agent_id = %s AND ms.enabled = 1""", (agent_id,))
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_agent_assigned_instructions(agent_id: str) -> List[Dict]:
@@ -1285,7 +1397,7 @@ def get_agent_assigned_instructions(agent_id: str) -> List[Dict]:
                          ORDER BY ai.sort_order""", (agent_id,))
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Ticket Comments ──────────────────────────────────────────
@@ -1303,7 +1415,7 @@ def add_ticket_comment(ticket_id: str, author: str = "system", comment_type: str
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_ticket_comments(ticket_id: str) -> List[Dict]:
@@ -1313,7 +1425,7 @@ def get_ticket_comments(ticket_id: str) -> List[Dict]:
             c.execute("SELECT * FROM ticket_comments WHERE ticket_id = %s ORDER BY created_at", (ticket_id,))
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Agent Repo Affinities ────────────────────────────────────
@@ -1329,7 +1441,7 @@ def set_agent_repo_affinities(agent_id: str, repo_names: List[str]):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_agent_repo_affinities(agent_id: str) -> List[str]:
@@ -1339,7 +1451,7 @@ def get_agent_repo_affinities(agent_id: str) -> List[str]:
             c.execute("SELECT repo_name FROM agent_repo_affinities WHERE agent_id = %s ORDER BY repo_name", (agent_id,))
             return [r[0] for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_all_repo_names() -> List[str]:
@@ -1348,22 +1460,38 @@ def get_all_repo_names() -> List[str]:
 
 
 def find_best_agent_for_repo(primary_repo: str, idle_agents: List[Dict]) -> str:
-    best_agent = None
-    best_score = -1
+    if not primary_repo or not idle_agents:
+        return None
+    agent_ids = [a["id"] for a in idle_agents]
     conn = get_db()
     try:
         with conn.cursor() as c:
-            for agent in idle_agents:
-                c.execute("SELECT COUNT(*) as cnt FROM agent_repo_affinities WHERE agent_id = %s AND repo_name = %s",
-                          (agent["id"], primary_repo))
-                row = c.fetchone()
-                score = row[0] if row else 0
-                if score > best_score:
-                    best_score = score
-                    best_agent = agent["id"]
+            c.execute(
+                "SELECT agent_id, affinity FROM agent_repo_affinities WHERE agent_id = ANY(%s) AND repo_name = %s ORDER BY affinity DESC LIMIT 1",
+                (agent_ids, primary_repo),
+            )
+            row = c.fetchone()
+            return row[0] if row else None
     finally:
-        conn.close()
-    return best_agent
+        put_db(conn)
+
+
+def score_agent_for_repo(agent_id: str, primary_repo: str, skill_names: List[str] = None) -> float:
+    score = 0.0
+    conn = get_db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT affinity FROM agent_repo_affinities WHERE agent_id = %s AND repo_name = %s", (agent_id, primary_repo))
+            row = c.fetchone()
+            if row:
+                score += row[0] * 10.0
+            if skill_names:
+                c.execute("SELECT COUNT(*) FROM agent_skills WHERE agent_id = %s AND mcp_server_name = ANY(%s)", (agent_id, skill_names))
+                cnt_row = c.fetchone()
+                score += cnt_row[0] * 2.0
+    finally:
+        put_db(conn)
+    return score
 
 
 # ── OpenCode Plugins ──────────────────────────────────────────
@@ -1375,7 +1503,7 @@ def get_opencode_plugins() -> List[Dict]:
             c.execute("SELECT * FROM opencode_plugins ORDER BY name")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_enabled_opencode_plugins() -> List[Dict]:
@@ -1385,7 +1513,7 @@ def get_enabled_opencode_plugins() -> List[Dict]:
             c.execute("SELECT * FROM opencode_plugins WHERE enabled = 1 ORDER BY name")
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_enabled_plugin_names() -> List[str]:
@@ -1395,7 +1523,7 @@ def get_enabled_plugin_names() -> List[str]:
             c.execute("SELECT name FROM opencode_plugins WHERE enabled = 1 ORDER BY name")
             return [r[0] for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def add_opencode_plugin(data: Dict) -> str:
@@ -1412,7 +1540,7 @@ def add_opencode_plugin(data: Dict) -> str:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_opencode_plugin(name: str, data: Dict):
@@ -1435,7 +1563,7 @@ def update_opencode_plugin(name: str, data: Dict):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def delete_opencode_plugin(name: str):
@@ -1447,7 +1575,7 @@ def delete_opencode_plugin(name: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Agent Memory Blocks (DB-persisted) ────────────────────────
@@ -1462,7 +1590,7 @@ def get_agent_memory_blocks(agent_id: str, repo_name: str = None) -> List[Dict]:
                 c.execute("SELECT * FROM agent_memory_blocks WHERE agent_id = %s ORDER BY repo_name, label", (agent_id,))
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_agent_memory_block(agent_id: str, repo_name: str, label: str, content: str,
@@ -1487,7 +1615,7 @@ def set_agent_memory_block(agent_id: str, repo_name: str, label: str, content: s
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_agent_memory_as_markdown(agent_id: str, repo_name: str) -> str:
@@ -1515,7 +1643,7 @@ def delete_agent_memory_block(block_id: int):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def seed_default_memory_blocks(agent_id: str):
@@ -1542,7 +1670,7 @@ def create_ticket_group(group_id, parent_ticket_id, title="", description=""):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
     return group_id
 
 
@@ -1554,7 +1682,7 @@ def get_ticket_group(group_id):
             row = c.fetchone()
             return _row_to_dict(row) if row else None
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def add_team_message(group_id, sender_agent_id, content, message_type="info"):
@@ -1571,7 +1699,7 @@ def add_team_message(group_id, sender_agent_id, content, message_type="info"):
         conn.rollback()
         raise
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_team_messages(group_id, limit=50):
@@ -1581,7 +1709,7 @@ def get_team_messages(group_id, limit=50):
             c.execute("SELECT * FROM team_channel_messages WHERE group_id = %s ORDER BY created_at DESC LIMIT %s", (group_id, limit))
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Metrics Events ──────────────────────────────────────────
@@ -1600,7 +1728,7 @@ def record_metric_event(event_type: str, ticket_id: str = None, agent_id: str = 
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_metric_events(event_type: str = None, ticket_id: str = None,
@@ -1630,7 +1758,7 @@ def get_metric_events(event_type: str = None, ticket_id: str = None,
             c.execute(f"SELECT * FROM metric_events {where} ORDER BY created_at DESC LIMIT %s", params + [limit])
             return [_row_to_dict(r) for r in c.fetchall()]
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def get_metrics_summary(since: str = None) -> Dict:
@@ -1699,7 +1827,7 @@ def get_metrics_summary(since: str = None) -> Dict:
                 "total_completion_tokens": total_completion_tokens,
             }
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_ticket_phase_timestamp(ticket_id: str, phase: str):
@@ -1720,7 +1848,7 @@ def update_ticket_phase_timestamp(ticket_id: str, phase: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def update_ticket_llm_usage(ticket_id: str, prompt_tokens: int = 0, completion_tokens: int = 0, cost_usd: float = 0.0, model: str = ""):
@@ -1739,7 +1867,7 @@ def update_ticket_llm_usage(ticket_id: str, prompt_tokens: int = 0, completion_t
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def increment_review_cycle_count(ticket_id: str):
@@ -1751,7 +1879,7 @@ def increment_review_cycle_count(ticket_id: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_first_pipeline_status(ticket_id: str, status: str):
@@ -1764,7 +1892,7 @@ def set_ticket_first_pipeline_status(ticket_id: str, status: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_completed_at(ticket_id: str, status: str = None):
@@ -1777,7 +1905,7 @@ def set_ticket_completed_at(ticket_id: str, status: str = None):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_primary_repo(ticket_id: str, primary_repo: str):
@@ -1789,7 +1917,7 @@ def set_ticket_primary_repo(ticket_id: str, primary_repo: str):
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 def set_ticket_line_stats(ticket_id: str, lines_added: int = 0, lines_removed: int = 0, files_changed: int = 0):
@@ -1802,7 +1930,7 @@ def set_ticket_line_stats(ticket_id: str, lines_added: int = 0, lines_removed: i
     except Exception:
         conn.rollback()
     finally:
-        conn.close()
+        put_db(conn)
 
 
 # ── Init ──

@@ -5,11 +5,11 @@ metadata:
   namespace: hivemind
 spec:
   hard:
-    requests.cpu: "8"
-    requests.memory: 32Gi
-    limits.cpu: "16"
-    limits.memory: 64Gi
-    pods: "20"
-    persistentvolumeclaims: "10"
-    configmaps: "100"
-    secrets: "20"
+    requests.cpu: "16"
+    requests.memory: 64Gi
+    limits.cpu: "32"
+    limits.memory: 128Gi
+    pods: "30"
+    persistentvolumeclaims: "20"
+    configmaps: "200"
+    secrets: "50"

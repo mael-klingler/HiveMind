@@ -29,6 +29,7 @@ from database import (
     set_agent_skills,
     update_agent_profile,
 )
+from database.phases import ROLE_DISPLAY_NAMES, DEFAULT_ROLE_INSTRUCTIONS
 
 router = APIRouter()
 
@@ -38,12 +39,22 @@ def api_get_agent_profiles():
     return get_all_agents_with_profiles()
 
 
+@router.get("/api/roles")
+def api_get_roles():
+    return {
+        "roles": list(ROLE_DISPLAY_NAMES.keys()),
+        "display_names": ROLE_DISPLAY_NAMES,
+        "descriptions": {k: v.split(".")[0] + "." for k, v in DEFAULT_ROLE_INSTRUCTIONS.items()},
+    }
+
+
 @router.post("/api/agent-profiles")
 async def api_create_agent_profile(req: Request):
     data = await req.json()
     agent_id = data.get("id", "").strip()
     name = data.get("name", "").strip()
     model_name = data.get("model_name", "").strip()
+    role = data.get("role", "general").strip()
     skills = data.get("skills", [])
     instruction_ids = data.get("instruction_ids", [])
     repo_affinities = data.get("repo_affinities", [])
@@ -55,6 +66,8 @@ async def api_create_agent_profile(req: Request):
     agent = create_agent(agent_id, name or agent_id, model_name=model_name,
                          skill_names=skills, instruction_ids=instruction_ids,
                          repo_affinities=repo_affinities)
+    from database import set_agent_role
+    set_agent_role(agent_id, role)
     seed_default_memory_blocks(agent_id)
     return {"ok": True, **agent}
 
@@ -64,12 +77,16 @@ async def api_update_agent_profile(agent_id: str, req: Request):
     data = await req.json()
     name = data.get("name")
     model_name = data.get("model_name")
+    role = data.get("role")
     if data.get("skills") is not None:
         set_agent_skills(agent_id, data["skills"])
     if data.get("instruction_ids") is not None:
         set_agent_instruction_assignments(agent_id, data["instruction_ids"])
     if data.get("repo_affinities") is not None:
         set_agent_repo_affinities(agent_id, data["repo_affinities"])
+    if role:
+        from database import set_agent_role
+        set_agent_role(agent_id, role)
     agent = update_agent_profile(agent_id, name=name, model_name=model_name)
     if not agent:
         return {"ok": False, "error": f"Agent '{agent_id}' not found"}

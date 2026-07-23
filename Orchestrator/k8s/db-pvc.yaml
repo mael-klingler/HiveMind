@@ -4,7 +4,7 @@ metadata:
   name: orchestrator-db-pvc
   namespace: hivemind
 spec:
-  storageClassName: local-path
+  storageClassName: longhorn-fast
   accessModes:
     - ReadWriteOnce
   resources:

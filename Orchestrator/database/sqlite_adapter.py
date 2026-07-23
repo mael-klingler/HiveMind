@@ -51,13 +51,13 @@ else:
         get_agent, get_or_create_agent, set_agent_status,
         get_all_agents, get_idle_agents, get_max_agents, set_max_agents,
         ensure_agent_pool, create_agent, update_agent_profile,
-        delete_agent, set_agent_skills, set_agent_instruction_assignments,
+        set_agent_role, delete_agent, set_agent_skills, set_agent_instruction_assignments,
         get_agent_with_profile, get_all_agents_with_profiles,
         get_agent_mcp_servers, get_agent_assigned_instructions,
     )
     from database.queue import (
-        get_next_queue_item, assign_queue_item, complete_queue_item,
-        fail_queue_item, get_queue,
+        get_next_queue_item, assign_next_queue_item, assign_queue_item,
+        complete_queue_item, fail_queue_item, get_queue, init_queue_extensions,
     )
     from database.steps import add_step, get_steps, get_all_steps
     from database.settings import (
@@ -86,7 +86,7 @@ else:
         get_all_repos, get_repo, add_repo, delete_repo, update_repo,
         import_repos_from_config, set_repo_active,
         get_agent_repo_affinities, set_agent_repo_affinities,
-        get_all_repo_names, find_best_agent_for_repo,
+        get_all_repo_names, find_best_agent_for_repo, score_agent_for_repo,
     )
     from database.comments import add_ticket_comment, get_ticket_comments
     from database.groups import (

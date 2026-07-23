@@ -36,19 +36,63 @@ if USE_POSTGRES:
         pass
 else:
     import json
+    import logging
     import sqlite3
+    import threading
     from datetime import datetime
     from pathlib import Path
     from typing import Any, Dict, List, Optional
 
     DB_PATH = Path(os.getenv("DB_PATH", "/app/data/orchestrator.db"))
 
+    _local = threading.local()
+
+    _VALID_TRANSITIONS = {
+        "idle": {"running", "stopped"},
+        "running": {"idle", "error", "stopped"},
+        "error": {"idle", "running", "stopped"},
+        "stopped": {"idle"},
+    }
+
     def get_db():
+        """Get a thread-local SQLite connection with WAL mode and busy timeout.
+
+        Uses thread-local caching to avoid creating a new connection on every call.
+        WAL mode allows concurrent reads while a write is in progress.
+        """
+        conn = getattr(_local, "conn", None)
+        if conn is not None:
+            try:
+                conn.execute("SELECT 1")
+                return conn
+            except sqlite3.Error:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = None
+
         if str(DB_PATH) != ":memory:":
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA cache_size=-64000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        _local.conn = conn
         return conn
+
+    def close_db():
+        """Close the thread-local connection, if any."""
+        conn = getattr(_local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            _local.conn = None
 
 
 def _add_column_if_not_exists(cursor, table: str, column: str, definition: str):
@@ -188,6 +232,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
         name TEXT,
+        role TEXT DEFAULT 'general',
         status TEXT DEFAULT 'idle',
         current_ticket_id TEXT,
         started_at TEXT,
@@ -206,6 +251,7 @@ def init_db():
         position INTEGER,
         assigned_agent_id TEXT,
         status TEXT DEFAULT 'waiting',
+        priority INTEGER DEFAULT 5,
         created_at TEXT,
         started_at TEXT,
         completed_at TEXT,
@@ -300,6 +346,9 @@ def init_db():
     """)
 
     _add_column_if_not_exists(c, "agents", "model_name", "TEXT")
+    _add_column_if_not_exists(c, "agents", "role", "TEXT DEFAULT 'general'")
+    _add_column_if_not_exists(c, "tickets", "current_phase", "TEXT DEFAULT 'work'")
+    _add_column_if_not_exists(c, "tickets", "pipeline_group_id", "TEXT")
 
     # Ticket Comments
     c.execute("""
@@ -373,6 +422,7 @@ def init_db():
     """)
 
     _add_column_if_not_exists(c, "repos", "active", "INTEGER DEFAULT 0")
+    _add_column_if_not_exists(c, "queue", "priority", "INTEGER DEFAULT 5")
     c.execute("UPDATE repos SET active = 1 WHERE active = 0 AND name IN (SELECT name FROM repos)")
 
     c.execute("""
@@ -395,6 +445,23 @@ def init_db():
         message_type TEXT DEFAULT 'info',
         content TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (group_id) REFERENCES ticket_groups(id)
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS pipeline_steps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id TEXT NOT NULL,
+        group_id TEXT,
+        phase TEXT NOT NULL,
+        agent_id TEXT,
+        status TEXT DEFAULT 'pending',
+        result TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ticket_id) REFERENCES tickets(id),
         FOREIGN KEY (group_id) REFERENCES ticket_groups(id)
     )
     """)
@@ -731,10 +798,14 @@ def get_or_create_agent(agent_id: str, name: str = "") -> Dict:
     return get_agent(agent_id)
 
 
-def set_agent_status(agent_id: str, status: str, ticket_id: Optional[str] = None, progress: int = 0):
-    conn = get_db()
-    c = conn.cursor()
-    now = datetime.now().isoformat()
+    def set_agent_status(agent_id: str, status: str, ticket_id: Optional[str] = None, progress: int = 0):
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT status FROM agents WHERE id = ?", (agent_id,))
+        row = c.fetchone()
+        if row and status not in _VALID_TRANSITIONS.get(row["status"], set()):
+            logging.getLogger("hivemind").warning(f"Invalid agent state transition: {row['status']} → {status} for agent {agent_id}")
+        now = datetime.now().isoformat()
 
     if status == "running":
         c.execute(
@@ -788,22 +859,28 @@ def set_max_agents(max_agents: int):
     conn.close()
 
 
+_DEFAULT_AGENT_ROLES = ["developer", "reviewer", "tester"]
+
+
 def ensure_agent_pool():
     """Ensures that default agents exist. max_agents = max concurrent running agents."""
     max_agents = get_max_agents()
     conn = get_db()
     c = conn.cursor()
 
-    for i in range(3):
+    for i in range(max_agents):
         agent_id = f"agent-{i+1}"
+        role = _DEFAULT_AGENT_ROLES[i] if i < len(_DEFAULT_AGENT_ROLES) else "general"
         c.execute("SELECT id FROM agents WHERE id = ?", (agent_id,))
         if not c.fetchone():
             c.execute(
-                "INSERT INTO agents (id, name, status, logs) VALUES (?, ?, ?, ?)",
-                (agent_id, f"Agent {i+1}", "idle", json.dumps([]))
+                "INSERT INTO agents (id, name, role, status, logs) VALUES (?, ?, ?, ?, ?)",
+                (agent_id, f"Agent {i+1}", role, "idle", json.dumps([]))
             )
+        else:
+            c.execute("UPDATE agents SET role = COALESCE(NULLIF(role, ''), ?) WHERE id = ? AND (role IS NULL OR role = 'general')",
+                      (role, agent_id))
 
-    # Re-enable disabled agents (non-running)
     c.execute("UPDATE agents SET status = 'idle' WHERE status = 'disabled'")
 
     conn.commit()
@@ -818,7 +895,7 @@ def get_next_queue_item() -> Optional[Dict]:
     c.execute("""
     SELECT * FROM queue
     WHERE status = 'waiting'
-    ORDER BY position ASC, id ASC
+    ORDER BY priority ASC, position ASC, id ASC
     LIMIT 1
     """)
     row = c.fetchone()
@@ -826,11 +903,48 @@ def get_next_queue_item() -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def assign_next_queue_item(agent_id: str) -> Optional[Dict]:
+    """Atomically claim the next waiting queue item for an agent."""
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        c = conn.cursor()
+        c.execute("""
+        SELECT * FROM queue
+        WHERE status = 'waiting'
+        ORDER BY priority ASC, position ASC, id ASC
+        LIMIT 1
+        """)
+        row = c.fetchone()
+        if not row:
+            conn.rollback()
+            conn.close()
+            return None
+        item = dict(row)
+        now = datetime.now().isoformat()
+        c.execute("UPDATE queue SET status = 'running', assigned_agent_id = ?, started_at = ? WHERE id = ? AND status = 'waiting'",
+                  (agent_id, now, item["id"]))
+        if c.rowcount == 0:
+            conn.rollback()
+            conn.close()
+            return None
+        conn.commit()
+        item["status"] = "running"
+        item["assigned_agent_id"] = agent_id
+        item["started_at"] = now
+        return item
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def assign_queue_item(queue_id: int, agent_id: str) -> bool:
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().isoformat()
-    c.execute("UPDATE queue SET status = 'running', assigned_agent_id = ?, started_at = ? WHERE id = ?",
+    c.execute("UPDATE queue SET status = 'running', assigned_agent_id = ?, started_at = ? WHERE id = ? AND status = 'waiting'",
               (agent_id, now, queue_id))
     conn.commit()
     conn.close()
@@ -872,6 +986,7 @@ def get_queue() -> List[Dict]:
         WHEN 'completed' THEN 3
         WHEN 'failed' THEN 4
       END,
+      q.priority ASC,
       q.position ASC
     """)
     rows = c.fetchall()
@@ -1279,6 +1394,14 @@ def update_agent_profile(agent_id: str, name: str = None, model_name: str = None
     return get_agent_with_profile(agent_id)
 
 
+def set_agent_role(agent_id: str, role: str):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE agents SET role = ? WHERE id = ?", (role, agent_id))
+    conn.commit()
+    conn.close()
+
+
 def delete_agent(agent_id: str):
     conn = get_db()
     c = conn.cursor()
@@ -1411,20 +1534,36 @@ def get_all_repo_names() -> List[str]:
 
 
 def find_best_agent_for_repo(primary_repo: str, idle_agents: List[Dict]) -> str:
-    best_agent = None
-    best_score = -1
+    if not primary_repo or not idle_agents:
+        return None
+    agent_ids = [a["id"] for a in idle_agents]
+    placeholders = ",".join("?" * len(agent_ids))
     conn = get_db()
     c = conn.cursor()
-    for agent in idle_agents:
-        c.execute("SELECT COUNT(*) as cnt FROM agent_repo_affinities WHERE agent_id = ? AND repo_name = ?",
-                  (agent["id"], primary_repo))
-        row = c.fetchone()
-        score = row["cnt"] if row else 0
-        if score > best_score:
-            best_score = score
-            best_agent = agent["id"]
+    c.execute(
+        f"SELECT agent_id, affinity FROM agent_repo_affinities WHERE agent_id IN ({placeholders}) AND repo_name = ? ORDER BY affinity DESC",
+        (*agent_ids, primary_repo),
+    )
+    row = c.fetchone()
     conn.close()
-    return best_agent
+    return row["agent_id"] if row else None
+
+
+def score_agent_for_repo(agent_id: str, primary_repo: str, skill_names: List[str] = None) -> float:
+    score = 0.0
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT affinity FROM agent_repo_affinities WHERE agent_id = ? AND repo_name = ?", (agent_id, primary_repo))
+    row = c.fetchone()
+    if row:
+        score += row["affinity"] * 10.0
+    if skill_names:
+        placeholders = ",".join("?" * len(skill_names))
+        c.execute(f"SELECT COUNT(*) as cnt FROM agent_skills WHERE agent_id = ? AND mcp_server_name IN ({placeholders})", (agent_id, *skill_names))
+        cnt_row = c.fetchone()
+        score += cnt_row["cnt"] * 2.0
+    conn.close()
+    return score
 
 
 # ── OpenCode Plugins ──────────────────────────────────────────

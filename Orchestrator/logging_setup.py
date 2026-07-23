@@ -23,6 +23,9 @@ import time as _time
 import threading as _threading
 
 
+MAX_HISTOGRAM_SAMPLES = 10000
+MAX_UNIQUE_LABELS = 1000
+
 class Metrics:
     def __init__(self):
         self._lock = _threading.Lock()
@@ -45,8 +48,13 @@ class Metrics:
         key = self._key(name, labels)
         with self._lock:
             if key not in self._histograms:
+                if len(self._histograms) >= MAX_UNIQUE_LABELS:
+                    self._histograms.pop(next(iter(self._histograms)), None)
                 self._histograms[key] = []
-            self._histograms[key].append(value)
+            samples = self._histograms[key]
+            if len(samples) >= MAX_HISTOGRAM_SAMPLES:
+                samples[:] = samples[len(samples) // 2:]
+            samples.append(value)
 
     def start_timer(self, name: str, labels: dict = None) -> str:
         timer_id = self._key(name, labels)

@@ -14,6 +14,8 @@
 
 """
 FastAPI middleware: CORS, API key auth, Supabase Auth, rate limiting, correlation ID.
+Rate limiting uses Redis when available, falls back to in-memory.
+Applies to all mutation endpoints (POST, PUT, PATCH, DELETE), not just ticket creation.
 """
 
 import hashlib
@@ -37,6 +39,20 @@ from config import (
     USE_SUPABASE,
 )
 
+MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+EXEMPT_PATHS = ("/healthz", "/readyz", "/metrics", "/static/", "/webhooks/", "/agent-session/", "/api/stream")
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract real client IP, respecting X-Forwarded-For from load balancers."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP", "")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
 
 async def correlation_id_middleware(request: Request, call_next):
     correlation_id = request.headers.get("X-Correlation-ID", str(_uuid.uuid4()))
@@ -54,8 +70,7 @@ async def api_key_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    exempt_prefixes = ("/healthz", "/readyz", "/metrics", "/static/", "/webhooks/", "/agent-session/", "/api/stream")
-    if any(path.startswith(p) for p in exempt_prefixes) or not path.startswith("/api/"):
+    if any(path.startswith(p) for p in EXEMPT_PATHS) or not path.startswith("/api/"):
         return await call_next(request)
 
     api_key = request.headers.get("X-API-Key", "")
@@ -68,42 +83,35 @@ async def api_key_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-_rate_limit_store: Dict[str, list] = {}
-_RATE_LIMIT_MAX_ENTRIES = 10000
-
-
-def _cleanup_rate_limit_store():
-    if len(_rate_limit_store) > _RATE_LIMIT_MAX_ENTRIES:
-        now = _time.time()
-        _rate_limit_store.clear()
-
-
 async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiting for mutation endpoints. Uses Redis when available."""
+    if request.method not in MUTATION_METHODS:
+        return await call_next(request)
+
+    path = request.url.path
+    if any(path.startswith(p) for p in EXEMPT_PATHS):
+        return await call_next(request)
+
+    client_ip = _get_client_ip(request)
+    key = f"{client_ip}:{path}"
+
     if USE_SUPABASE:
         from database.supabase_adapter import check_rate_limit
-        if request.url.path == "/api/tickets" and request.method == "POST":
-            client_ip = request.client.host if request.client else "unknown"
-            allowed, remaining = check_rate_limit(client_ip, RATE_LIMIT_PER_MINUTE)
-            if not allowed:
-                return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
-            response = await call_next(request)
-            response.headers["X-RateLimit-Remaining"] = str(remaining)
-            return response
-        return await call_next(request)
+        allowed, remaining = check_rate_limit(client_ip, RATE_LIMIT_PER_MINUTE)
+        if not allowed:
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+        response = await call_next(request)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        return response
 
-    if request.url.path != "/api/tickets" or request.method != "POST":
-        return await call_next(request)
-
-    client_ip = request.client.host if request.client else "unknown"
-    now = _time.time()
-    if client_ip not in _rate_limit_store:
-        _rate_limit_store[client_ip] = []
-    _rate_limit_store[client_ip] = [t for t in _rate_limit_store[client_ip] if now - t < 60]
-    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_PER_MINUTE:
+    from redis_client import is_rate_limited
+    is_limited, remaining = is_rate_limited(key, RATE_LIMIT_PER_MINUTE, window_seconds=60)
+    if is_limited:
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
-    _rate_limit_store[client_ip].append(now)
-    _cleanup_rate_limit_store()
-    return await call_next(request)
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    return response
 
 
 def verify_gitlab_webhook(request: Request) -> bool:

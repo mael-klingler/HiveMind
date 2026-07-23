@@ -10,12 +10,14 @@ resources:
   - rbac.yaml
   - deployment.yaml
   - service.yaml
+  - ingress.yaml
+  - capturecore-ca.yaml
 
 commonLabels:
-  app.kubernetes.io/name: orchestrator
+  app.kubernetes.io/name: hivemind
   app.kubernetes.io/component: orchestrator
 
 images:
   - name: hivemind-orchestrator
-    newName: hivemind-orchestrator
-    newTag: 0.7.15
+    newName: reg.capturecore.org/capturecore/hivemind-orchestrator
+    newTag: latest

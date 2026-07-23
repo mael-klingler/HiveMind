@@ -23,10 +23,6 @@ from database import (
     complete_queue_item,
     get_all_agents,
     get_all_steps,
-    get_idle_agents,
-    get_next_queue_item,
-    get_or_create_agent,
-    assign_queue_item,
     set_agent_status,
     update_ticket_status,
     add_ticket_comment,
@@ -39,6 +35,18 @@ from background.sse import broadcast_event
 
 router = APIRouter()
 
+VALID_AGENT_TRANSITIONS = {
+    "idle": {"running"},
+    "running": {"idle", "error", "stopped"},
+    "error": {"idle", "running"},
+    "stopped": {"idle"},
+}
+
+
+def _validate_transition(current: str, target: str) -> bool:
+    allowed = VALID_AGENT_TRANSITIONS.get(current, set())
+    return target in allowed
+
 
 @router.get("/api/agents")
 def api_agents():
@@ -47,6 +55,7 @@ def api_agents():
 
 @router.get("/api/agents/{agent_id}")
 def api_agent(agent_id: str):
+    from database import get_or_create_agent
     agent = get_or_create_agent(agent_id)
     return agent
 
@@ -96,6 +105,9 @@ async def api_agent_progress(agent_id: str, req: Request):
 
 @router.post("/api/agents/{agent_id}/complete")
 async def api_agent_complete(agent_id: str, req: Request):
+    """Mark an agent's current ticket as completed and free the agent.
+    The queue processor will automatically assign the next ticket.
+    """
     data = await req.json()
     queue_id = data.get("queue_id")
     ticket_id = data.get("ticket_id")
@@ -132,23 +144,43 @@ async def api_agent_complete(agent_id: str, req: Request):
             metrics.observe("hivemind_llm_prompt_tokens", prompt_tokens)
             metrics.observe("hivemind_llm_completion_tokens", completion_tokens)
 
-    next_item = get_next_queue_item()
-    if next_item:
-        idle = get_idle_agents()
-        if idle:
-            agent = idle[0]
-            assign_queue_item(next_item["id"], agent["id"])
-            set_agent_status(agent["id"], "running", next_item["ticket_id"], 0)
-            update_ticket_status(next_item["ticket_id"], "running")
-            await broadcast_event("ticket_assigned", {
-                "ticket_id": next_item["ticket_id"],
-                "agent_id": agent["id"],
-            })
-
     await broadcast_event("queue_updated", get_queue())
     await broadcast_event("agent_updated", {
         "agent_id": agent_id,
         "status": "idle",
+    })
+
+    return {"ok": True}
+
+
+@router.post("/api/agents/{agent_id}/error")
+async def api_agent_error(agent_id: str, req: Request):
+    """Mark an agent's current ticket as failed and requeue if retries remain."""
+    from database import fail_queue_item, requeue_ticket, get_agent
+
+    data = await req.json()
+    queue_id = data.get("queue_id")
+    ticket_id = data.get("ticket_id")
+    error = data.get("error", "Unknown error")
+
+    set_agent_status(agent_id, "error")
+
+    if queue_id:
+        fail_queue_item(queue_id, error)
+
+    if ticket_id:
+        max_retries = 3
+        requeued = requeue_ticket(ticket_id, max_retries=max_retries)
+        if requeued:
+            log.info(f"Ticket {ticket_id} requeued after agent {agent_id} error", extra={"ticket_id": ticket_id, "agent_id": agent_id})
+        else:
+            update_ticket_status(ticket_id, "failed")
+            log.warning(f"Ticket {ticket_id} failed permanently after max retries", extra={"ticket_id": ticket_id, "agent_id": agent_id})
+
+    await broadcast_event("queue_updated", get_queue())
+    await broadcast_event("agent_updated", {
+        "agent_id": agent_id,
+        "status": "error",
     })
 
     return {"ok": True}

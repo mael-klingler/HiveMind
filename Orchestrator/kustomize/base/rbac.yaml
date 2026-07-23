@@ -6,27 +6,38 @@ metadata:
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
-  name: orchestrator-cluster-role
+  name: orchestrator-agent-manager
+  namespace: hivemind
 rules:
 - apiGroups: [""]
-  resources: ["pods", "pods/log", "configmaps", "secrets"]
-  verbs: ["*"]
+  resources: ["configmaps", "secrets"]
+  verbs: ["create", "update", "patch", "delete", "get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["create", "update", "patch", "delete", "get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["create", "update", "patch", "delete", "get", "list"]
 - apiGroups: [""]
   resources: ["namespaces"]
   verbs: ["get", "list", "watch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: orchestrator-cluster-role-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: orchestrator-cluster-role
-subjects:
-- kind: ServiceAccount
-  name: orchestrator
+  name: orchestrator-agent-manager
   namespace: hivemind
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator
+    namespace: hivemind
+roleRef:
+  kind: Role
+  name: orchestrator-agent-manager
+  apiGroup: rbac.authorization.k8s.io
