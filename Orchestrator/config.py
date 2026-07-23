@@ -20,16 +20,22 @@ import os
 
 ORCHESTRATOR_CONFIG = os.getenv("ORCHESTRATOR_CONFIG", "/app/config/orchestrator_config.json")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "glm-5.1:cloud")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", os.getenv("OPENCODE_MODEL", "llama3.1:8b"))
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
-OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "glm-5.1:cloud")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", OLLAMA_MODEL)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", f"{OLLAMA_HOST}/v1" if OLLAMA_HOST else "http://localhost:11434/v1")
 AGENT_NAMESPACE = os.getenv("AGENT_NAMESPACE", "hivemind")
 AGENT_IMAGE = os.getenv("AGENT_IMAGE", "hivemind-opencode:latest")
 GITLAB_HOST = os.getenv("GITLAB_HOST") or ""
-GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+GITLAB_TOKEN = os.getenv("GITLAB_TOKEN") or os.getenv("GIT_TOKEN") or ""
 OPENCODE_PORT = os.getenv("OPENCODE_PORT", "4096")
 OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
+
+# LLM provider: ollama, ollama_cloud, openai, anthropic
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 HIVEMIND_API_KEY = os.getenv("HIVEMIND_API_KEY", "")
 GITLAB_WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "")
@@ -52,5 +58,6 @@ __all__ = [
     "HIVEMIND_API_KEY", "GITLAB_WEBHOOK_SECRET", "RATE_LIMIT_PER_MINUTE",
     "AGENT_RETRY_DELAY", "AGENT_MAX_RETRIES", "AGENT_STALE_TIMEOUT",
     "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_ANON_KEY", "USE_SUPABASE",
-    "CORS_ORIGINS",
+    "CORS_ORIGINS", "LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
 ]

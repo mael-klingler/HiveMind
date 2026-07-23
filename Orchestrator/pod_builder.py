@@ -133,6 +133,22 @@ def build_pod_spec(
             )
         ))
 
+    llm_provider = os.getenv("LLM_PROVIDER", "")
+    if llm_provider:
+        opencode_env.append(kclient.V1EnvVar(name="LLM_PROVIDER", value=llm_provider))
+
+    openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_api_key:
+        opencode_env.append(kclient.V1EnvVar(name="OPENAI_API_KEY", value=openai_api_key))
+
+    openai_base_url = os.getenv("OPENAI_BASE_URL", "")
+    if openai_base_url:
+        opencode_env.append(kclient.V1EnvVar(name="OPENAI_BASE_URL", value=openai_base_url))
+
+    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if anthropic_api_key:
+        opencode_env.append(kclient.V1EnvVar(name="ANTHROPIC_API_KEY", value=anthropic_api_key))
+
     main_container = kclient.V1Container(
         name="opencode-agent",
         image=AGENT_IMAGE,
