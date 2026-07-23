@@ -13,24 +13,30 @@
 # limitations under the License.
 
 """
-Database module – delegates to SQLite or PostgreSQL backend based on DATABASE_URL.
-To use PostgreSQL: DATABASE_URL=postgresql://user:pass@host:5432/dbname
-To use SQLite: DB_PATH=/path/to/orchestrator.db (or no env = /app/data/orchestrator.db)
+Database module – hybrid adapter pattern.
+
+Selects the backend based on environment variables:
+  - SUPABASE_URL + SUPABASE_SERVICE_KEY → Supabase (cloud or self-hosted)
+  - DATABASE_URL=postgresql://... → PostgreSQL (raw psycopg2)
+  - Default → SQLite (local dev)
+
+Usage:
+  from database import create_ticket, get_tickets, ...
+  
+All functions delegate to the appropriate backend automatically.
 """
 
 import os
 
-USE_POSTGRES = os.getenv("DATABASE_URL", "").startswith("postgresql")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
 
-if USE_POSTGRES:
-    from database.postgres_backend import *  # noqa: F401,F403
-else:
-    from database.sqlite_backend import (
-        get_db,
-        _add_column_if_not_exists,
-    )
-    from database.init_db import init_db
-    from database.tickets import (
+if USE_SUPABASE:
+    from database.supabase_adapter import (
+        init_db,
+        ensure_config_defaults,
+        import_settings_from_env,
         create_ticket,
         get_tickets,
         get_ticket,
@@ -47,20 +53,6 @@ else:
         get_failed_tickets,
         get_open_mr_tickets,
         update_ticket_mr_tracking,
-    )
-    from database.metrics import (
-        record_metric_event,
-        get_metric_events,
-        get_metrics_summary,
-        update_ticket_phase_timestamp,
-        update_ticket_llm_usage,
-        increment_review_cycle_count,
-        set_ticket_first_pipeline_status,
-        set_ticket_completed_at,
-        set_ticket_primary_repo,
-        set_ticket_line_stats,
-    )
-    from database.agents import (
         get_agent,
         get_or_create_agent,
         set_agent_status,
@@ -71,90 +63,62 @@ else:
         ensure_agent_pool,
         create_agent,
         update_agent_profile,
-        delete_agent as db_delete_agent,
+        delete_agent,
         set_agent_skills,
         set_agent_instruction_assignments,
         get_agent_with_profile,
         get_all_agents_with_profiles,
         get_agent_mcp_servers,
         get_agent_assigned_instructions,
-    )
-    delete_agent = db_delete_agent
-    from database.queue import (
         get_next_queue_item,
         assign_queue_item,
         complete_queue_item,
         fail_queue_item,
         get_queue,
-    )
-    from database.steps import (
         add_step,
         get_steps,
         get_all_steps,
-    )
-    from database.settings import (
-        ensure_config_defaults,
         get_all_settings,
         get_setting,
         set_setting,
-        import_settings_from_env,
-    )
-    from database.mcp_servers import (
         get_mcp_servers,
         get_enabled_mcp_servers,
         add_mcp_server,
         update_mcp_server,
         delete_mcp_server,
-    )
-    from database.instructions import (
         get_agent_instructions,
         get_enabled_agent_instructions,
         add_agent_instruction,
         update_agent_instruction,
         delete_agent_instruction,
-    )
-    from database.plugins import (
         get_opencode_plugins,
         get_enabled_opencode_plugins,
         get_enabled_plugin_names,
         add_opencode_plugin,
         update_opencode_plugin,
         delete_opencode_plugin,
-    )
-    from database.memory import (
         get_agent_memory_blocks,
         set_agent_memory_block,
         get_agent_memory_as_markdown,
         delete_agent_memory_block,
         seed_default_memory_blocks,
-    )
-    from database.repos import (
         get_all_repos,
         get_repo,
-        add_repo as db_add_repo,
-        delete_repo as db_delete_repo,
-        update_repo as db_update_repo,
+        add_repo,
+        delete_repo,
+        update_repo,
         import_repos_from_config,
         set_repo_active,
         get_agent_repo_affinities,
         set_agent_repo_affinities,
         get_all_repo_names,
         find_best_agent_for_repo,
-    )
-    add_repo = db_add_repo
-    delete_repo = db_delete_repo
-    update_repo = db_update_repo
-    from database.comments import (
         add_ticket_comment,
         get_ticket_comments,
-    )
-    from database.groups import (
         create_ticket_group,
         get_ticket_group,
         add_team_message,
         get_team_messages,
-    )
-    from database.metrics import (
         record_metric_event,
         get_metric_events,
         get_metrics_summary,
@@ -164,16 +128,117 @@ else:
         set_ticket_first_pipeline_status,
         set_ticket_completed_at,
         set_ticket_primary_repo,
+        set_ticket_line_stats,
+        get_db,
     )
-    from database.steps import get_steps
+else:
+    from database.sqlite_adapter import (
+        init_db,
+        ensure_config_defaults,
+        import_settings_from_env,
+        create_ticket,
+        get_tickets,
+        get_ticket,
+        update_ticket_status,
+        stop_ticket,
+        get_tickets_with_queue,
+        update_ticket_review,
+        set_ticket_mr_url,
+        set_ticket_workspace,
+        set_ticket_ai_planning,
+        update_ticket_description,
+        requeue_ticket,
+        reopen_ticket,
+        get_failed_tickets,
+        get_open_mr_tickets,
+        update_ticket_mr_tracking,
+        get_agent,
+        get_or_create_agent,
+        set_agent_status,
+        get_all_agents,
+        get_idle_agents,
+        get_max_agents,
+        set_max_agents,
+        ensure_agent_pool,
+        create_agent,
+        update_agent_profile,
+        delete_agent,
+        set_agent_skills,
+        set_agent_instruction_assignments,
+        get_agent_with_profile,
+        get_all_agents_with_profiles,
+        get_agent_mcp_servers,
+        get_agent_assigned_instructions,
+        get_next_queue_item,
+        assign_queue_item,
+        complete_queue_item,
+        fail_queue_item,
+        get_queue,
+        add_step,
+        get_steps,
+        get_all_steps,
+        get_all_settings,
+        get_setting,
+        set_setting,
+        get_mcp_servers,
+        get_enabled_mcp_servers,
+        add_mcp_server,
+        update_mcp_server,
+        delete_mcp_server,
+        get_agent_instructions,
+        get_enabled_agent_instructions,
+        add_agent_instruction,
+        update_agent_instruction,
+        delete_agent_instruction,
+        get_opencode_plugins,
+        get_enabled_opencode_plugins,
+        get_enabled_plugin_names,
+        add_opencode_plugin,
+        update_opencode_plugin,
+        delete_opencode_plugin,
+        get_agent_memory_blocks,
+        set_agent_memory_block,
+        get_agent_memory_as_markdown,
+        delete_agent_memory_block,
+        seed_default_memory_blocks,
+        get_all_repos,
+        get_repo,
+        add_repo,
+        delete_repo,
+        update_repo,
+        import_repos_from_config,
+        set_repo_active,
+        get_agent_repo_affinities,
+        set_agent_repo_affinities,
+        get_all_repo_names,
+        find_best_agent_for_repo,
+        add_ticket_comment,
+        get_ticket_comments,
+        create_ticket_group,
+        get_ticket_group,
+        add_team_message,
+        get_team_messages,
+        record_metric_event,
+        get_metric_events,
+        get_metrics_summary,
+        update_ticket_phase_timestamp,
+        update_ticket_llm_usage,
+        increment_review_cycle_count,
+        set_ticket_first_pipeline_status,
+        set_ticket_completed_at,
+        set_ticket_primary_repo,
+        set_ticket_line_stats,
+        get_db,
+    )
 
-    # Auto-init on import (like original database.py)
-    try:
-        init_db()
+# Auto-init on import (for both backends)
+try:
+    init_db()
+    if not USE_SUPABASE:
         ensure_config_defaults()
         import_settings_from_env()
-    except Exception:
-        pass
+except Exception:
+    pass
 
 __all__ = [
     "get_db", "init_db",
@@ -215,4 +280,5 @@ __all__ = [
     "increment_review_cycle_count", "set_ticket_first_pipeline_status",
     "set_ticket_completed_at", "set_ticket_primary_repo",
     "set_ticket_line_stats",
+    "USE_SUPABASE",
 ]

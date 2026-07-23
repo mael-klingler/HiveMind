@@ -1,0 +1,101 @@
+# Self-hosted Supabase for HiveMind
+# Based on: https://supabase.com/docs/guides/self-hosting
+# Usage: docker compose up -d
+
+version: "3.8"
+services:
+  supabase-db:
+    image: supabase/postgres:15.6.1
+    container_name: hivemind-supabase-db
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hivemind_supabase}
+      POSTGRES_DB: hivemind
+    ports:
+      - "5432:5432"
+    volumes:
+      - supabase-db-data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  supabase-auth:
+    image: supabase/gotrue:v2.158.1
+    container_name: hivemind-supabase-auth
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:8000}
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-hivemind_supabase}@supabase-db:5432/hivemind
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:-hivemind-jwt-secret-change-in-production-min-32-chars}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUBE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@hivemind.local
+      GOTRUE_SMTP_HOST: supabase-mail
+      GOTRUE_SMTP_PORT: "2500"
+      GOTRUE_SMTP_USER: ""
+      GOTRUE_SMTP_PASS: ""
+      GOTRUE_SMTP_ADMIN_EMAIL: ""
+    ports:
+      - "9999:9999"
+
+  supabase-realtime:
+    image: supabase/realtime:v2.28.32
+    container_name: hivemind-supabase-realtime
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      PORT: "4000"
+      DB_HOST: supabase-db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-hivemind_supabase}
+      DB_NAME: hivemind
+      DB_SSL: "false"
+      SECRET_KEY_BASE: ${JWT_SECRET:-hivemind-jwt-secret-change-in-production-min-32-chars}
+      REPLICATION_CHANNEL: hivemind_realtime
+    ports:
+      - "4000:4000"
+
+  supabase-rest:
+    image: supabase/postgrest:v12.0.1
+    container_name: hivemind-supabase-rest
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:-hivemind_supabase}@supabase-db:5432/hivemind
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:-hivemind-jwt-secret-change-in-production-min-32-chars}
+      PGRST_SERVER_PORT: "3000"
+    ports:
+      - "3000:3000"
+
+  supabase-studio:
+    image: supabase/studio:20240401-1cf4e3f
+    container_name: hivemind-supabase-studio
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      STUDIO_PG_META_URL: http://supabase-db:5432
+      SUPABASE_URL: http://supabase-rest:3000
+      SUPABASE_ANON_KEY: ${ANON_KEY:-}
+      SUPABASE_SERVICE_KEY: ${SERVICE_KEY:-}
+    ports:
+      - "8089:8089"
+
+volumes:
+  supabase-db-data:

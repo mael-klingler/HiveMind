@@ -46,4 +46,4 @@ Thumbs.db
 # Temp / Build
 *.tmp
 *.bak
-*.orig
+*.orig.opencode/

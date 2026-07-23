@@ -31,9 +31,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
-from config import GITLAB_WEBHOOK_SECRET, HIVEMIND_API_KEY
+from config import GITLAB_WEBHOOK_SECRET, HIVEMIND_API_KEY, USE_SUPABASE, CORS_ORIGINS
 from logging_setup import setup_logging, log, metrics
-from middleware import correlation_id_middleware, api_key_auth_middleware, rate_limit_middleware
+from middleware import correlation_id_middleware, api_key_auth_middleware, rate_limit_middleware, get_cors_origins
 from database import import_repos_from_config, ensure_agent_pool, get_all_agents, get_tickets, get_queue
 
 from background.queue_processor import _get_worker, set_shutdown, set_running
@@ -45,7 +45,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
