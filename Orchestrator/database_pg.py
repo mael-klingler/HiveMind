@@ -721,7 +721,7 @@ def ensure_agent_pool():
     conn = get_db()
     try:
         with conn.cursor() as c:
-            for i in range(3):
+            for i in range(max_agents):
                 agent_id = f"agent-{i+1}"
                 c.execute("INSERT INTO agents (id, name, status, logs) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
                           (agent_id, f"Agent {i+1}", "idle", json.dumps([])))
@@ -1107,6 +1107,7 @@ def delete_mcp_server(name: str):
     conn = get_db()
     try:
         with conn.cursor() as c:
+            c.execute("DELETE FROM agent_skills WHERE mcp_server_name = %s", (name,))
             c.execute("DELETE FROM mcp_servers WHERE name = %s", (name,))
         conn.commit()
     except Exception:
@@ -1240,6 +1241,7 @@ def delete_agent(agent_id: str):
         with conn.cursor() as c:
             c.execute("DELETE FROM agent_skills WHERE agent_id = %s", (agent_id,))
             c.execute("DELETE FROM agent_instruction_assignments WHERE agent_id = %s", (agent_id,))
+            c.execute("DELETE FROM agent_repo_affinities WHERE agent_id = %s", (agent_id,))
             c.execute("DELETE FROM agents WHERE id = %s", (agent_id,))
         conn.commit()
     except Exception:
@@ -1680,46 +1682,47 @@ def get_metrics_summary(since: str = None) -> Dict:
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
             now = datetime.now().isoformat()
-            tickets_since = f"AND created_at >= '{since}'" if since else ""
+            since_clause = "AND created_at >= %s" if since else ""
+            params = [since] if since else []
 
-            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE 1=1 {tickets_since}")
+            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE 1=1 {since_clause}", params)
             total = c.fetchone()["cnt"]
 
-            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE status = 'merged' {tickets_since}")
+            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE status = 'merged' {since_clause}", params)
             merged = c.fetchone()["cnt"]
 
-            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE status = 'completed' {tickets_since}")
+            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE status = 'completed' {since_clause}", params)
             completed = c.fetchone()["cnt"]
 
-            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE status = 'failed' {tickets_since}")
+            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE status = 'failed' {since_clause}", params)
             failed = c.fetchone()["cnt"]
 
-            c.execute(f"SELECT AVG(retry_count) as avg FROM tickets WHERE retry_count > 0 {tickets_since}")
+            c.execute(f"SELECT AVG(retry_count) as avg FROM tickets WHERE retry_count > 0 {since_clause}", params)
             row = c.fetchone()
             avg_retries = float(row["avg"] or 0)
 
-            c.execute(f"SELECT SUM(retry_count) as total FROM tickets WHERE 1=1 {tickets_since}")
+            c.execute(f"SELECT SUM(retry_count) as total FROM tickets WHERE 1=1 {since_clause}", params)
             total_retries = int(c.fetchone()["total"] or 0)
 
-            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE first_pipeline_status = 'passed' {tickets_since}")
+            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE first_pipeline_status = 'passed' {since_clause}", params)
             first_pipeline_passes = c.fetchone()["cnt"]
 
-            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE first_pipeline_status IS NOT NULL AND first_pipeline_status != 'unknown' {tickets_since}")
+            c.execute(f"SELECT COUNT(*) as cnt FROM tickets WHERE first_pipeline_status IS NOT NULL AND first_pipeline_status != 'unknown' {since_clause}", params)
             first_pipeline_total = c.fetchone()["cnt"]
 
-            c.execute(f"SELECT AVG(review_cycle_count) as avg FROM tickets WHERE review_cycle_count > 0 {tickets_since}")
+            c.execute(f"SELECT AVG(review_cycle_count) as avg FROM tickets WHERE review_cycle_count > 0 {since_clause}", params)
             avg_review_cycles = float(c.fetchone()["avg"] or 0)
 
-            c.execute(f"SELECT AVG(llm_total_cost_usd) as avg FROM tickets WHERE llm_total_cost_usd > 0 {tickets_since}")
+            c.execute(f"SELECT AVG(llm_total_cost_usd) as avg FROM tickets WHERE llm_total_cost_usd > 0 {since_clause}", params)
             avg_llm_cost = float(c.fetchone()["avg"] or 0)
 
-            c.execute(f"SELECT SUM(llm_total_cost_usd) as total FROM tickets WHERE 1=1 {tickets_since}")
+            c.execute(f"SELECT SUM(llm_total_cost_usd) as total FROM tickets WHERE 1=1 {since_clause}", params)
             total_llm_cost = float(c.fetchone()["total"] or 0)
 
-            c.execute(f"SELECT SUM(llm_prompt_tokens) as total FROM tickets WHERE 1=1 {tickets_since}")
+            c.execute(f"SELECT SUM(llm_prompt_tokens) as total FROM tickets WHERE 1=1 {since_clause}", params)
             total_prompt_tokens = int(c.fetchone()["total"] or 0)
 
-            c.execute(f"SELECT SUM(llm_completion_tokens) as total FROM tickets WHERE 1=1 {tickets_since}")
+            c.execute(f"SELECT SUM(llm_completion_tokens) as total FROM tickets WHERE 1=1 {since_clause}", params)
             total_completion_tokens = int(c.fetchone()["total"] or 0)
 
             return {

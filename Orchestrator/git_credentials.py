@@ -46,6 +46,7 @@ def configure_git_credentials():
     if token and hosts:
         lines = [f"https://{git_user}:{token}@{h}\n" for h in sorted(hosts)]
         git_dir.write_text("".join(lines), encoding="utf-8")
+        git_dir.chmod(0o600)
         subprocess.run(["git", "config", "--global", "credential.helper", "store"], check=False)
         subprocess.run(["git", "config", "--global", "user.email", "hivemind-agents@example.com"], check=False)
         subprocess.run(["git", "config", "--global", "user.name", "HiveMind"], check=False)

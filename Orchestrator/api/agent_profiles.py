@@ -16,7 +16,7 @@
 API routes: Agent Profiles CRUD
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from database import (
     create_agent,
@@ -39,7 +39,8 @@ def api_get_agent_profiles():
 
 
 @router.post("/api/agent-profiles")
-def api_create_agent_profile(data: dict):
+async def api_create_agent_profile(req: Request):
+    data = await req.json()
     agent_id = data.get("id", "").strip()
     name = data.get("name", "").strip()
     model_name = data.get("model_name", "").strip()
@@ -59,7 +60,8 @@ def api_create_agent_profile(data: dict):
 
 
 @router.patch("/api/agent-profiles/{agent_id}")
-def api_update_agent_profile(agent_id: str, data: dict):
+async def api_update_agent_profile(agent_id: str, req: Request):
+    data = await req.json()
     name = data.get("name")
     model_name = data.get("model_name")
     if data.get("skills") is not None:

@@ -108,7 +108,7 @@ def ensure_agent_pool():
     conn = get_db()
     c = conn.cursor()
 
-    for i in range(3):
+    for i in range(max_agents):
         agent_id = f"agent-{i+1}"
         c.execute("SELECT id FROM agents WHERE id = ?", (agent_id,))
         if not c.fetchone():
@@ -168,6 +168,7 @@ def delete_agent(agent_id: str):
     c = conn.cursor()
     c.execute("DELETE FROM agent_skills WHERE agent_id = ?", (agent_id,))
     c.execute("DELETE FROM agent_instruction_assignments WHERE agent_id = ?", (agent_id,))
+    c.execute("DELETE FROM agent_repo_affinities WHERE agent_id = ?", (agent_id,))
     c.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
     conn.commit()
     conn.close()

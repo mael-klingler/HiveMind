@@ -16,6 +16,7 @@
 API routes: Agent Memory Blocks
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -91,10 +92,15 @@ async def api_agent_memory_sync(agent_id: str, req: Request):
     return {"ok": True, "synced": synced}
 
 
+ALLOWED_MEMORY_DIRS = ["/home/hivemind/.config/opencode/memory", "/workspace"]
+
 @router.post("/api/agent-memory/{agent_id}/sync-filesystem")
 async def api_agent_memory_sync_filesystem(agent_id: str, req: Request):
     data = await req.json()
     memory_dir = data.get("memory_dir", "/home/hivemind/.config/opencode/memory")
+    real_dir = os.path.realpath(memory_dir)
+    if not any(real_dir.startswith(allowed) for allowed in ALLOWED_MEMORY_DIRS):
+        raise HTTPException(status_code=400, detail="Invalid memory_dir path")
     repo_name = data.get("repo_name", "_global")
     synced = 0
     import glob as _glob

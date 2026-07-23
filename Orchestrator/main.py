@@ -176,8 +176,8 @@ def _ai_enrich_repo(repo_info: Dict) -> Dict:
         if content:
             enriched = json.loads(content) if isinstance(content, str) else content
             repo_info.update({k: v for k, v in enriched.items() if v})
-    except Exception:
-        pass
+    except Exception as e:
+        _struct_log.warning(f"AI enrich failed for repo {repo_info.get('name', '?')}: {e}")
     return repo_info
 
 

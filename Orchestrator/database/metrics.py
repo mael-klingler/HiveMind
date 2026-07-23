@@ -67,31 +67,32 @@ def get_metrics_summary(since: str = None) -> Dict:
     c = conn.cursor()
     now = datetime.now().isoformat()
 
-    tickets_since = f"AND created_at >= '{since}'" if since else ""
+    since_clause = "AND created_at >= ?" if since else ""
+    params = [since] if since else []
 
-    total = c.execute(f"SELECT COUNT(*) FROM tickets WHERE 1=1 {tickets_since}").fetchone()[0]
-    merged = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'merged' {tickets_since}").fetchone()[0]
-    completed = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'completed' {tickets_since}").fetchone()[0]
-    failed = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'failed' {tickets_since}").fetchone()[0]
+    total = c.execute(f"SELECT COUNT(*) FROM tickets WHERE 1=1 {since_clause}", params).fetchone()[0]
+    merged = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'merged' {since_clause}", params).fetchone()[0]
+    completed = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'completed' {since_clause}", params).fetchone()[0]
+    failed = c.execute(f"SELECT COUNT(*) FROM tickets WHERE status = 'failed' {since_clause}", params).fetchone()[0]
 
-    avg_retries_row = c.execute(f"SELECT AVG(CAST(retry_count AS REAL)) FROM tickets WHERE retry_count > 0 {tickets_since}").fetchone()
+    avg_retries_row = c.execute(f"SELECT AVG(CAST(retry_count AS REAL)) FROM tickets WHERE retry_count > 0 {since_clause}", params).fetchone()
     avg_retries = float(avg_retries_row[0]) if avg_retries_row and avg_retries_row[0] else 0
-    total_retries_row = c.execute(f"SELECT SUM(retry_count) FROM tickets WHERE 1=1 {tickets_since}").fetchone()
+    total_retries_row = c.execute(f"SELECT SUM(retry_count) FROM tickets WHERE 1=1 {since_clause}", params).fetchone()
     total_retries = int(total_retries_row[0]) if total_retries_row and total_retries_row[0] else 0
 
-    first_pipeline_passes = c.execute(f"SELECT COUNT(*) FROM tickets WHERE first_pipeline_status = 'passed' {tickets_since}").fetchone()[0]
-    first_pipeline_total = c.execute(f"SELECT COUNT(*) FROM tickets WHERE first_pipeline_status != 'unknown' AND first_pipeline_status IS NOT NULL {tickets_since}").fetchone()[0]
+    first_pipeline_passes = c.execute(f"SELECT COUNT(*) FROM tickets WHERE first_pipeline_status = 'passed' {since_clause}", params).fetchone()[0]
+    first_pipeline_total = c.execute(f"SELECT COUNT(*) FROM tickets WHERE first_pipeline_status != 'unknown' AND first_pipeline_status IS NOT NULL {since_clause}", params).fetchone()[0]
 
-    avg_review_row = c.execute(f"SELECT AVG(CAST(review_cycle_count AS REAL)) FROM tickets WHERE review_cycle_count > 0 {tickets_since}").fetchone()
+    avg_review_row = c.execute(f"SELECT AVG(CAST(review_cycle_count AS REAL)) FROM tickets WHERE review_cycle_count > 0 {since_clause}", params).fetchone()
     avg_review_cycles = float(avg_review_row[0]) if avg_review_row and avg_review_row[0] else 0
 
-    avg_llm_row = c.execute(f"SELECT AVG(llm_total_cost_usd) FROM tickets WHERE llm_total_cost_usd > 0 {tickets_since}").fetchone()
+    avg_llm_row = c.execute(f"SELECT AVG(llm_total_cost_usd) FROM tickets WHERE llm_total_cost_usd > 0 {since_clause}", params).fetchone()
     avg_llm_cost = float(avg_llm_row[0]) if avg_llm_row and avg_llm_row[0] else 0
-    total_llm_row = c.execute(f"SELECT SUM(llm_total_cost_usd) FROM tickets WHERE 1=1 {tickets_since}").fetchone()
+    total_llm_row = c.execute(f"SELECT SUM(llm_total_cost_usd) FROM tickets WHERE 1=1 {since_clause}", params).fetchone()
     total_llm_cost = float(total_llm_row[0]) if total_llm_row and total_llm_row[0] else 0.0
-    total_prompt_row = c.execute(f"SELECT SUM(llm_prompt_tokens) FROM tickets WHERE 1=1 {tickets_since}").fetchone()
+    total_prompt_row = c.execute(f"SELECT SUM(llm_prompt_tokens) FROM tickets WHERE 1=1 {since_clause}", params).fetchone()
     total_prompt_tokens = int(total_prompt_row[0]) if total_prompt_row and total_prompt_row[0] else 0
-    total_completion_row = c.execute(f"SELECT SUM(llm_completion_tokens) FROM tickets WHERE 1=1 {tickets_since}").fetchone()
+    total_completion_row = c.execute(f"SELECT SUM(llm_completion_tokens) FROM tickets WHERE 1=1 {since_clause}", params).fetchone()
     total_completion_tokens = int(total_completion_row[0]) if total_completion_row and total_completion_row[0] else 0
 
     conn.close()

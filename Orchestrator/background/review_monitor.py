@@ -29,13 +29,17 @@ from database import (
     get_open_mr_tickets, get_ticket, update_ticket_status,
     update_ticket_review, set_ticket_mr_url, add_ticket_comment,
     update_ticket_mr_tracking, requeue_ticket,
+    set_ticket_completed_at, record_metric_event,
+    increment_review_cycle_count, set_ticket_first_pipeline_status,
+    update_ticket_phase_timestamp, get_queue,
 )
 from config import GITLAB_WEBHOOK_SECRET, AGENT_MAX_RETRIES
 from k8s_client import cleanup_agent_resources
 
 log = logging.getLogger("hivemind")
 
-from background.queue_processor import _get_worker, _shutdown_requested
+from background.queue_processor import _get_worker
+import background.queue_processor as _qp
 
 
 def verify_gitlab_webhook(body: bytes, signature: str) -> bool:
@@ -43,10 +47,7 @@ def verify_gitlab_webhook(body: bytes, signature: str) -> bool:
         return True
     if not signature:
         return False
-    expected = hmac.new(
-        GITLAB_WEBHOOK_SECRET.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return hmac.compare_digest(signature, GITLAB_WEBHOOK_SECRET)
 
 
 def _fetch_mr(gitlab_host: str, gitlab_token: str, mr_url: str) -> Optional[Dict]:
@@ -117,7 +118,7 @@ async def review_lifecycle_monitor():
     log.info("Review Lifecycle Monitor started")
     await asyncio.sleep(15)
 
-    while not _shutdown_requested:
+    while not _qp._shutdown_requested:
         try:
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
             gitlab_host = os.getenv("GITLAB_HOST") or ""

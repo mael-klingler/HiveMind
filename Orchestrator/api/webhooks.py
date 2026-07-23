@@ -54,10 +54,7 @@ def verify_gitlab_webhook(body: bytes, signature: str) -> bool:
         return True
     if not signature:
         return False
-    expected = hmac.new(
-        GITLAB_WEBHOOK_SECRET.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return hmac.compare_digest(signature, GITLAB_WEBHOOK_SECRET)
 
 
 def _is_duplicate_webhook(event_id: str) -> bool:
@@ -258,7 +255,9 @@ async def github_webhook(req: Request):
     signature = req.headers.get("X-Hub-Signature-256", "")
 
     github_webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
-    if github_webhook_secret and signature:
+    if github_webhook_secret:
+        if not signature:
+            raise HTTPException(status_code=401, detail="Missing webhook signature")
         expected = "sha256=" + hmac.new(github_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(status_code=401, detail="Invalid webhook signature")

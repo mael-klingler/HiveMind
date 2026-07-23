@@ -57,6 +57,11 @@ stringData:
     PLACEHOLDER
     -----END OPENSSH PRIVATE KEY-----
   GITLAB_TOKEN: "glpat-placeholder"
+  GITLAB_HOST: "gitlab.example.com"
+  OPENCODE_MODEL: ""
+  OLLAMA_HOST: ""
+  OLLAMA_BASE_URL: ""
+  OLLAMA_MODEL: ""
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

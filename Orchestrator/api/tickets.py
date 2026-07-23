@@ -54,7 +54,7 @@ def api_tickets(status: Optional[str] = None):
 def api_ticket(ticket_id: str):
     t = get_ticket(ticket_id)
     if not t:
-        return {"error": "Not found"}, 404
+        raise HTTPException(status_code=404, detail="Ticket not found")
     return t
 
 
@@ -193,7 +193,8 @@ def api_ticket_comments(ticket_id: str):
 
 
 @router.post("/api/tickets/{ticket_id}/comments")
-def api_add_ticket_comment(ticket_id: str, data: dict):
+async def api_add_ticket_comment(ticket_id: str, req: Request):
+    data = await req.json()
     author = data.get("author", "user")
     comment_type = data.get("comment_type", "comment")
     content = data.get("content", "")
@@ -205,7 +206,7 @@ def api_add_ticket_comment(ticket_id: str, data: dict):
 
 @router.get("/api/tickets/status/{status}")
 def api_tickets_by_status(status: str):
-    return get_tickets_with_queue()
+    return get_tickets(status=status)
 
 
 @router.get("/tickets", response_class=HTMLResponse)

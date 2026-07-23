@@ -1063,6 +1063,7 @@ def delete_mcp_server(name: str):
     conn = get_db()
     try:
         with conn.cursor() as c:
+            c.execute("DELETE FROM agent_skills WHERE mcp_server_name = %s", (name,))
             c.execute("DELETE FROM mcp_servers WHERE name = %s", (name,))
         conn.commit()
     except Exception:
@@ -1196,6 +1197,7 @@ def delete_agent(agent_id: str):
         with conn.cursor() as c:
             c.execute("DELETE FROM agent_skills WHERE agent_id = %s", (agent_id,))
             c.execute("DELETE FROM agent_instruction_assignments WHERE agent_id = %s", (agent_id,))
+            c.execute("DELETE FROM agent_repo_affinities WHERE agent_id = %s", (agent_id,))
             c.execute("DELETE FROM agents WHERE id = %s", (agent_id,))
         conn.commit()
     except Exception:

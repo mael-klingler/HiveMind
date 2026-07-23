@@ -79,6 +79,7 @@ def update_mcp_server(name: str, data: Dict):
 def delete_mcp_server(name: str):
     conn = get_db()
     c = conn.cursor()
+    c.execute("DELETE FROM agent_skills WHERE mcp_server_name = ?", (name,))
     c.execute("DELETE FROM mcp_servers WHERE name = ?", (name,))
     conn.commit()
     conn.close()

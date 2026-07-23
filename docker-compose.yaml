@@ -114,8 +114,10 @@ services:
       - TICKETSVC_DATABASE_URL=postgresql+asyncpg://ticketservice:ticketservice@ticketservice-db:5432/ticketservice
       - TICKETSVC_DATABASE_URL_SYNC=postgresql://ticketservice:ticketservice@ticketservice-db:5432/ticketservice
     ports:
-      - "8080:8080"
+      - "8081:8080"
     depends_on:
+      ticketservice-db:
+        condition: service_healthy
   orchestrator-serve:
     build:
       context: ./Orchestrator
@@ -124,7 +126,10 @@ services:
     container_name: orchestrator-serve
     command: ["serve"]
     environment:
-      - DATABASE_URL=postgresql://hivemind:hivemind@hivemind-postgres-local:5432/hivemind
+      - DATABASE_URL=${DATABASE_URL:-}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       - GITLAB_HOST=${GITLAB_HOST}
       - GITLAB_TOKEN=${GITLAB_TOKEN}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
@@ -134,15 +139,14 @@ services:
       - AGENT_NAMESPACE=hivemind
       - AGENT_IMAGE=hivemind-opencode:latest
       - HIVEMIND_API_KEY=${HIVEMIND_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     ports:
       - "8080:8080"
     volumes:
       - ./Orchestrator/orchestrator_config.json:/app/config/orchestrator_config.json:ro
       - repo-storage:/app/workspace/repos
       - ${SSH_KEY_PATH:-~/.ssh}:/home/hivemind/.ssh:ro
-    depends_on:
-      hivemind-postgres-local:
-        condition: service_healthy
+    depends_on: {}
     profiles:
       - full-local
 
@@ -196,11 +200,6 @@ services:
     restart: unless-stopped
     profiles:
       - monitoring
-
-  ticketservice-db:
-        condition: service_healthy
-    profiles:
-      - tickets
 
 volumes:
   repo-storage:

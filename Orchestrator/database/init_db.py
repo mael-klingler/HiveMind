@@ -58,39 +58,6 @@ def init_db():
     _add_column_if_not_exists(c, "tickets", "mr_conflict_status", "TEXT DEFAULT 'none'")
     _add_column_if_not_exists(c, "tickets", "selected_repos", "TEXT")
 
-    # Tickets table (with MR + Review Lifecycle)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS tickets (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        description TEXT,
-        labels TEXT,
-        issue_type TEXT,
-        priority TEXT,
-        status TEXT DEFAULT 'queued',
-        mr_status TEXT DEFAULT 'none',
-        mr_url TEXT,
-        review_status TEXT DEFAULT 'pending',
-        review_notes TEXT,
-        retry_count INTEGER DEFAULT 0,
-        workspace_path TEXT,
-        agent_id TEXT,
-        created_at TEXT,
-        updated_at TEXT
-    )
-    """)
-
-    # Migrate columns (for existing DBs)
-    _add_column_if_not_exists(c, "tickets", "mr_status", "TEXT DEFAULT 'none'")
-    _add_column_if_not_exists(c, "tickets", "mr_url", "TEXT")
-    _add_column_if_not_exists(c, "tickets", "review_status", "TEXT DEFAULT 'pending'")
-    _add_column_if_not_exists(c, "tickets", "review_notes", "TEXT")
-    _add_column_if_not_exists(c, "tickets", "retry_count", "INTEGER DEFAULT 0")
-    _add_column_if_not_exists(c, "tickets", "workspace_path", "TEXT")
-    _add_column_if_not_exists(c, "tickets", "agent_id", "TEXT")
-    _add_column_if_not_exists(c, "tickets", "ai_planning", "TEXT")
-    _add_column_if_not_exists(c, "tickets", "selected_repos", "TEXT")
-
     # Agents table
     c.execute("""
     CREATE TABLE IF NOT EXISTS agents (
@@ -281,7 +248,6 @@ def init_db():
     """)
 
     _add_column_if_not_exists(c, "repos", "active", "INTEGER DEFAULT 0")
-    c.execute("UPDATE repos SET active = 1 WHERE active = 0 AND name IN (SELECT name FROM repos)")
 
     # Metrics: ticket phase and lifecycle columns
     _add_column_if_not_exists(c, "tickets", "phase_work_started_at", "TEXT")
@@ -320,6 +286,18 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_type ON metric_events(event_type)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_ticket ON metric_events(ticket_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_metric_events_created ON metric_events(created_at)")
+
+    # Performance indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_tickets_agent_id ON tickets(agent_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_queue_ticket_id ON queue(ticket_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_steps_ticket_id ON steps(ticket_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_steps_agent_id ON steps(agent_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_id ON agent_skills(agent_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_repo_affinities_agent_id ON agent_repo_affinities(agent_id)")
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS ticket_groups (
