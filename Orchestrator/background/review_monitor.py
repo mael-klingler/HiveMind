@@ -38,7 +38,6 @@ from k8s_client import cleanup_agent_resources
 
 log = logging.getLogger("hivemind")
 
-from background.queue_processor import _get_worker
 import background.queue_processor as _qp
 
 
@@ -139,7 +138,7 @@ async def review_lifecycle_monitor():
                 if status == "running":
                     pod_name = f"agent-worker-{ticket_id.lower()}"
                     ns = os.getenv("AGENT_NAMESPACE", "hivemind")
-                    rc, out, _ = _get_worker()._main._kubectl(f"get pod {pod_name} -n {ns} -o jsonpath='{{.status.phase}}'")
+                    rc, out, _ = _qp._get_worker()._main._kubectl(f"get pod {pod_name} -n {ns} -o jsonpath='{{.status.phase}}'")
                     if rc == 0 and out.strip().strip("'\"") in ("Running", "Pending", "ContainerCreating"):
                         continue
 
