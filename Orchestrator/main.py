@@ -162,9 +162,8 @@ def spawn_agent_pod(ticket: Ticket, selected: List[RepoConfig], assignment_md: s
 
 
 def _ai_enrich_repo(repo_info: Dict) -> Dict:
-    from config import OLLAMA_HOST as _oh, OLLAMA_MODEL as _om
-    llm = OllamaClient(_oh, _om)
-    if not llm.is_available():
+     llm = OllamaClient()
+     if not llm.is_available():
         return repo_info
     try:
         prompt = json.dumps({
@@ -187,7 +186,7 @@ class Orchestrator:
         Path(self.config.pvc_mount_path).mkdir(parents=True, exist_ok=True)
         self.git = RepoManager(self.config.pvc_mount_path, self.config.track_branch, self.config.branch_fallback_order)
         self.leankg = LeanKGManager(self.config)
-        self.llm = OllamaClient(self.config.ollama_host, self.config.ollama_model)
+        self.llm = OllamaClient()
         self._statuses: List[RepoStatus] = []
 
     def init(self):
