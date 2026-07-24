@@ -37,7 +37,7 @@ build:orchestrator:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
-    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
+    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
   script:
     - ORCHESTRATOR_TAG="${CI_COMMIT_SHORT_SHA}"
     - |
@@ -67,7 +67,7 @@ build:agent:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
-    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
+    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
   script:
     - AGENT_TAG="${CI_COMMIT_SHORT_SHA}"
     - |
