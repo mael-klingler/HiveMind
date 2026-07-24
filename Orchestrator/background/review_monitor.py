@@ -38,9 +38,6 @@ from k8s_client import cleanup_agent_resources
 
 log = logging.getLogger("hivemind")
 
-import background.queue_processor as _qp
-
-
 def verify_gitlab_webhook(body: bytes, signature: str) -> bool:
     if not GITLAB_WEBHOOK_SECRET:
         return True
@@ -112,12 +109,13 @@ async def _check_mr_comments(ticket_id, ticket, mr_url, project_path, mr_iid, gi
 async def review_lifecycle_monitor():
     """Background task: Monitors MR status, pipeline failures and new comments via GitLab API."""
     from background.sse import broadcast_event
+    from background.queue_processor import _shutdown_requested, _get_worker
     from logging_setup import metrics
 
     log.info("Review Lifecycle Monitor started")
     await asyncio.sleep(15)
 
-    while not _qp._shutdown_requested:
+    while not _shutdown_requested:
         try:
             gitlab_token = os.getenv("GITLAB_TOKEN", "")
             gitlab_host = os.getenv("GITLAB_HOST") or ""
@@ -138,7 +136,7 @@ async def review_lifecycle_monitor():
                 if status == "running":
                     pod_name = f"agent-worker-{ticket_id.lower()}"
                     ns = os.getenv("AGENT_NAMESPACE", "hivemind")
-                    rc, out, _ = _qp._get_worker()._main._kubectl(f"get pod {pod_name} -n {ns} -o jsonpath='{{.status.phase}}'")
+                    rc, out, _ = _get_worker()._main._kubectl(f"get pod {pod_name} -n {ns} -o jsonpath='{{.status.phase}}'")
                     if rc == 0 and out.strip().strip("'\"") in ("Running", "Pending", "ContainerCreating"):
                         continue
 
