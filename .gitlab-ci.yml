@@ -85,15 +85,31 @@ build:agent:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "development"'
 
-deploy:kustomize:
+deploy:update-manifests:
   stage: deploy
-  image: bitnami/kubectl:latest
+  image: alpine/git:latest
+  variables:
+    DEPLOY_REPO: https://argocd-deploy:${DEPLOY_REPO_TOKEN}@gitlab.capturecore.org/ai/hivemind-deploy.git
   before_script:
-    - echo "${KUBECONFIG_B64}" | base64 -d > /tmp/kubeconfig
-    - export KUBECONFIG=/tmp/kubeconfig
+    - apk add --no-cache yq
   script:
-    - kubectl apply -k Orchestrator/kustomize/base/
-    - kubectl rollout status deployment/orchestrator -n hivemind --timeout=120s || true
+    - git clone "$DEPLOY_REPO" /tmp/hivemind-deploy
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        ORCHESTRATOR_TAG="latest"
+        AGENT_TAG="latest"
+      else
+        ORCHESTRATOR_TAG="$CI_COMMIT_SHORT_SHA"
+        AGENT_TAG="$CI_COMMIT_SHORT_SHA"
+      fi
+    - yq e ".images[0].newTag = \"$ORCHESTRATOR_TAG\"" -i /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml
+    - yq e ".images[1].newTag = \"$AGENT_TAG\"" -i /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml
+    - cd /tmp/hivemind-deploy
+    - git config user.name "GitLab CI"
+    - git config user.email "ci@gitlab.capturecore.org"
+    - git add -A
+    - git diff --cached --quiet || git commit -m "auto: update image tags to orchestrator=$ORCHESTRATOR_TAG agent=$AGENT_TAG"
+    - git push origin HEAD:main
   environment:
     name: production
   rules:
