@@ -179,7 +179,7 @@ class WorkspaceBuilder:
                         else:
                             log.error(f"LLM analysis failed after {max_llm_retries} attempts for ticket {ticket.id}: {e}", extra={"ticket_id": ticket.id})
             else:
-                log.error(f"Ollama not reachable ({self.llm.host}) – ticket {ticket.id}", extra={"ticket_id": ticket.id})
+                log.error(f"Ollama not reachable ({self.llm.base_url}) – ticket {ticket.id}", extra={"ticket_id": ticket.id})
 
             if not analysis:
                 log.error(f"No AI analysis for ticket {ticket.id}", extra={"ticket_id": ticket.id})
