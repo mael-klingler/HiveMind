@@ -20,7 +20,7 @@ from fastapi import APIRouter, Request
 
 from database import (
     create_agent,
-    db_delete_agent,
+    delete_agent,
     get_agent_with_profile,
     get_all_agents_with_profiles,
     seed_default_memory_blocks,
@@ -102,5 +102,5 @@ def api_delete_agent_profile(agent_id: str):
         return {"ok": False, "error": f"Agent '{agent_id}' not found"}
     if agent.get("status") == "running":
         return {"ok": False, "error": "Running agents cannot be deleted"}
-    db_delete_agent(agent_id)
+    delete_agent(agent_id)
     return {"ok": True}
