@@ -1,16 +1,3 @@
-# ── Stage 1: Build LeanKG from source ──────────────────────────────
-FROM rust:1-bookworm AS leankg-builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 https://github.com/FreePeak/LeanKG.git /leankg-src \
-    && cd /leankg-src \
-    && cargo build --release \
-    && cp target/release/leankg /usr/local/bin/ \
-    && /usr/local/bin/leankg --version
-
-# ── Stage 2: Runtime ─────────────────────────────────────────────────
 FROM node:22-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,9 +17,6 @@ RUN npm install -g @gitbeaker/rest
 RUN npm install -g opencode-ai@latest
 ENV NODE_PATH=/usr/local/lib/node_modules
 
-# Copy LeanKG binary from builder
-COPY --from=leankg-builder /usr/local/bin/leankg /usr/local/bin/leankg
-RUN leankg --version
 
 # Install snip CLI (required by opencode-snip plugin)
 RUN curl -fsSL https://raw.githubusercontent.com/edouard-claude/snip/master/install.sh | sh \
