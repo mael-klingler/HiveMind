@@ -90,25 +90,15 @@ deploy:update-manifests:
   image: alpine/git:latest
   variables:
     DEPLOY_REPO: https://argocd-deploy:${DEPLOY_REPO_TOKEN}@gitlab.capturecore.org/ai/hivemind-deploy.git
-  before_script:
-    - apk add --no-cache yq
   script:
     - git clone "$DEPLOY_REPO" /tmp/hivemind-deploy
-    - |
-      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        ORCHESTRATOR_TAG="latest"
-        AGENT_TAG="latest"
-      else
-        ORCHESTRATOR_TAG="$CI_COMMIT_SHORT_SHA"
-        AGENT_TAG="$CI_COMMIT_SHORT_SHA"
-      fi
-    - yq e ".images[0].newTag = \"$ORCHESTRATOR_TAG\"" -i /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml
-    - yq e ".images[1].newTag = \"$AGENT_TAG\"" -i /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml
+    - ORCHESTRATOR_TAG="latest" && AGENT_TAG="latest"
+    - sed -i "/newTag:/s/: .*/: ${ORCHESTRATOR_TAG}/" /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml
     - cd /tmp/hivemind-deploy
     - git config user.name "GitLab CI"
     - git config user.email "ci@gitlab.capturecore.org"
     - git add -A
-    - git diff --cached --quiet || git commit -m "auto: update image tags to orchestrator=$ORCHESTRATOR_TAG agent=$AGENT_TAG"
+    - git diff --cached --quiet || git commit -m "auto: update image tags to orchestrator=$ORCHESTRATOR_TAG"
     - git push origin HEAD:main
   environment:
     name: production
