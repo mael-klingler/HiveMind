@@ -26,9 +26,9 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 
 from database import (
-    db_add_repo,
-    db_delete_repo,
-    db_update_repo,
+    add_repo,
+    delete_repo,
+    update_repo,
     get_all_repos,
     get_repo,
     get_setting,
@@ -128,7 +128,7 @@ async def api_add_repo(req: Request):
     if get_repo(name):
         raise HTTPException(status_code=409, detail=f"Repository '{name}' already exists")
 
-    ok = db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=1)
+    ok = add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=1)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to add repository")
 
@@ -158,7 +158,7 @@ async def api_bulk_update_repos(req: Request):
             elif isinstance(active, int):
                 fields["active"] = active
         if fields:
-            db_update_repo(repo["name"], **fields)
+            update_repo(repo["name"], **fields)
             updated.append(repo["name"])
 
     from background import queue_processor
@@ -169,7 +169,7 @@ async def api_bulk_update_repos(req: Request):
 
 @router.delete("/api/repos/{name}")
 def api_delete_repo(name: str):
-    deleted = db_delete_repo(name)
+    deleted = delete_repo(name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Repository '{name}' not found")
 
@@ -191,7 +191,7 @@ async def api_update_repo(name: str, req: Request):
                 fields[key] = [t.strip() for t in data[key].split(",") if t.strip()]
             else:
                 fields[key] = data[key]
-    ok = db_update_repo(name, **fields)
+    ok = update_repo(name, **fields)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to update repository")
 
@@ -285,7 +285,7 @@ async def api_import_selected(req: Request):
         description = item.get("description", "")
         tags = item.get("tags", item.get("topics", []))
 
-        ok = db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=0)
+        ok = add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=0)
         if ok:
             existing_names.add(name)
             added.append({"name": name})
@@ -349,7 +349,7 @@ async def api_init_repos_from_gitlab(req: Request):
         description = repo_info.get("description", "")
         tags = repo_info.get("tags", repo_info.get("topics", []))
 
-        db_add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=0)
+        add_repo(name=name, url=url, branch=branch, description=description, tags=tags, active=0)
         added.append({"name": name, "description": description, "tags": tags})
 
     from background import queue_processor
