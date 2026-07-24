@@ -89,13 +89,15 @@ deploy:update-manifests:
   stage: deploy
   image: alpine/git:latest
   script:
-    - git clone "https://argocd-deploy:${DEPLOY_REPO_TOKEN}@gitlab.capturecore.org/ai/hivemind-deploy.git" /tmp/hivemind-deploy
+    - CLONE_URL="https://argocd-deploy:${DEPLOY_REPO_TOKEN}@gitlab.capturecore.org/ai/hivemind-deploy.git"
+    - git clone "$CLONE_URL" /tmp/hivemind-deploy
     - "sed -i 's/newTag:.*/newTag: latest/' /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml"
     - cd /tmp/hivemind-deploy
     - git config user.name "GitLab CI"
     - git config user.email "ci@gitlab.capturecore.org"
     - git add -A
-    - git diff --cached --quiet || git commit -m "auto: update image tags to latest"
+    - COMMIT_MSG="auto-update image tags to latest"
+    - git diff --cached --quiet || git commit -m "$COMMIT_MSG"
     - git push origin HEAD:main
   environment:
     name: production
