@@ -22,7 +22,7 @@ Provider is selected via LLM_PROVIDER env var:
   - "anthropic"    → Anthropic API
 
 All providers use the OpenAI-compatible /v1/chat/completions endpoint except
-Anthropic which uses its own Messages API.
+Anthropic which uses its own Messages API, and Ollama Cloud which uses the native /api/chat endpoint.
 """
 
 import json
@@ -49,7 +49,7 @@ PROVIDERS = {PROVIDER_OLLAMA, PROVIDER_OLLAMA_CLOUD, PROVIDER_OPENAI, PROVIDER_A
 
 DEFAULT_BASE_URLS = {
     PROVIDER_OLLAMA: "http://localhost:11434/v1",
-    PROVIDER_OLLAMA_CLOUD: "https://api.ollama.com/v1",
+    PROVIDER_OLLAMA_CLOUD: "https://ollama.com",
     PROVIDER_OPENAI: "https://api.openai.com/v1",
     PROVIDER_ANTHROPIC: "https://api.anthropic.com",
 }
@@ -103,7 +103,7 @@ def _get_default_model(provider: str) -> str:
         return env_model
     defaults = {
         PROVIDER_OLLAMA: "llama3.1:8b",
-        PROVIDER_OLLAMA_CLOUD: "llama3.1:8b",
+        PROVIDER_OLLAMA_CLOUD: "glm-5.1",
         PROVIDER_OPENAI: "gpt-4o-mini",
         PROVIDER_ANTHROPIC: "claude-sonnet-4-20250514",
     }
@@ -221,9 +221,56 @@ class LLMClient:
                 raise RuntimeError(f"Anthropic not reachable after {self.MAX_RETRIES} attempts: {e}") from e
         raise last_error or RuntimeError("Anthropic request failed")
 
+    def _post_ollama_cloud(self, payload: dict) -> dict:
+        import httpx
+        last_error = None
+        ollama_payload = {
+            "model": payload.get("model", self.model),
+            "messages": payload.get("messages", []),
+            "stream": False,
+        }
+        if payload.get("format"):
+            ollama_payload["format"] = payload["format"]
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                body = json.dumps(ollama_payload).encode("utf-8")
+                headers = self._build_headers()
+                url = f"{self.base_url.rstrip('/')}/api/chat"
+                with httpx.Client(timeout=self.timeout, verify=False, follow_redirects=True) as client:
+                    resp = client.post(url, content=body, headers=headers)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    content = result.get("message", {}).get("content", "")
+                    return {
+                        "choices": [{"message": {"role": "assistant", "content": content}}],
+                        "usage": {
+                            "prompt_tokens": result.get("prompt_eval_count", 0),
+                            "completion_tokens": result.get("eval_count", 0),
+                        },
+                    }
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (503, 429, 502) and attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAYS[attempt]
+                    _struct_log.warning(f"LLM HTTP {e.response.status_code} (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s")
+                    time.sleep(delay)
+                    last_error = RuntimeError(f"LLM HTTP {e.response.status_code}: {e.response.text}")
+                    continue
+                raise RuntimeError(f"LLM HTTP {e.response.status_code}: {e.response.text}") from e
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAYS[attempt]
+                    _struct_log.warning(f"LLM not reachable (attempt {attempt+1}/{self.MAX_RETRIES}), retry in {delay}s")
+                    time.sleep(delay)
+                    last_error = e
+                    continue
+                raise RuntimeError(f"LLM not reachable after {self.MAX_RETRIES} attempts: {e}") from e
+        raise last_error or RuntimeError("LLM request failed")
+
     def _post(self, payload: dict) -> dict:
         if self.provider == PROVIDER_ANTHROPIC:
             return self._post_anthropic(payload)
+        if self.provider == PROVIDER_OLLAMA_CLOUD:
+            return self._post_ollama_cloud(payload)
         return self._post_openai(payload)
 
     def is_available(self) -> bool:
@@ -238,6 +285,11 @@ class LLMClient:
                         "messages": [{"role": "user", "content": "hi"}],
                     }), headers=headers)
                     return resp.status_code in (200, 400)
+            elif self.provider == PROVIDER_OLLAMA_CLOUD:
+                url = f"{self.base_url.rstrip('/')}/api/tags"
+                with httpx.Client(timeout=5, verify=False, follow_redirects=True) as client:
+                    resp = client.get(url, headers=headers)
+                    return resp.status_code == 200
             else:
                 url = f"{self.base_url.rstrip('/')}/models"
                 with httpx.Client(timeout=5) as client:
