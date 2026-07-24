@@ -10,6 +10,7 @@ variables:
   AGENT_IMAGE: ${REGISTRY}/${IMAGE_PREFIX}/hivemind-opencode
   DOCKER_TLS_CERTDIR: ""
   DOCKER_HOST: tcp://docker:2375
+  DOCKER_DRIVER: overlay2
 
 test:orchestrator:
   stage: test
@@ -28,12 +29,13 @@ build:orchestrator:
   stage: build
   image: docker:27-dind
   services:
-    - docker:27-dind
-  variables:
-    DOCKER_DRIVER: overlay2
+    - name: docker:27-dind
+      command: ["--tls=false"]
   before_script:
     - mkdir -p /etc/docker/certs.d/${REGISTRY}
     - echo "${HARBOR_CA_CERT}" | base64 -d > /etc/docker/certs.d/${REGISTRY}/ca.crt
+    - cp /etc/docker/certs.d/${REGISTRY}/ca.crt /usr/local/share/ca-certificates/harbor.crt
+    - update-ca-certificates 2>/dev/null || true
     - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
   script:
     - ORCHESTRATOR_TAG="${CI_COMMIT_SHORT_SHA}"
@@ -56,12 +58,13 @@ build:agent:
   stage: build
   image: docker:27-dind
   services:
-    - docker:27-dind
-  variables:
-    DOCKER_DRIVER: overlay2
+    - name: docker:27-dind
+      command: ["--tls=false"]
   before_script:
     - mkdir -p /etc/docker/certs.d/${REGISTRY}
     - echo "${HARBOR_CA_CERT}" | base64 -d > /etc/docker/certs.d/${REGISTRY}/ca.crt
+    - cp /etc/docker/certs.d/${REGISTRY}/ca.crt /usr/local/share/ca-certificates/harbor.crt
+    - update-ca-certificates 2>/dev/null || true
     - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
   script:
     - AGENT_TAG="${CI_COMMIT_SHORT_SHA}"
