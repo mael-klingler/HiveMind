@@ -5,7 +5,7 @@ stages:
 
 variables:
   REGISTRY: reg.capturecore.org
-  IMAGE_PREFIX: capturecore
+  IMAGE_PREFIX: hivemind
   ORCHESTRATOR_IMAGE: ${REGISTRY}/${IMAGE_PREFIX}/hivemind-orchestrator
   AGENT_IMAGE: ${REGISTRY}/${IMAGE_PREFIX}/hivemind-opencode
   DOCKER_TLS_CERTDIR: ""
