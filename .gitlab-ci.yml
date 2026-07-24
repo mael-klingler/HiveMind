@@ -93,7 +93,7 @@ deploy:update-manifests:
   script:
     - git clone "$DEPLOY_REPO" /tmp/hivemind-deploy
     - ORCHESTRATOR_TAG="latest" && AGENT_TAG="latest"
-    - sed -i "/newTag:/s/: .*/: ${ORCHESTRATOR_TAG}/" /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml
+    - 'sed -i "/newTag:/s/: .*/: ${ORCHESTRATOR_TAG}/" /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml'
     - cd /tmp/hivemind-deploy
     - git config user.name "GitLab CI"
     - git config user.email "ci@gitlab.capturecore.org"
