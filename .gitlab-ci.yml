@@ -88,6 +88,8 @@ build:agent:
 deploy:update-manifests:
   stage: deploy
   image: alpine/git:latest
+  variables:
+    GIT_SSL_NO_VERIFY: "1"
   script:
     - CLONE_URL="https://argocd-deploy:${DEPLOY_REPO_TOKEN}@gitlab.capturecore.org/ai/hivemind-deploy.git"
     - git clone "$CLONE_URL" /tmp/hivemind-deploy
