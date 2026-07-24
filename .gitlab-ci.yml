@@ -32,8 +32,12 @@ build:orchestrator:
     - name: docker:27-dind
       command: ["--tls=false", "--insecure-registry=reg.capturecore.org"]
       alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
   before_script:
-    - echo "${HARBOR_ROBOT_TOKEN}" | docker login --tls-verify=false ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
+    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
   script:
     - ORCHESTRATOR_TAG="${CI_COMMIT_SHORT_SHA}"
     - |
@@ -58,8 +62,12 @@ build:agent:
     - name: docker:27-dind
       command: ["--tls=false", "--insecure-registry=reg.capturecore.org"]
       alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
   before_script:
-    - echo "${HARBOR_ROBOT_TOKEN}" | docker login --tls-verify=false ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
+    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u ${HARBOR_ROBOT_USER} --password-stdin
   script:
     - AGENT_TAG="${CI_COMMIT_SHORT_SHA}"
     - |
