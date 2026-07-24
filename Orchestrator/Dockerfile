@@ -28,6 +28,10 @@ COPY workspace_utils.py .
 COPY k8s_client.py .
 COPY gitlab_client.py .
 COPY pod_builder.py .
+COPY redis_client.py .
+COPY database.py .
+COPY database_pg.py .
+COPY middleware_supabase.py .
 COPY database/ ./database/
 COPY api/ ./api/
 COPY background/ ./background/
