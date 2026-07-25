@@ -63,7 +63,7 @@ class WorkspaceBuilder:
         Path(self.config.pvc_mount_path).mkdir(parents=True, exist_ok=True)
         self.git = self._main.RepoManager(self.config.pvc_mount_path, self.config.track_branch, self.config.branch_fallback_order)
         self.leankg = self._main.LeanKGManager(self.config)
-        self.llm = self._main.OllamaClient(self.config.ollama_host, self.config.ollama_model)
+        self.llm = self._main.OllamaClient()
         self._statuses = []
         self._init_done = False
         self._init_lock = asyncio.Lock()
