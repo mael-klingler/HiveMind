@@ -73,6 +73,9 @@ async def api_key_auth_middleware(request: Request, call_next):
     if any(path.startswith(p) for p in EXEMPT_PATHS) or not path.startswith("/api/"):
         return await call_next(request)
 
+    if request.method == "GET":
+        return await call_next(request)
+
     api_key = request.headers.get("X-API-Key", "")
     if not api_key:
         auth_header = request.headers.get("Authorization", "")

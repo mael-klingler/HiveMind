@@ -793,8 +793,9 @@ function app() {
     dash: { queueCount: 0, agents: [], activeAgents: 0, completedCount: 0, totalCount: 0, activeItems: [], logs: [] },
 
     init() {
+      if (location.pathname === '/tickets') { location.replace('/#/kanban'); return; }
       const hash = location.hash.replace('#', '');
-      this.page = ['dashboard','kanban','agent','repos','settings'].includes(hash) ? hash : 'dashboard';
+      this.page = ['dashboard','kanban','agent','repos','settings','tickets'].includes(hash) ? (hash === 'tickets' ? 'kanban' : hash) : 'dashboard';
       window.addEventListener('hashchange', () => {
         const h = location.hash.replace('#', '');
         if (['dashboard','kanban','agent','repos','settings'].includes(h)) {
