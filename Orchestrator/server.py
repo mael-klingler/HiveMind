@@ -174,34 +174,38 @@ def api_metrics():
     return PlainTextResponse(content=metrics.render(), media_type="text/plain")
 
 
-@app.get("/", response_class=HTMLResponse)
-def web_ui():
+def _serve_spa():
     with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
+@app.get("/", response_class=HTMLResponse)
+def web_ui():
+    return _serve_spa()
 
-@app.get("/settings", response_class=HTMLResponse)
-def settings_page():
-    with open("static/settings.html", "r", encoding="utf-8") as f:
-        return f.read()
+@app.get("/dashboard", response_class=HTMLResponse)
+def spa_dashboard():
+    return _serve_spa()
 
-
-@app.get("/repos", response_class=HTMLResponse)
-def repos_page():
-    with open("static/repos.html", "r", encoding="utf-8") as f:
-        return f.read()
-
+@app.get("/kanban", response_class=HTMLResponse)
+def spa_kanban():
+    return _serve_spa()
 
 @app.get("/agent", response_class=HTMLResponse)
-def agent_page():
-    with open("static/agent.html", "r", encoding="utf-8") as f:
-        return f.read()
+def spa_agent():
+    return _serve_spa()
 
+@app.get("/repos", response_class=HTMLResponse)
+def spa_repos():
+    return _serve_spa()
+
+@app.get("/settings", response_class=HTMLResponse)
+def spa_settings():
+    return _serve_spa()
 
 @app.get("/tickets", response_class=HTMLResponse)
-def tickets_page():
-    with open("static/tickets.html", "r", encoding="utf-8") as f:
-        return f.read()
+def spa_tickets():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/#/kanban")
 
 
 _shutdown_requested = False
