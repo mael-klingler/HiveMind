@@ -113,7 +113,10 @@ def build_pod_spec(
         kclient.V1EnvVar(name="BRANCH", value=branch),
         kclient.V1EnvVar(name="OPENCODE_SERVER_PASSWORD", value=os.getenv("OPENCODE_SERVER_PASSWORD", "")),
         kclient.V1EnvVar(name="COMMENT_POLL_INTERVAL", value=os.getenv("COMMENT_POLL_INTERVAL", "30")),
-            kclient.V1EnvVar(name="ORCHESTRATOR_URL", value=f"http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080"),
+        kclient.V1EnvVar(name="ORCHESTRATOR_URL", value=f"http://orchestrator.{AGENT_NAMESPACE}.svc.cluster.local:8080"),
+        kclient.V1EnvVar(name="HIVEMIND_API_KEY", value_from=kclient.V1EnvVarSource(
+            secret_key_ref=kclient.V1SecretKeySelector(name="orchestrator-env", key="HIVEMIND_API_KEY")
+        )),
             kclient.V1EnvVar(name="MODEL_ROUTING_ENABLED", value=os.getenv("MODEL_ROUTING_ENABLED", "false")),
             kclient.V1EnvVar(name="SIMPLE_MODEL", value=os.getenv("SIMPLE_MODEL", "")),
             kclient.V1EnvVar(name="COMPLEX_MODEL", value=os.getenv("COMPLEX_MODEL", "")),
