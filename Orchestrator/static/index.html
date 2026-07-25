@@ -20,22 +20,11 @@
         <span id="versionLabel">Orchestrator</span>
       </div>
       <nav class="sidebar-nav">
-        <a href="#" class="sidebar-link" :class="{ active: page === 'dashboard' }" @click.prevent="navigate('dashboard')">
-          <span class="icon">&#9707;</span> Dashboard
-        </a>
-        <a href="#" class="sidebar-link" :class="{ active: page === 'kanban' }" @click.prevent="navigate('kanban')">
-          <span class="icon">&#9776;</span> Kanban
-          <span class="badge-sidebar" x-text="ticketCount">0</span>
-        </a>
-        <a href="#" class="sidebar-link" :class="{ active: page === 'agent' }" @click.prevent="navigate('agent')">
-          <span class="icon">&#9881;</span> Agent
-        </a>
-        <a href="#" class="sidebar-link" :class="{ active: page === 'repos' }" @click.prevent="navigate('repos')">
-          <span class="icon">&#128193;</span> Repos
-        </a>
-        <a href="#" class="sidebar-link" :class="{ active: page === 'settings' }" @click.prevent="navigate('settings')">
-          <span class="icon">&#9998;</span> Settings
-        </a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'dashboard' }" @click.prevent="navigate('dashboard')">Dashboard</a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'kanban' }" @click.prevent="navigate('kanban')">Kanban <span class="badge-sidebar" x-text="ticketCount">0</span></a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'agent' }" @click.prevent="navigate('agent')">Agent</a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'repos' }" @click.prevent="navigate('repos')">Repos</a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'settings' }" @click.prevent="navigate('settings')">Settings</a>
       </nav>
       <div class="sidebar-footer">
         <small style="color:var(--muted);font-size:0.7rem">
@@ -161,7 +150,7 @@
                         <template x-for="l in parseLabels(t.labels).slice(0,3)" :key="l">
                           <span class="badge badge-label" x-text="l"></span>
                         </template>
-                        <template x-if="t.retry_count > 0"><span class="badge badge-retry">&#10227; <span x-text="t.retry_count"></span></span></template>
+                        <template x-if="t.retry_count > 0"><span class="badge badge-retry">R<span x-text="t.retry_count"></span></span></template>
                         <template x-if="t.mr_url"><span class="badge badge-mr">MR</span></template>
                         <span x-html="HM.pipelineBadge(t.mr_pipeline_status)"></span>
                       </div>
@@ -763,7 +752,7 @@
             <div class="panel">
               <div class="panel-header"><h3>Orchestrator</h3></div>
               <div class="panel-body padded" style="display:flex;gap:.75rem;align-items:center">
-                <button class="btn btn-danger" @click="restartOrchestrator()">&#128260; Restart</button>
+                <button class="btn btn-danger" @click="restartOrchestrator()">Restart</button>
                 <span style="font-size:.78rem;color:var(--muted)">Restarts the orchestrator process. All running agents will be terminated.</span>
               </div>
             </div>
@@ -959,14 +948,14 @@ function kanbanPage() {
     buildDetailFooter(t) {
       let f = '<button class="btn btn-secondary" @click="showDetailModal=false">Close</button>';
       if (t.status === 'running' || t.status === 'queued') {
-        f += ' <button class="btn btn-danger" @click="stopTicket(\'' + t.id + '\')">&#9724; Stop</button>';
-        f += ' <button class="btn btn-primary" @click="loadLiveLogs(\'' + t.id + '\')">&#128210; Live Logs</button>';
+        f += ' <button class="btn btn-danger" @click="stopTicket(\'' + t.id + '\')">Stop</button>';
+        f += ' <button class="btn btn-primary" @click="loadLiveLogs(\'' + t.id + '\')">Live Logs</button>';
       }
       if (t.status === 'completed' || t.mr_status === 'open') {
         f = '<div style="flex:1"><input id="reviewNotes" placeholder="Review notes (optional)" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:.45rem;border-radius:var(--radius-sm);font-size:.8rem"></div><button class="btn btn-danger" @click="reviewTicket(\'' + t.id + '\',\'changes_requested\')">Changes Requested</button><button class="btn btn-success" @click="reviewTicket(\'' + t.id + '\',\'approved\')">Approve</button>';
       }
       if (t.status === 'completed' || t.status === 'failed' || t.status === 'merged' || t.status === 'stopped') {
-        f += ' <button class="btn btn-primary" @click="reopenTicket(\'' + t.id + '\')">&#128260; Reopen</button>';
+        f += ' <button class="btn btn-primary" @click="reopenTicket(\'' + t.id + '\')">Reopen</button>';
       }
       this.detailFooter = f;
     },
@@ -1003,7 +992,7 @@ function kanbanPage() {
           logBox = document.createElement('div');
           logBox.id = 'liveLogBox';
           logBox.style.marginTop = '0.75rem';
-          logBox.innerHTML = '<div class="log-toolbar"><label>&#128210; Agent Logs</label><span id="logStatus" style="font-size:.65rem;color:var(--muted);margin-left:auto">loading...</span><button class="btn" style="font-size:.65rem;padding:.2rem .5rem" onclick="this.closest(\'#liveLogBox\').remove()">&#10005;</button><button class="btn" style="font-size:.65rem;padding:.2rem .5rem" onclick="window._refreshLiveLog(\'' + ticketId + '\')">&#128260;</button></div><div class="log-box" id="logContent">Loading logs...</div>';
+          logBox.innerHTML = '<div class="log-toolbar"><label>Agent Logs</label><span id="logStatus" style="font-size:.65rem;color:var(--muted);margin-left:auto">loading...</span><button class="btn" style="font-size:.65rem;padding:.2rem .5rem" onclick="this.closest(\'#liveLogBox\').remove()">Close</button><button class="btn" style="font-size:.65rem;padding:.2rem .5rem" onclick="window._refreshLiveLog(\'' + ticketId + '\')">Refresh</button></div><div class="log-box" id="logContent">Loading logs...</div>';
           document.querySelector('.modal-body.open, .modal-body')?.appendChild(logBox) || document.querySelector('[x-ref="detailBody"]')?.appendChild(logBox);
         }
         const lc = document.getElementById('logContent');
