@@ -211,7 +211,7 @@ def api_tickets_by_status(status: str):
 
 @router.get("/tickets", response_class=HTMLResponse)
 def tickets_page():
-    with open("static/tickets.html", "r", encoding="utf-8") as f:
+    with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 
