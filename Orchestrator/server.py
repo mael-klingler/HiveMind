@@ -257,6 +257,126 @@ async def _background_repo_init():
         log.warning(f"Background repo init failed: {e}")
 
 
+async def _auto_import_gitlab_projects():
+    gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_TOKEN", ""))
+    gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+    if not gitlab_host or not gitlab_token:
+        return
+
+    await asyncio.sleep(5)
+    try:
+        from gitlab_client import gitlab_get_sync
+        from database import get_all_repos, add_repo as _add_repo
+
+        existing = {r["name"] for r in get_all_repos()}
+        if existing:
+            log.info(f"GitLab auto-import: {len(existing)} repos already configured, skipping")
+            return
+
+        projects = gitlab_get_sync("/projects", {
+            "membership": "true",
+            "min_access_level": "20",
+            "order_by": "name",
+            "sort": "asc",
+        }, gitlab_host, gitlab_token)
+
+        if not projects:
+            log.warning("GitLab auto-import: no projects found")
+            return
+
+        added = 0
+        for p in projects:
+            name = p.get("name", "")
+            url = p.get("http_url_to_repo", "")
+            if not name or name in existing or not url:
+                continue
+            branch = p.get("default_branch", "main") or "main"
+            description = p.get("description", "") or ""
+            topics = p.get("topics", []) or []
+            ok = _add_repo(name=name, url=url, branch=branch, description=description, tags=topics, active=1)
+            if ok:
+                existing.add(name)
+                added += 1
+
+        log.info(f"GitLab auto-import: {added} repos imported from {len(projects)} projects")
+
+        from background import queue_processor
+        queue_processor._worker = None
+
+        await _broadcast_event("repos_updated", {"added": added, "source": "gitlab_auto_import"})
+
+        await _register_webhooks_for_repos()
+    except Exception as e:
+        log.error(f"GitLab auto-import failed: {e}", exc_info=True)
+
+
+async def _register_webhooks_for_repos():
+    gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_HOST", ""))
+    gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+    if not gitlab_host or not gitlab_token:
+        return
+
+    orchestrator_url = os.getenv("ORCHESTRATOR_WEBHOOK_URL", "")
+    if not orchestrator_url:
+        log.info("GitLab webhook registration: ORCHESTRATOR_WEBHOOK_URL not set, skipping")
+        return
+
+    webhook_secret = os.getenv("GITLAB_WEBHOOK_SECRET", "")
+
+    try:
+        from gitlab_client import gitlab_get_sync
+        from database import get_all_repos
+
+        repos = get_all_repos(active_only=False)
+        for repo in repos:
+            url = repo.get("url", "")
+            if not url:
+                continue
+            project_path = url.split("://")[-1].replace(".git", "")
+            if "/" not in project_path:
+                continue
+            if ":" in project_path.split("/")[0]:
+                project_path = "/".join(project_path.split("/")[1:])
+
+            encoded_path = project_path.replace("/", "%2F")
+
+            try:
+                hooks = gitlab_get_sync(f"/projects/{encoded_path}/hooks", {}, gitlab_host, gitlab_token)
+                if hooks is None:
+                    continue
+
+                already_registered = any(
+                    h.get("url", "").rstrip("/") == orchestrator_url.rstrip("/")
+                    for h in (hooks or [])
+                )
+                if already_registered:
+                    continue
+
+                from vcs.gitlab import GitLabProvider
+                provider = GitLabProvider()
+                body = {
+                    "url": orchestrator_url,
+                    "push_events": True,
+                    "issues_events": True,
+                    "merge_requests_events": True,
+                    "note_events": True,
+                    "tag_push_events": False,
+                    "enable_ssl_verification": orchestrator_url.startswith("https"),
+                }
+                if webhook_secret:
+                    body["token"] = webhook_secret
+
+                result = await provider.create_project_hook(encoded_path, body, gitlab_host, gitlab_token)
+                if result:
+                    log.info(f"GitLab webhook registered for {project_path}")
+                else:
+                    log.warning(f"GitLab webhook registration failed for {project_path}")
+            except Exception as e:
+                log.warning(f"GitLab webhook registration error for {project_path}: {e}")
+    except Exception as e:
+        log.error(f"GitLab webhook registration failed: {e}", exc_info=True)
+
+
 @app.on_event("startup")
 def startup_event():
     from background.queue_processor import queue_processor
@@ -273,6 +393,7 @@ def startup_event():
     asyncio.create_task(review_lifecycle_monitor())
     asyncio.create_task(agent_pod_monitor())
     asyncio.create_task(_background_repo_init())
+    asyncio.create_task(_auto_import_gitlab_projects())
     asyncio.create_task(_orphan_recovery())
     asyncio.create_task(workspace_cleanup_loop())
     log.info(f"GitLab Webhook Secret: {'enabled' if GITLAB_WEBHOOK_SECRET else 'disabled (insecure)'}")

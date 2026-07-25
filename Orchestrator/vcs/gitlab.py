@@ -309,3 +309,8 @@ class GitLabProvider(VCSProvider):
         params = {"membership": "true", "min_access_level": "20"}
         params.update(kwargs)
         return await self._gitlab_get(path, params)
+
+    async def create_project_hook(self, project_path: str, hook_config: Dict, gitlab_host: str = None, gitlab_token: str = None) -> Optional[Dict]:
+        encoded_path = project_path.replace("/", "%2F") if "/" in project_path else project_path
+        path = f"/projects/{encoded_path}/hooks"
+        return await self._gitlab_post(path, hook_config, gitlab_host, gitlab_token)

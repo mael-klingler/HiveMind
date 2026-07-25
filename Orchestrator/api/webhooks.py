@@ -81,6 +81,28 @@ async def handle_gitlab_issue(payload: Dict):
 
     existing = get_ticket(ticket_id)
     if existing:
+        if action == "update":
+            from database import update_ticket_status
+            labels = []
+            raw_labels = issue.get("labels", [])
+            if isinstance(raw_labels, list):
+                labels = [l.get("title", l) if isinstance(l, dict) else l for l in raw_labels]
+            elif isinstance(raw_labels, str):
+                labels = raw_labels.split(",")
+            title = issue.get("title", existing.get("title", ""))
+            description = issue.get("description", existing.get("description", ""))
+            from database import _get_backend
+            backend = _get_backend()
+            conn = backend.conn if hasattr(backend, 'conn') else None
+            if conn:
+                try:
+                    conn.execute("UPDATE tickets SET title = ?, description = ? WHERE id = ?", (title, description, ticket_id))
+                    conn.commit()
+                    log.info(f"GitLab Issue → Ticket {ticket_id} updated", extra={"ticket_id": ticket_id, "event": "ticket_updated"})
+                    await broadcast_event("ticket_updated", {"ticket_id": ticket_id, "title": title})
+                except Exception as e:
+                    log.warning(f"Failed to update ticket {ticket_id}: {e}")
+            return {"ok": True, "id": ticket_id, "status": "updated"}
         return {"ok": True, "id": ticket_id, "status": "already_exists"}
 
     raw_labels = issue.get("labels", [])

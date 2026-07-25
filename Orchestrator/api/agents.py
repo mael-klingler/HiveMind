@@ -16,6 +16,8 @@
 API routes: Agents
 """
 
+import os
+
 from fastapi import APIRouter, Request
 
 from database import (
@@ -29,11 +31,72 @@ from database import (
     get_queue,
     update_ticket_llm_usage,
     set_ticket_line_stats,
+    set_ticket_mr_url,
 )
 from logging_setup import log, metrics
 from background.sse import broadcast_event
 
 router = APIRouter()
+
+
+async def _try_create_mr_for_ticket(ticket_id: str, source_branch: str):
+    gitlab_host = os.getenv("GITLAB_HOST", os.getenv("GIT_TOKEN", ""))
+    gitlab_token = os.getenv("GITLAB_TOKEN", os.getenv("GIT_TOKEN", ""))
+    if not gitlab_host or not gitlab_token:
+        return
+
+    from database import get_ticket, get_all_repos
+    ticket = get_ticket(ticket_id)
+    if not ticket:
+        return
+
+    selected_repos = ticket.get("selected_repos") or []
+    if isinstance(selected_repos, str):
+        try:
+            import json
+            selected_repos = json.loads(selected_repos)
+        except Exception:
+            selected_repos = []
+
+    all_repos = get_all_repos(active_only=True)
+    repo_map = {r["name"]: r for r in all_repos}
+
+    repo_name = selected_repos[0] if selected_repos else (all_repos[0]["name"] if all_repos else None)
+    if not repo_name or repo_name not in repo_map:
+        return
+
+    repo = repo_map[repo_name]
+    url = repo.get("url", "")
+    project_path = url.split("://")[-1].replace(".git", "")
+    if "/" in project_path and ":" in project_path.split("/")[0]:
+        project_path = "/".join(project_path.split("/")[1:])
+
+    if not project_path:
+        return
+
+    target_branch = repo.get("branch", "main")
+    title = ticket.get("title", f"Fix: {ticket_id}")
+    description = f"Automated MR for ticket {ticket_id}.\n\n{ticket.get('description', '')}"
+
+    try:
+        from vcs.gitlab import GitLabProvider
+        provider = GitLabProvider()
+        result = await provider.create_mr(project_path, source_branch, target_branch, title, description)
+        if result and result.get("iid"):
+            mr_url = result.get("web_url", "")
+            if mr_url:
+                set_ticket_mr_url(ticket_id, mr_url)
+                add_ticket_comment(ticket_id, author="hivemind", comment_type="mr", content=f"Auto-created MR: {mr_url}")
+                log.info(f"Auto-created MR for ticket {ticket_id}: {mr_url}", extra={"ticket_id": ticket_id, "mr_url": mr_url})
+            else:
+                mr_iid = result.get("iid")
+                host = gitlab_host.rstrip("/")
+                mr_url = f"{host}/{project_path}/-/merge_requests/{mr_iid}"
+                set_ticket_mr_url(ticket_id, mr_url)
+                add_ticket_comment(ticket_id, author="hivemind", comment_type="mr", content=f"Auto-created MR: {mr_url}")
+                log.info(f"Auto-created MR for ticket {ticket_id}: {mr_url}", extra={"ticket_id": ticket_id, "mr_url": mr_url})
+    except Exception as e:
+        log.warning(f"Auto-create MR failed for ticket {ticket_id}: {e}", extra={"ticket_id": ticket_id})
 
 VALID_AGENT_TRANSITIONS = {
     "idle": {"running"},
@@ -111,6 +174,7 @@ async def api_agent_complete(agent_id: str, req: Request):
     data = await req.json()
     queue_id = data.get("queue_id")
     ticket_id = data.get("ticket_id")
+    mr_url = data.get("mr_url")
 
     lines_added = data.get("lines_added", 0)
     lines_removed = data.get("lines_removed", 0)
@@ -128,6 +192,14 @@ async def api_agent_complete(agent_id: str, req: Request):
     if ticket_id:
         update_ticket_status(ticket_id, "completed")
         add_ticket_comment(ticket_id, author=agent_id, comment_type="summary", content=f"Agent {agent_id} has completed the task.")
+
+        if mr_url:
+            set_ticket_mr_url(ticket_id, mr_url)
+            add_ticket_comment(ticket_id, author=agent_id, comment_type="mr", content=f"Merge request: {mr_url}")
+            log.info(f"Agent {agent_id} reported MR for ticket {ticket_id}: {mr_url}", extra={"ticket_id": ticket_id, "mr_url": mr_url})
+        else:
+            source_branch = data.get("source_branch") or data.get("branch") or f"feature/{ticket_id.lower()}"
+            await _try_create_mr_for_ticket(ticket_id, source_branch)
 
         if lines_added or lines_removed or files_changed:
             set_ticket_line_stats(ticket_id, lines_added, lines_removed, files_changed)
