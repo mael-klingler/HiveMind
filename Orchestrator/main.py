@@ -162,8 +162,8 @@ def spawn_agent_pod(ticket: Ticket, selected: List[RepoConfig], assignment_md: s
 
 
 def _ai_enrich_repo(repo_info: Dict) -> Dict:
-     llm = OllamaClient()
-     if not llm.is_available():
+    llm = OllamaClient()
+    if not llm.is_available():
         return repo_info
     try:
         prompt = json.dumps({
