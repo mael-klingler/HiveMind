@@ -21,20 +21,20 @@
       </div>
       <nav class="sidebar-nav">
         <a href="#" class="sidebar-link" :class="{ active: page === 'dashboard' }" @click.prevent="navigate('dashboard')">
-          <span class="icon">&#9672;</span> Dashboard
+          <span class="icon">&#9707;</span> Dashboard
         </a>
         <a href="#" class="sidebar-link" :class="{ active: page === 'kanban' }" @click.prevent="navigate('kanban')">
-          <span class="icon">&#128195;</span> Kanban
+          <span class="icon">&#9776;</span> Kanban
           <span class="badge-sidebar" x-text="ticketCount">0</span>
         </a>
         <a href="#" class="sidebar-link" :class="{ active: page === 'agent' }" @click.prevent="navigate('agent')">
-          <span class="icon">&#129302;</span> Agent
+          <span class="icon">&#9881;</span> Agent
         </a>
         <a href="#" class="sidebar-link" :class="{ active: page === 'repos' }" @click.prevent="navigate('repos')">
-          <span class="icon">&#128193;</span> Repositories
+          <span class="icon">&#128193;</span> Repos
         </a>
         <a href="#" class="sidebar-link" :class="{ active: page === 'settings' }" @click.prevent="navigate('settings')">
-          <span class="icon">&#9881;</span> Settings
+          <span class="icon">&#9998;</span> Settings
         </a>
       </nav>
       <div class="sidebar-footer">
@@ -52,29 +52,21 @@
       <template x-if="page === 'dashboard'">
         <div>
           <div class="stats-row">
-            <div class="stat-card yellow">
-              <div class="stat-icon">&#128195;</div>
+            <div class="stat-card">
               <div class="stat-value" x-text="dash.queueCount">0</div>
               <div class="stat-label">Queue</div>
-              <div class="stat-sub">Pending tickets</div>
             </div>
-            <div class="stat-card accent">
-              <div class="stat-icon">&#129302;</div>
+            <div class="stat-card">
               <div class="stat-value" x-text="dash.agents.length">0</div>
-              <div class="stat-label">Agents</div>
-              <div class="stat-sub" x-text="dash.activeAgents + ' active'">0 active</div>
+              <div class="stat-label">Agents <span style="color:var(--muted2)" x-text="'(' + dash.activeAgents + ' active)'">(0 active)</span></div>
             </div>
-            <div class="stat-card green">
-              <div class="stat-icon">&#9989;</div>
+            <div class="stat-card">
               <div class="stat-value" x-text="dash.completedCount">0</div>
               <div class="stat-label">Completed</div>
-              <div class="stat-sub">Completed / Merged</div>
             </div>
-            <div class="stat-card purple">
-              <div class="stat-icon">&#128203;</div>
+            <div class="stat-card">
               <div class="stat-value" x-text="dash.totalCount">0</div>
               <div class="stat-label">Total</div>
-              <div class="stat-sub">All tickets</div>
             </div>
           </div>
 
@@ -227,7 +219,7 @@
            ══════════════════════════════════════════════════════════════ -->
       <template x-if="page === 'agent'">
         <div x-data="agentPage()" @page-show.window="init()" @sse-update.window="refreshData()">
-          <h1 class="page-title">&#129302; Agent Configuration</h1>
+          <h1 class="page-title">Agent Configuration</h1>
           <div class="tabs">
             <template x-for="t in [{key:'agents',label:'Agents'},{key:'tools',label:'MCP Tools'},{key:'instructions',label:'Instructions'},{key:'memory',label:'Memory'},{key:'plugins',label:'Plugins'},{key:'model',label:'Model'}]" :key="t.key">
               <button class="tab" :class="{ active: agentTab === t.key }" @click="agentTab = t.key" x-text="t.label"></button>
@@ -528,25 +520,25 @@
           <div class="page-header">
             <h2>Repositories</h2>
             <div style="display:flex;gap:.5rem">
-              <button class="btn btn-secondary" @click="showBulkBranchModal = true">&#128256; Switch Branches</button>
-              <button class="btn btn-secondary" @click="initFromGitlab()">&#128270; Import from GitLab</button>
+              <button class="btn btn-secondary" @click="showBulkBranchModal = true">Switch Branches</button>
+              <button class="btn btn-secondary" @click="initFromGitlab()">Import from GitLab</button>
               <button class="btn btn-primary" @click="openAddRepoModal()">+ Add Repository</button>
             </div>
           </div>
 
           <div class="panel">
-            <div class="panel-header"><h3>&#9989; Active Repositories</h3><span style="font-size:.75rem;color:var(--muted)" x-text="repos.filter(r=>r.active).length ? repos.filter(r=>r.active).length + ' active' : ''"></span></div>
+            <div class="panel-header"><h3>Active Repositories</h3><span style="font-size:.75rem;color:var(--muted)" x-text="repos.filter(r=>r.active).length ? repos.filter(r=>r.active).length + ' active' : ''"></span></div>
             <div class="panel-body">
               <template x-if="repos.filter(r=>r.active).length === 0"><div class="placeholder">No active repositories. Activate pending repos below or add a new one.</div></template>
               <template x-for="r in repos.filter(r=>r.active)" :key="r.name">
                 <div class="repo-card">
                   <div class="repo-card-top">
                     <div>
-                      <span class="repo-name" x-text="r.name"></span><span class="repo-status-badge active">&#9989; active</span>
+                      <span class="repo-name" x-text="r.name"></span><span class="repo-status-badge active">active</span>
                       <span class="repo-branch" x-text="r.branch || 'development'"></span>
                     </div>
                     <div class="repo-actions">
-                      <button class="btn btn-secondary btn-sm" @click="toggleRepo(r.name, false)">&#9203; Deactivate</button>
+                      <button class="btn btn-secondary btn-sm" @click="toggleRepo(r.name, false)">Deactivate</button>
                       <button class="btn btn-secondary btn-sm" @click="openEditRepoModal(r.name)">Edit</button>
                       <button class="btn btn-danger btn-sm" @click="deleteRepo(r.name)">Remove</button>
                     </div>
@@ -563,10 +555,10 @@
 
           <div class="panel">
             <div class="panel-header">
-              <h3>&#9203; Pending Repositories</h3>
+              <h3>Pending Repositories</h3>
               <div style="display:flex;gap:.5rem;align-items:center">
                 <span style="font-size:.75rem;color:var(--muted)" x-text="repos.filter(r=>!r.active).length ? repos.filter(r=>!r.active).length + ' pending' : ''"></span>
-                <template x-if="repos.filter(r=>!r.active).length > 0"><button class="btn btn-success btn-sm" @click="activateAll()">&#10004; Activate All</button></template>
+                <template x-if="repos.filter(r=>!r.active).length > 0"><button class="btn btn-success btn-sm" @click="activateAll()">Activate All</button></template>
               </div>
             </div>
             <div class="panel-body">
@@ -575,11 +567,11 @@
                 <div class="repo-card">
                   <div class="repo-card-top">
                     <div>
-                      <span class="repo-name" x-text="r.name"></span><span class="repo-status-badge pending">&#9203; pending</span>
+                      <span class="repo-name" x-text="r.name"></span><span class="repo-status-badge pending">pending</span>
                       <span class="repo-branch" x-text="r.branch || 'development'"></span>
                     </div>
                     <div class="repo-actions">
-                      <button class="btn btn-success btn-sm" @click="toggleRepo(r.name, true)">&#10004; Activate</button>
+              <button class="btn btn-success btn-sm" @click="toggleRepo(r.name, true)">Activate</button>
                       <button class="btn btn-secondary btn-sm" @click="openEditRepoModal(r.name)">Edit</button>
                       <button class="btn btn-danger btn-sm" @click="deleteRepo(r.name)">Remove</button>
                     </div>
@@ -633,7 +625,7 @@
           <!-- GitLab Import Modal -->
           <div class="modal-overlay" :class="{ open: showGitlabModal }" @click.self="showGitlabModal = false">
             <div class="modal wide">
-              <div class="modal-header"><h3>&#128270; Import from GitLab</h3><button class="modal-close" @click="showGitlabModal = false">&times;</button></div>
+              <div class="modal-header"><h3>Import from GitLab</h3><button class="modal-close" @click="showGitlabModal = false">&times;</button></div>
               <div class="modal-body">
                 <template x-if="gitlabProjects.length === 0"><div class="loading">Loading GitLab projects...</div></template>
                 <template x-if="gitlabProjects.length > 0">
@@ -665,7 +657,7 @@
           <!-- Bulk Branch Modal -->
           <div class="modal-overlay" :class="{ open: showBulkBranchModal }" @click.self="showBulkBranchModal = false">
             <div class="modal" style="max-width:440px">
-              <div class="modal-header"><h3>&#128256; Switch All Branches</h3><button class="modal-close" @click="showBulkBranchModal = false">&times;</button></div>
+              <div class="modal-header"><h3>Switch All Branches</h3><button class="modal-close" @click="showBulkBranchModal = false">&times;</button></div>
               <div class="modal-body">
                 <p style="font-size:.85rem;color:var(--text2);margin-bottom:1rem">Set the tracking branch for <strong>all</strong> repositories at once.</p>
                 <div class="form-group"><label>New Branch</label><input x-model="bulkBranch" placeholder="development" list="bulkBranchList"><datalist id="bulkBranchList"><option value="development"><option value="main"><option value="master"><option value="qa"><option value="staging"></datalist><div class="help">This will update the branch for every repo. Existing checkouts will re-clone on next pull.</div></div>

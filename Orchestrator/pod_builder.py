@@ -266,7 +266,7 @@ def build_pod_spec(
              "done\n"
              "echo '📡 Notifying orchestrator of completion...'\n"
              "AGENT_ID_VAL=\"${AGENT_ID:-$TICKET_ID}\"\n"
-             "curl -s -X POST \"http://orchestrator." + AGENT_NAMESPACE + ".svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete\" -H 'Content-Type: application/json' -d \"{\\\"agent_id\\\": \\\"$AGENT_ID_VAL\\\", \\\"ticket_id\\\": \\\"$TICKET_ID\\\", \\\"queue_id\\\": \\\"$QUEUE_ID\\\", \\\"lines_added\\\": $LINES_ADDED, \\\"lines_removed\\\": $LINES_REMOVED, \\\"files_changed\\\": $FILES_CHANGED, \\\"mr_url\\\": \\\"$MR_URL\\\"}\" || echo '⚠️ Failed to notify orchestrator'\n"
+             "curl -s -X POST \"http://orchestrator." + AGENT_NAMESPACE + ".svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete\" -H 'Content-Type: application/json' -H 'Authorization: Bearer $HIVEMIND_API_KEY' -d \"{\\\"agent_id\\\": \\\"$AGENT_ID_VAL\\\", \\\"ticket_id\\\": \\\"$TICKET_ID\\\", \\\"queue_id\\\": \\\"$QUEUE_ID\\\", \\\"lines_added\\\": $LINES_ADDED, \\\"lines_removed\\\": $LINES_REMOVED, \\\"files_changed\\\": $FILES_CHANGED, \\\"mr_url\\\": \\\"$MR_URL\\\"}\" || echo '⚠️ Failed to notify orchestrator'\n"
              "echo '✅ Completion notification sent'\n"
         ],
         ports=[kclient.V1ContainerPort(name="opencode-web", container_port=4096)],
