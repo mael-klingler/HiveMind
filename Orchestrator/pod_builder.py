@@ -79,7 +79,7 @@ def build_pod_spec(
     init_container = kclient.V1Container(
         name="clone-repos",
         image=AGENT_IMAGE,
-        image_pull_policy="IfNotPresent",
+        image_pull_policy="Always",
         volume_mounts=[
             kclient.V1VolumeMount(name="workspace", mount_path="/workspace"),
             kclient.V1VolumeMount(name="repos-config", mount_path="/config"),
@@ -92,6 +92,7 @@ def build_pod_spec(
                 )
             )),
             kclient.V1EnvVar(name="GIT_USER", value=git_user),
+            kclient.V1EnvVar(name="GIT_SSL_NO_VERIFY", value="1"),
         ],
         command=["/bin/bash", "-c"],
         args=[_build_clone_script(repos_json)],
@@ -129,6 +130,7 @@ def build_pod_spec(
         kclient.V1EnvVar(name="BROWSER", value="none"),
         kclient.V1EnvVar(name="DISPLAY", value=""),
         kclient.V1EnvVar(name="NO_OPEN", value="1"),
+        kclient.V1EnvVar(name="GIT_SSL_NO_VERIFY", value="1"),
     ]
 
     if has_ollama_secret:
