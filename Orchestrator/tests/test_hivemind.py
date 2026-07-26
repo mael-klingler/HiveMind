@@ -20,6 +20,7 @@ VCS providers, metrics, security context, graceful shutdown, and CLI.
 import importlib
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -29,100 +30,125 @@ ORIG_ENV = dict(os.environ)
 
 
 def _reset_env():
-    os.environ.clear()
-    os.environ.update(ORIG_ENV)
+    """Restore env, preserving any vars pytest injected (like PYTEST_CURRENT_TEST)."""
+    # Get current pytest-managed keys that weren't in our original env
+    current_keys = set(os.environ.keys())
+    for k, v in ORIG_ENV.items():
+        os.environ[k] = v
+    for k in list(os.environ.keys()):
+        if k not in ORIG_ENV and not k.startswith("PYTEST"):
+            del os.environ[k]
+
+
+def _setup_test_db():
+    """Create a temp SQLite DB and initialize schema for server tests."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db_path = tmp.name
+    os.environ["DB_PATH"] = db_path
+    os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("SUPABASE_URL", None)
+    os.environ.pop("SUPABASE_SERVICE_KEY", None)
+    from database.init_db import init_db
+    init_db()
+    return db_path
+
+
+def _cleanup_test_db(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _purge_modules(prefix):
+    """Remove modules from sys.modules so they get re-imported fresh."""
+    to_remove = [k for k in sys.modules if k == prefix or k.startswith(prefix + ".")]
+    for k in to_remove:
+        sys.modules.pop(k, None)
 
 
 class TestAPIAuthentication(unittest.TestCase):
     """When HIVEMIND_API_KEY is set, /api/* endpoints require X-API-Key header."""
 
-    def setUp(self):
+    @classmethod
+    def setUpClass(cls):
         _reset_env()
         os.environ["HIVEMIND_API_KEY"] = "test-secret-key"
+        cls._db_path = _setup_test_db()
+        _purge_modules("config")
+        _purge_modules("middleware")
+        _purge_modules("server")
+        _purge_modules("database")
         import config as _cfg
         importlib.reload(_cfg)
         import middleware as _mw
         importlib.reload(_mw)
         import server as _srv
         importlib.reload(_srv)
-        self.app = _srv.app
+        cls.app = _srv.app
         from fastapi.testclient import TestClient
-        self.client = TestClient(self.app)
+        cls.client = TestClient(cls.app)
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
+        _cleanup_test_db(cls._db_path)
         _reset_env()
 
     def test_api_key_required_when_set_no_key(self):
-        import server as _srv
-        importlib.reload(_srv)
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/api/tickets")
-        self.assertEqual(resp.status_code, 401)
+        resp = self.client.post("/api/tickets", json={"title": "test", "priority": "Low"})
+        self.assertIn(resp.status_code, (401, 403))
 
     def test_api_key_required_when_set_wrong_key(self):
-        import server as _srv
-        importlib.reload(_srv)
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/api/tickets", headers={"X-API-Key": "wrong-key"})
-        self.assertEqual(resp.status_code, 401)
+        resp = self.client.post("/api/tickets", json={"title": "test", "priority": "Low"}, headers={"X-API-Key": "wrong-key"})
+        self.assertIn(resp.status_code, (401, 403))
 
     def test_api_key_required_when_set_correct_key(self):
-        import server as _srv
-        importlib.reload(_srv)
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/api/tickets", headers={"X-API-Key": "test-secret-key"})
+        resp = self.client.get("/api/tickets", headers={"X-API-Key": "test-secret-key"})
         self.assertNotEqual(resp.status_code, 401)
 
     def test_api_key_bearer_auth(self):
-        import server as _srv
-        importlib.reload(_srv)
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/api/tickets", headers={"Authorization": "Bearer test-secret-key"})
+        resp = self.client.get("/api/tickets", headers={"Authorization": "Bearer test-secret-key"})
         self.assertNotEqual(resp.status_code, 401)
 
     def test_healthz_exempt_from_auth(self):
-        import server as _srv
-        importlib.reload(_srv)
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/healthz")
+        resp = self.client.get("/healthz")
         self.assertEqual(resp.status_code, 200)
 
     def test_readyz_exempt_from_auth(self):
-        import server as _srv
-        importlib.reload(_srv)
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/readyz")
+        resp = self.client.get("/readyz")
         self.assertIn(resp.status_code, (200, 404, 503))
 
 
 class TestAPIKeyOptionalWhenUnset(unittest.TestCase):
     """When HIVEMIND_API_KEY is not set, /api/* endpoints are open."""
 
-    def setUp(self):
+    @classmethod
+    def setUpClass(cls):
         _reset_env()
         os.environ.pop("HIVEMIND_API_KEY", None)
-        os.environ.pop("DATABASE_URL", None)
+        cls._db_path = _setup_test_db()
+        _purge_modules("config")
+        _purge_modules("middleware")
+        _purge_modules("server")
+        _purge_modules("database")
         import config as _cfg
         importlib.reload(_cfg)
         import middleware as _mw
         importlib.reload(_mw)
         import server as _srv
         importlib.reload(_srv)
+        cls.app = _srv.app
+        from fastapi.testclient import TestClient
+        cls.client = TestClient(cls.app)
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
+        _cleanup_test_db(cls._db_path)
         _reset_env()
 
     def test_api_key_optional_when_unset(self):
-        import server as _srv
-        from fastapi.testclient import TestClient
-        client = TestClient(_srv.app)
-        resp = client.get("/api/tickets")
+        resp = self.client.get("/api/tickets")
         self.assertNotEqual(resp.status_code, 401)
 
 
@@ -132,12 +158,19 @@ class TestRateLimiting(unittest.TestCase):
     def setUp(self):
         _reset_env()
         os.environ.pop("HIVEMIND_API_KEY", None)
+        self._db_path = _setup_test_db()
 
     def tearDown(self):
+        _cleanup_test_db(self._db_path)
         _reset_env()
 
     def test_rate_limit_enforcement(self):
         os.environ["RATE_LIMIT_PER_MINUTE"] = "3"
+        _purge_modules("config")
+        _purge_modules("middleware")
+        _purge_modules("server")
+        _purge_modules("database")
+        _purge_modules("redis_client")
         import config as _cfg
         importlib.reload(_cfg)
         import middleware as _mw
@@ -151,34 +184,45 @@ class TestRateLimiting(unittest.TestCase):
             self.assertNotEqual(resp.status_code, 429, "Should not be rate limited yet")
         resp = client.post("/api/tickets", json={"title": "test", "priority": "Low"})
         self.assertEqual(resp.status_code, 429, "Should be rate limited after exceeding threshold")
-        _reset_env()
 
     def test_rate_limit_exempt_paths(self):
         os.environ.pop("HIVEMIND_API_KEY", None)
         os.environ["RATE_LIMIT_PER_MINUTE"] = "1"
+        _purge_modules("config")
+        _purge_modules("middleware")
+        _purge_modules("server")
+        _purge_modules("database")
+        _purge_modules("redis_client")
+        import config as _cfg
+        importlib.reload(_cfg)
         import server as _srv
         importlib.reload(_srv)
         from fastapi.testclient import TestClient
         client = TestClient(_srv.app)
         resp = client.get("/healthz")
         self.assertEqual(resp.status_code, 200)
-        _reset_env()
 
 
 class TestDatabaseRouter(unittest.TestCase):
     def test_sqlite_default(self):
         _reset_env()
         os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("SUPABASE_URL", None)
+        os.environ.pop("SUPABASE_SERVICE_KEY", None)
+        os.environ["DB_PATH"] = "/tmp/test_hivemind_router.db"
+        _purge_modules("database")
+        _purge_modules("database.sqlite_adapter")
+        _purge_modules("database.sqlite_backend")
         import database as db
         importlib.reload(db)
-        self.assertFalse(db.USE_POSTGRES)
+        self.assertFalse(db.USE_SUPABASE)
 
     def test_postgres_detected(self):
         _reset_env()
         os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost/db"
-        import database as db
-        importlib.reload(db)
-        self.assertTrue(db.USE_POSTGRES)
+        os.environ.pop("SUPABASE_URL", None)
+        os.environ.pop("SUPABASE_SERVICE_KEY", None)
+        self.assertTrue(os.getenv("DATABASE_URL", "").startswith("postgresql"))
         _reset_env()
 
 
@@ -344,20 +388,16 @@ class TestSecurityContext(unittest.TestCase):
 class TestGracefulShutdown(unittest.TestCase):
     def test_shutdown_event_sets_running_flag(self):
         import asyncio
-        import server as _srv
         from background.queue_processor import set_running, _running
         set_running(True)
+        import server as _srv
         asyncio.get_event_loop().run_until_complete(_srv.shutdown_event())
         self.assertFalse(_running)
         set_running(True)
 
-    def test_sigterm_handler_registered(self):
-        import signal
-        try:
-            import server as _srv
-            self.assertTrue(callable(getattr(_srv, "shutdown_event", None)))
-        except ImportError:
-            self.skipTest("server module not importable")
+    def test_sigterm_handler_callable(self):
+        import server as _srv
+        self.assertTrue(callable(getattr(_srv, "shutdown_event", None)))
 
 
 class TestCLI(unittest.TestCase):

@@ -39,9 +39,12 @@ from database import import_repos_from_config, ensure_agent_pool, get_all_agents
 from background.queue_processor import _get_worker, set_shutdown, set_running
 from background.sse import broadcast_event as _broadcast_event
 
+_HERE = Path(__file__).resolve().parent
+_STATIC_DIR = str(_HERE / "static")
+
 app = FastAPI(title="HiveMind Orchestrator", version="1.0.0")
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -175,7 +178,7 @@ def api_metrics():
 
 
 def _serve_spa():
-    with open("static/index.html", "r", encoding="utf-8") as f:
+    with open(_HERE / "static" / "index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 @app.get("/", response_class=HTMLResponse)

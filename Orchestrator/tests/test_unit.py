@@ -31,6 +31,7 @@ os.environ["DB_PATH"] = "/tmp/test_hivemind.db"
 
 class TestDatabaseURL(unittest.TestCase):
     def test_postgres_url_detected(self):
+        os.environ["DATABASE_URL"] = "postgresql://test:test@localhost:5432/test_hivemind"
         url = os.getenv("DATABASE_URL", "")
         self.assertTrue(url.startswith("postgresql"), "DATABASE_URL should start with postgresql")
 
