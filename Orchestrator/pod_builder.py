@@ -126,6 +126,9 @@ def build_pod_spec(
         kclient.V1EnvVar(name="OPENCODE_PERMISSION_EXTERNAL_DIRECTORY", value="allow"),
         kclient.V1EnvVar(name="OPENCODE_PERMISSION_DOOM_LOOP", value="allow"),
         kclient.V1EnvVar(name="TEST_COMMAND", value=os.getenv("TEST_COMMAND", "")),
+        kclient.V1EnvVar(name="BROWSER", value="none"),
+        kclient.V1EnvVar(name="DISPLAY", value=""),
+        kclient.V1EnvVar(name="NO_OPEN", value="1"),
     ]
 
     if has_ollama_secret:
@@ -161,11 +164,13 @@ def build_pod_spec(
             kclient.V1VolumeMount(name="task-prompt", mount_path="/etc/task"),
             kclient.V1VolumeMount(name="opencode-config", mount_path="/mnt/opencode-config"),
             kclient.V1VolumeMount(name="memory-blocks", mount_path="/mnt/memory-blocks"),
+            kclient.V1VolumeMount(name="repos-config", mount_path="/config"),
         ],
         env=opencode_env,
         command=["/bin/bash", "-c"],
         args=[
             "set -e\n"
+            "which xdg-open 2>/dev/null || ln -sf /bin/true /usr/local/bin/xdg-open\n"
             "echo '🚀 Starting opencode agent for ticket $TICKET_ID'\n"
             "TASK_FILE=/etc/task/task.md\n"
             "if [ ! -f \"$TASK_FILE\" ]; then\n"
