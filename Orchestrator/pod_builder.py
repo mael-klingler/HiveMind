@@ -170,7 +170,9 @@ def build_pod_spec(
         command=["/bin/bash", "-c"],
         args=[
             "set -e\n"
-            "which xdg-open 2>/dev/null || ln -sf /bin/true /usr/local/bin/xdg-open\n"
+            "mkdir -p /home/hivemind/bin\n"
+            "printf '#!/bin/sh\\nexit 0\\n' > /home/hivemind/bin/xdg-open && chmod +x /home/hivemind/bin/xdg-open\n"
+            "export PATH=/home/hivemind/bin:$PATH\n"
             "echo '🚀 Starting opencode agent for ticket $TICKET_ID'\n"
             "TASK_FILE=/etc/task/task.md\n"
             "if [ ! -f \"$TASK_FILE\" ]; then\n"
