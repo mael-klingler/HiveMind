@@ -23,6 +23,12 @@ if [ ! -f "$TASK_FILE" ]; then
   exit 1
 fi
 
+mkdir -p /home/hivemind/bin
+printf '#!/bin/sh\nexit 0\n' > /home/hivemind/bin/xdg-open && chmod +x /home/hivemind/bin/xdg-open
+export PATH="/home/hivemind/bin:$PATH"
+export BROWSER="none"
+export DISPLAY=""
+
 FIRST_LINE=$(head -1 "$TASK_FILE")
 
 TICKET_ID=$(echo "$FIRST_LINE" | sed -n 's/^# .*Task: \([^ ]*\).*/\1/p')
