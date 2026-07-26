@@ -62,7 +62,7 @@ def build_pod_spec(
     has_ollama_secret = bool(ollama_cloud_api_key)
 
     repos_json = json.dumps({r["name"]: {"url": r["url"], "branch": r.get("branch", "development")} for r in repos}, indent=2, ensure_ascii=False)
-    opencode_config = _build_opencode_config(opencode_model, ollama_base_url, plugin_names or [], mcp_entries or {})
+    opencode_config = _build_opencode_config(opencode_model, ollama_base_url, plugin_names or [], mcp_entries or {}, llm_provider=os.getenv("LLM_PROVIDER", ""), ollama_cloud_api_key=ollama_cloud_api_key)
     memory_md = analysis.get("_memory_md", "") or _default_memory_md()
 
     labels = {
@@ -350,26 +350,46 @@ echo "All repos processed"
 """
 
 
-def _build_opencode_config(opencode_model: str, ollama_base_url: str, plugin_names: List[str], mcp_entries: Dict) -> Dict:
+def _build_opencode_config(opencode_model: str, ollama_base_url: str, plugin_names: List[str], mcp_entries: Dict, llm_provider: str = "", ollama_cloud_api_key: str = "") -> Dict:
+    if llm_provider == "ollama_cloud" and ollama_cloud_api_key:
+        provider_key = "ollama_cloud"
+        provider_entry = {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Ollama Cloud",
+            "options": {"baseURL": ollama_base_url or "https://ollama.com"},
+            "apiKey": ollama_cloud_api_key,
+            "models": {
+                opencode_model: {
+                    "name": opencode_model,
+                    "options": {"num_ctx": 32768},
+                }
+            },
+        }
+        model_ref = f"ollama_cloud/{opencode_model}"
+    else:
+        provider_key = "ollama"
+        provider_entry = {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Ollama",
+            "options": {"baseURL": ollama_base_url or "http://localhost:11434/v1"},
+            "models": {
+                opencode_model: {
+                    "name": opencode_model,
+                    "options": {"num_ctx": 32768},
+                }
+            },
+        }
+        model_ref = f"ollama/{opencode_model}"
+
     return {
         "$schema": "https://opencode.ai/config.json",
-        "model": f"ollama/{opencode_model}",
-        "small_model": f"ollama/{opencode_model}",
+        "model": model_ref,
+        "small_model": model_ref,
         "autoupdate": False,
         "share": "disabled",
         "plugin": plugin_names,
         "provider": {
-            "ollama": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Ollama",
-                "options": {"baseURL": ollama_base_url},
-                "models": {
-                    opencode_model: {
-                        "name": opencode_model,
-                        "options": {"num_ctx": 32768},
-                    }
-                },
-            }
+            provider_key: provider_entry,
         },
         "mcp": mcp_entries or {},
     }
@@ -454,7 +474,7 @@ def spawn_agent_pod(
             mcp_entries[srv["name"]] = entry
 
     branch = analysis.get("branch", f"feature/{ticket_id.lower()}")
-    opencode_config = _build_opencode_config(opencode_model, ollama_base_url, plugin_names or [], mcp_entries)
+    opencode_config = _build_opencode_config(opencode_model, ollama_base_url, plugin_names or [], mcp_entries, llm_provider=os.getenv("LLM_PROVIDER", ""), ollama_cloud_api_key=ollama_cloud_api_key)
 
     repos_json = json.dumps({r["name"]: {"url": r["url"], "branch": r.get("branch", "development")} for r in repos}, indent=2, ensure_ascii=False)
 
