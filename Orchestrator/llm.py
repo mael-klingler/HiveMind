@@ -49,7 +49,7 @@ PROVIDERS = {PROVIDER_OLLAMA, PROVIDER_OLLAMA_CLOUD, PROVIDER_OPENAI, PROVIDER_A
 
 DEFAULT_BASE_URLS = {
     PROVIDER_OLLAMA: "http://localhost:11434/v1",
-    PROVIDER_OLLAMA_CLOUD: "https://ollama.com",
+    PROVIDER_OLLAMA_CLOUD: "https://ollama.com/v1",
     PROVIDER_OPENAI: "https://api.openai.com/v1",
     PROVIDER_ANTHROPIC: "https://api.anthropic.com",
 }

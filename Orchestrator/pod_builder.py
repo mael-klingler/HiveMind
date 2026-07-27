@@ -255,7 +255,7 @@ def _build_opencode_config(opencode_model: str, ollama_base_url: str, plugin_nam
         provider_entry = {
             "npm": "@ai-sdk/openai-compatible",
             "name": "Ollama Cloud",
-            "options": {"baseURL": ollama_base_url or "https://ollama.com"},
+            "options": {"baseURL": ollama_base_url or "https://ollama.com/v1"},
             "apiKey": ollama_cloud_api_key,
             "models": {
                 opencode_model: {
