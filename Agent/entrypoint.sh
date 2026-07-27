@@ -5,6 +5,9 @@ DRY_RUN="${DRY_RUN:-false}"
 COMMENT_POLL_INTERVAL="${COMMENT_POLL_INTERVAL:-30}"
 GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN must be set}"
 GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST must be set}"
+GITLAB_HOST_NO_PROTO="${GITLAB_HOST#https://}"
+GITLAB_HOST_NO_PROTO="${GITLAB_HOST_NO_PROTO#http://}"
+GITLAB_API_URL="${GITLAB_HOST}/api/v4"
 GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
 
 TASK_FILE="${1:-}"
@@ -80,11 +83,11 @@ fi
 BRANCH="feature/${TICKET_ID}"
 
 # ── MR URL detection: Checkout existing branch from MR ─────
-MR_URL=$(grep -oE "https?://${GITLAB_HOST}/[^ ]*merge_requests/[0-9]+" "$TASK_FILE" 2>/dev/null | head -1 || true)
+MR_URL=$(grep -oE "https?://${GITLAB_HOST_NO_PROTO}/[^ ]*merge_requests/[0-9]+" "$TASK_FILE" 2>/dev/null | head -1 || true)
 MR_BRANCH=""
 if [ -n "$MR_URL" ]; then
   echo "🔗 MR URL found: $MR_URL"
-  MR_PROJECT=$(echo "$MR_URL" | sed -E "s|https?://${GITLAB_HOST}/||;s|/-/merge_requests.*||;s|/merge_requests.*||")
+  MR_PROJECT=$(echo "$MR_URL" | sed -E "s|https?://${GITLAB_HOST_NO_PROTO}/||;s|/-/merge_requests.*||;s|/merge_requests.*||")
   MR_IID=$(echo "$MR_URL" | grep -oE 'merge_requests/[0-9]+' | grep -oE '[0-9]+')
   if [ -n "$MR_PROJECT" ] && [ -n "$MR_IID" ]; then
     ENCODED_PROJECT=$(echo -n "$MR_PROJECT" | jq -sRr @uri)
@@ -337,9 +340,9 @@ inject_git_credentials() {
     cd "$repo" || continue
     local REMOTE_URL
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-    if echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITLAB_HOST}"; then
+    if echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITLAB_HOST_NO_PROTO}"; then
       :
-    elif echo "$REMOTE_URL" | grep -q "^https://${GITLAB_HOST}"; then
+    elif echo "$REMOTE_URL" | grep -q "^https://${GITLAB_HOST_NO_PROTO}"; then
       git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${REMOTE_URL#https://}"
     elif echo "$REMOTE_URL" | grep -q "^https://"; then
       local CLEAN_URL
@@ -508,7 +511,7 @@ inject_git_credentials
 
 # ── Phase 2: Commit, Push, MR — only for real Git repos ──────────────────
 
-GITLAB_API_URL="https://${GITLAB_HOST}/api/v4"
+GITLAB_API_URL="${GITLAB_HOST}/api/v4"
 
 create_merge_request() {
   local project_path="$1"
@@ -645,7 +648,7 @@ for dir in /workspace/*/; do
     fi
   fi
 
-  PROJECT_HOST="${GITLAB_HOST}"
+  PROJECT_HOST="${GITLAB_HOST_NO_PROTO}"
   PROJECT_PATH=$(echo "$PROJECT_PATH" | sed "s|^${PROJECT_HOST}/||")
 
   MR_URL=$(create_merge_request \
