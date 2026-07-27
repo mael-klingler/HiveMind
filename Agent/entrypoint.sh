@@ -9,6 +9,7 @@ GITLAB_HOST_NO_PROTO="${GITLAB_HOST#https://}"
 GITLAB_HOST_NO_PROTO="${GITLAB_HOST_NO_PROTO#http://}"
 GITLAB_API_URL="${GITLAB_HOST}/api/v4"
 GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
+CURL_OPTS="-sS -k"
 
 TASK_FILE="${1:-}"
 
@@ -91,7 +92,7 @@ if [ -n "$MR_URL" ]; then
   MR_IID=$(echo "$MR_URL" | grep -oE 'merge_requests/[0-9]+' | grep -oE '[0-9]+')
   if [ -n "$MR_PROJECT" ] && [ -n "$MR_IID" ]; then
     ENCODED_PROJECT=$(echo -n "$MR_PROJECT" | jq -sRr @uri)
-    MR_DATA=$(curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+    MR_DATA=$(curl $CURL_OPTS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       "${GITLAB_API_URL}/projects/${ENCODED_PROJECT}/merge_requests/${MR_IID}" 2>&1 || true)
     MR_BRANCH=$(echo "$MR_DATA" | jq -r '.source_branch // empty' 2>/dev/null || true)
     if [ -n "$MR_BRANCH" ]; then
@@ -525,7 +526,7 @@ create_merge_request() {
 
   # Check if project was moved/redirected → use new path
   local project_info
-  project_info=$(curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_API_URL}/projects/${encoded_path}" 2>&1)
+  project_info=$(curl $CURL_OPTS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_API_URL}/projects/${encoded_path}" 2>&1)
   if echo "$project_info" | jq -e '.message' 2>/dev/null | grep -qi "moved"; then
     echo "⚠️  Project ${project_path} was moved, trying redirect..."
     local redirected_path
@@ -544,7 +545,7 @@ create_merge_request() {
 
   echo "🔍 Searching for existing MR for ${project_path} (${source_branch} → ${target_branch})..."
   local existing
-  existing=$(curl -sS \
+  existing=$(curl $CURL_OPTS \
     -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
     "${GITLAB_API_URL}/projects/${encoded_path}/merge_requests?state=opened&source_branch=${source_branch}&target_branch=${target_branch}" 2>&1)
 
@@ -564,7 +565,7 @@ create_merge_request() {
 
   echo "📝 Creating new MR for ${project_path}..."
   local result
-  result=$(curl -sS \
+  result=$(curl $CURL_OPTS \
     -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
     -H "Content-Type: application/json" \
     -d "$mr_body" \
