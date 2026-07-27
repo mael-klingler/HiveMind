@@ -383,11 +383,12 @@ post_progress() {
     --arg type "$comment_type" \
     --arg content "[$timestamp] $content" \
     '{author: $author, comment_type: $type, content: $content}')
-  curl -sS -X POST \
+  curl $CURL_OPTS -X POST \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${HIVEMIND_API_KEY}" \
     -d "$body" \
     "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" \
-    >/dev/null 2>&1 || true
+    || true
 }
 
 PROGRESS_FIFO="/tmp/opencode_progress_fifo"
@@ -669,7 +670,7 @@ done
 echo "🏁 All repos processed."
 post_progress "🏁 Ticket ${TICKET_ID} completed – All repos processed." "system"
 
-# ── Phase 3: Comment polling — react to user feedback ────────────
+# ── Gather token usage from opencode DB ───────────────────────────
 
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
   echo "👂 Starting comment polling (every ${COMMENT_POLL_INTERVAL}s)..."
@@ -677,7 +678,7 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
   LAST_SEEN_COMMENT_ID=0
 
   while true; do
-    COMMENTS_JSON=$(curl -sS "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" 2>/dev/null || echo "[]")
+    COMMENTS_JSON=$(curl $CURL_OPTS "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" -H "Authorization: Bearer ${HIVEMIND_API_KEY}" 2>/dev/null || echo "[]")
 
     PENDING_COMMENTS=$(echo "$COMMENTS_JSON" | jq -r "
       [ .[] | select(
@@ -803,11 +804,12 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
     --arg completion_tokens "$TOKENS_COMPLETION" \
     --arg model "$TOKENS_MODEL" \
     '{agent_id: $agent_id, ticket_id: $ticket_id, lines_added: ($lines_added | tonumber), lines_removed: ($lines_removed | tonumber), files_changed: ($files_changed | tonumber), prompt_tokens: ($prompt_tokens | tonumber), completion_tokens: ($completion_tokens | tonumber), model: $model}')
-  curl -sS -X POST \
+  curl $CURL_OPTS -X POST \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${HIVEMIND_API_KEY}" \
     -d "$COMPLETE_BODY" \
     "${ORCHESTRATOR_URL}/api/agents/$AGENT_ID/complete" \
-    >/dev/null 2>&1 || echo "⚠️ Failed to notify orchestrator of completion"
+    || echo "⚠️ Failed to notify orchestrator of completion"
 fi
 
 # ── Memory Sync-Back ──────────────────────────────────────────────
@@ -838,11 +840,12 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/home/hivem
     SYNC_BLOCKS="${SYNC_BLOCKS}$(printf '%s' '{"label":"'"$_label"'","content":'"$(printf '%s' "$_content" | jq -Rs .)"',"description":"'"$_description"'","block_limit":'"$_block_limit"',"read_only":'"$_read_only"',"repo_name":"_global"}')"
   done
   SYNC_BLOCKS="${SYNC_BLOCKS}]"
-  curl -sS -X POST \
+  curl $CURL_OPTS -X POST \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${HIVEMIND_API_KEY}" \
     -d "{\"blocks\": $SYNC_BLOCKS}" \
     "${ORCHESTRATOR_URL}/api/agent-memory/${AGENT_ID}/sync" \
-    >/dev/null 2>&1 || echo "⚠️ Memory sync-back failed"
+    || echo "⚠️ Memory sync-back failed"
   echo "✅ Memory sync-back complete"
 fi
 
