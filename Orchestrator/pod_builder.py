@@ -140,6 +140,12 @@ def build_pod_spec(
                 secret_key_ref=kclient.V1SecretKeySelector(name="ollama-cloud-api-key", key="api-key")
             )
         ))
+        opencode_env.append(kclient.V1EnvVar(
+            name="OPENAI_API_KEY",
+            value_from=kclient.V1EnvVarSource(
+                secret_key_ref=kclient.V1SecretKeySelector(name="ollama-cloud-api-key", key="api-key")
+            )
+        ))
 
     llm_provider = os.getenv("LLM_PROVIDER", "")
     if llm_provider:
@@ -255,8 +261,8 @@ def _build_opencode_config(opencode_model: str, ollama_base_url: str, plugin_nam
         provider_entry = {
             "npm": "@ai-sdk/openai-compatible",
             "name": "Ollama Cloud",
-            "options": {"baseURL": ollama_base_url or "https://ollama.com/v1"},
-            "apiKey": ollama_cloud_api_key,
+            "options": {"baseURL": (ollama_base_url.rstrip("/") + "/v1") if ollama_base_url else "https://ollama.com/v1"},
+            "apiKey": "{env:OLLAMA_CLOUD_API_KEY}",
             "models": {
                 opencode_model: {
                     "name": opencode_model,

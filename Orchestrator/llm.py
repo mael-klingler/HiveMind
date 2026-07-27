@@ -286,7 +286,7 @@ class LLMClient:
                     }), headers=headers)
                     return resp.status_code in (200, 400)
             elif self.provider == PROVIDER_OLLAMA_CLOUD:
-                url = f"{self.base_url.rstrip('/')}/api/tags"
+                url = f"{self.base_url.rstrip('/')}/models"
                 with httpx.Client(timeout=5, verify=False, follow_redirects=True) as client:
                     resp = client.get(url, headers=headers)
                     return resp.status_code == 200

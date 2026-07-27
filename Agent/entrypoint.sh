@@ -216,6 +216,15 @@ else
 fi
 export OPENCODE_CONFIG=/home/hivemind/.config/opencode/opencode.json
 
+# ── OpenCode Auth (API Keys) ─────────────────────────────────────────────
+mkdir -p /home/hivemind/.local/share/opencode
+AUTH_FILE="/home/hivemind/.local/share/opencode/auth.json"
+if [ -n "${OLLAMA_CLOUD_API_KEY:-}" ] && [ ! -f "$AUTH_FILE" ]; then
+  echo '{"ollama_cloud":"'"$OLLAMA_CLOUD_API_KEY"'"}' > "$AUTH_FILE"
+  chmod 600 "$AUTH_FILE"
+  echo "🔑 Wrote Ollama Cloud API key to auth.json"
+fi
+
 # ── Agent Memory Blocks ──────────────────────────────────────────────────
 mkdir -p /home/hivemind/.config/opencode/memory
 MEMORY_DIR="/home/hivemind/.config/opencode/memory"
