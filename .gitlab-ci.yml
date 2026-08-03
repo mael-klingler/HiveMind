@@ -54,8 +54,6 @@ build:orchestrator:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
-    - apk add --no-cache curl bash
-    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
     - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
   script:
     - ORCHESTRATOR_TAG="${CI_COMMIT_SHORT_SHA}"
@@ -63,7 +61,10 @@ build:orchestrator:
       if [ "$CI_COMMIT_BRANCH" = "main" ]; then
         ORCHESTRATOR_TAG="latest"
       fi
-    - just docker-build-go
+    - docker build -f Dockerfile.go
+        -t ${ORCHESTRATOR_IMAGE}:${ORCHESTRATOR_TAG}
+        -t ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
+        .
     - docker push ${ORCHESTRATOR_IMAGE}:${ORCHESTRATOR_TAG}
     - docker push ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
   rules:
@@ -82,8 +83,6 @@ build:agent:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
-    - apk add --no-cache curl bash
-    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
     - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
   script:
     - AGENT_TAG="${CI_COMMIT_SHORT_SHA}"
@@ -91,7 +90,10 @@ build:agent:
       if [ "$CI_COMMIT_BRANCH" = "main" ]; then
         AGENT_TAG="latest"
       fi
-    - just docker-build-agent
+    - docker build
+        -t ${AGENT_IMAGE}:${AGENT_TAG}
+        -t ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}
+        -f Agent/Dockerfile Agent/
     - docker push ${AGENT_IMAGE}:${AGENT_TAG}
     - docker push ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}
   rules:
