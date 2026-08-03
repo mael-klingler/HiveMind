@@ -1,0 +1,172 @@
+// Copyright 2026 Mael Klingler
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/pressly/goose/v3"
+
+	"github.com/maelklingler/hivemind/internal/api"
+	"github.com/maelklingler/hivemind/internal/background"
+	"github.com/maelklingler/hivemind/internal/config"
+	"github.com/maelklingler/hivemind/internal/database"
+	"github.com/maelklingler/hivemind/internal/k8s"
+	"github.com/maelklingler/hivemind/internal/llm"
+	"github.com/maelklingler/hivemind/internal/sse"
+)
+
+func main() {
+	migrateCmd := flag.Bool("migrate", false, "Run database migrations")
+	portFlag := flag.Int("port", 0, "Override port (default from ORCHESTRATOR_PORT env)")
+	flag.Parse()
+
+	cfg := config.Load()
+	if *portFlag != 0 {
+		cfg.Port = fmt.Sprintf("%d", *portFlag)
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	if *migrateCmd {
+		if err := runMigrations(cfg); err != nil {
+			slog.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("migrations complete")
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	db, err := database.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := runMigrations(cfg); err != nil {
+		slog.Warn("auto-migration warning", "error", err)
+	}
+
+	k8sClient, err := k8s.NewClient(cfg.AgentNamespace)
+	if err != nil {
+		slog.Warn("kubernetes client not available (running outside cluster?)", "error", err)
+	}
+
+	llmClient := llm.NewLLMClient(cfg)
+
+	if err := db.EnsureAgentPool(ctx, 3); err != nil {
+		slog.Warn("failed to ensure agent pool", "error", err)
+	}
+
+	broadcaster := sse.NewBroadcaster()
+
+	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient)
+	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient)
+	reviewMonitor := background.NewReviewMonitor(cfg, db, k8sClient, broadcaster)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		queueProcessor.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		agentMonitor.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		reviewMonitor.Run(ctx)
+	}()
+
+	server := api.NewServer(cfg, db, k8sClient, broadcaster)
+
+	addr := fmt.Sprintf(":%s", cfg.Port)
+	httpServer := &http.Server{
+		Addr:         addr,
+		Handler:      server.Router,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		slog.Info("orchestrator starting", "addr", addr, "vcs_provider", cfg.VCSProvider,
+			"api_key", boolToStr(cfg.HivemindAPIKey != ""), "k8s_namespace", cfg.AgentNamespace)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-sigCh
+	slog.Info("shutting down gracefully")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	queueProcessor.Stop()
+	agentMonitor.Stop()
+	reviewMonitor.Stop()
+	wg.Wait()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown error", "error", err)
+	}
+
+	slog.Info("shutdown complete")
+}
+
+func runMigrations(cfg *config.Config) error {
+	if cfg.DatabaseURL == "" {
+		slog.Info("no DATABASE_URL set, skipping migrations")
+		return nil
+	}
+	db, err := goose.OpenDBWithDriver("postgres", cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("open migration db: %w", err)
+	}
+	defer db.Close()
+
+	migrationsDir := database.MigrationsDir()
+	if err := goose.Up(db, migrationsDir); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	return nil
+}
+
+func boolToStr(b bool) string {
+	if b {
+		return "enabled"
+	}
+	return "disabled"
+}

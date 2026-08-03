@@ -196,8 +196,17 @@
           <div class="modal-overlay" :class="{ open: showDetailModal }" @click.self="closeDetail()">
             <div class="modal wide">
               <div class="modal-header"><h3 x-text="detailTitle"></h3><button class="modal-close" @click="closeDetail()">&times;</button></div>
-              <div class="modal-body" x-html="detailHtml"></div>
-              <div class="modal-footer" x-html="detailFooter"></div>
+               <div class="modal-body" x-html="detailHtml"></div>
+               <div id="liveLogBox" x-show="liveLogContent !== null" x-init="$watch('liveLogContent', v => { const lc = document.getElementById('logContent'); if (lc) { lc.textContent = v || ''; lc.scrollTop = lc.scrollHeight; } })" style="margin-top:.75rem">
+                 <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem">
+                   <label style="font-size:.75rem;font-weight:600;color:var(--text)">Agent Logs</label>
+                   <span x-text="liveLogPod" style="font-size:.65rem;color:var(--muted);margin-left:auto" id="logStatus"></span>
+                   <button class="btn" style="font-size:.65rem;padding:.2rem .5rem" @click="liveLogContent=null;liveLogPod=''">Close</button>
+                   <button class="btn" style="font-size:.65rem;padding:.2rem .5rem" @click="loadLiveLogs(liveLogTicketId)">Refresh</button>
+                 </div>
+                 <div id="logContent" style="background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:.5rem;font-family:monospace;font-size:.7rem;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto"></div>
+               </div>
+               <div class="modal-footer" x-html="detailFooter"></div>
             </div>
           </div>
         </div>
@@ -868,6 +877,9 @@ function kanbanPage() {
       { key: 'stopped', label: 'Stopped' }
     ],
     liveLogInterval: null,
+    liveLogContent: null,
+    liveLogPod: '',
+    liveLogTicketId: '',
 
     init() {
       this.loadTickets();
@@ -962,6 +974,8 @@ function kanbanPage() {
 
     closeDetail() {
       this.showDetailModal = false;
+      this.liveLogContent = null;
+      this.liveLogPod = '';
       if (this.liveLogInterval) { clearInterval(this.liveLogInterval); this.liveLogInterval = null; }
     },
 
@@ -985,21 +999,18 @@ function kanbanPage() {
     },
 
     async loadLiveLogs(ticketId) {
-      try {
-        const data = await HM.api('/tickets/' + ticketId + '/logs?tail=150');
-        let logBox = document.getElementById('liveLogBox');
-        if (!logBox) {
-          logBox = document.createElement('div');
-          logBox.id = 'liveLogBox';
-          logBox.style.marginTop = '0.75rem';
-          logBox.innerHTML = '<div class="log-toolbar"><label>Agent Logs</label><span id="logStatus" style="font-size:.65rem;color:var(--muted);margin-left:auto">loading...</span><button class="btn" style="font-size:.65rem;padding:.2rem .5rem" onclick="this.closest(\'#liveLogBox\').remove()">Close</button><button class="btn" style="font-size:.65rem;padding:.2rem .5rem" onclick="window._refreshLiveLog(\'' + ticketId + '\')">Refresh</button></div><div class="log-box" id="logContent">Loading logs...</div>';
-          document.querySelector('.modal-body.open, .modal-body')?.appendChild(logBox) || document.querySelector('[x-ref="detailBody"]')?.appendChild(logBox);
-        }
-        const lc = document.getElementById('logContent');
-        if (lc) { lc.textContent = data.logs || '(no logs)'; lc.scrollTop = lc.scrollHeight; }
-        const ls = document.getElementById('logStatus');
-        if (ls) ls.textContent = data.status === 'ok' ? data.pod : data.status;
-      } catch(e) { console.error(e); }
+      this.liveLogTicketId = ticketId;
+      if (this.liveLogInterval) { clearInterval(this.liveLogInterval); this.liveLogInterval = null; }
+      const fetchLogs = async () => {
+        try {
+          const data = await HM.api('/tickets/' + this.liveLogTicketId + '/logs?tail=150');
+          let logs = data.logs || '(no logs)';
+          this.liveLogContent = logs;
+          this.liveLogPod = data.status === 'ok' ? data.pod : data.status;
+        } catch(e) { console.error(e); this.liveLogContent = 'Error loading logs: ' + e.message; }
+      };
+      await fetchLogs();
+      this.liveLogInterval = setInterval(fetchLogs, 5000);
     },
 
     async createTicket() {

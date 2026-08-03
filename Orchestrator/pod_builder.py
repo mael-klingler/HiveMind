@@ -79,7 +79,7 @@ def build_pod_spec(
     init_container = kclient.V1Container(
         name="clone-repos",
         image=AGENT_IMAGE,
-        image_pull_policy="IfNotPresent",
+        image_pull_policy="Always",
         volume_mounts=[
             kclient.V1VolumeMount(name="workspace", mount_path="/workspace"),
             kclient.V1VolumeMount(name="repos-config", mount_path="/config"),
@@ -92,6 +92,7 @@ def build_pod_spec(
                 )
             )),
             kclient.V1EnvVar(name="GIT_USER", value=git_user),
+            kclient.V1EnvVar(name="GIT_SSL_NO_VERIFY", value="1"),
         ],
         command=["/bin/bash", "-c"],
         args=[_build_clone_script(repos_json)],
@@ -129,11 +130,18 @@ def build_pod_spec(
         kclient.V1EnvVar(name="BROWSER", value="none"),
         kclient.V1EnvVar(name="DISPLAY", value=""),
         kclient.V1EnvVar(name="NO_OPEN", value="1"),
+        kclient.V1EnvVar(name="GIT_SSL_NO_VERIFY", value="1"),
     ]
 
     if has_ollama_secret:
         opencode_env.append(kclient.V1EnvVar(
             name="OLLAMA_CLOUD_API_KEY",
+            value_from=kclient.V1EnvVarSource(
+                secret_key_ref=kclient.V1SecretKeySelector(name="ollama-cloud-api-key", key="api-key")
+            )
+        ))
+        opencode_env.append(kclient.V1EnvVar(
+            name="OPENAI_API_KEY",
             value_from=kclient.V1EnvVarSource(
                 secret_key_ref=kclient.V1SecretKeySelector(name="ollama-cloud-api-key", key="api-key")
             )
@@ -158,7 +166,7 @@ def build_pod_spec(
     main_container = kclient.V1Container(
         name="opencode-agent",
         image=AGENT_IMAGE,
-        image_pull_policy="IfNotPresent",
+        image_pull_policy="Always",
         volume_mounts=[
             kclient.V1VolumeMount(name="workspace", mount_path="/workspace"),
             kclient.V1VolumeMount(name="task-prompt", mount_path="/etc/task"),
@@ -167,118 +175,8 @@ def build_pod_spec(
             kclient.V1VolumeMount(name="repos-config", mount_path="/config"),
         ],
         env=opencode_env,
-        command=["/bin/bash", "-c"],
-        args=[
-            "set -e\n"
-            "mkdir -p /home/hivemind/bin\n"
-            "printf '#!/bin/sh\\nexit 0\\n' > /home/hivemind/bin/xdg-open && chmod +x /home/hivemind/bin/xdg-open\n"
-            "export PATH=/home/hivemind/bin:$PATH\n"
-            "echo '🚀 Starting opencode agent for ticket $TICKET_ID'\n"
-            "TASK_FILE=/etc/task/task.md\n"
-            "if [ ! -f \"$TASK_FILE\" ]; then\n"
-            "  echo '❌ No task file found at $TASK_FILE'\n"
-            "  exit 1\n"
-            "fi\n"
-            "mkdir -p /home/hivemind/.config/opencode\n"
-            "if [ -f /mnt/opencode-config/opencode.json ]; then\n"
-            "  cp /mnt/opencode-config/opencode.json /home/hivemind/.config/opencode/opencode.json\n"
-            "fi\n"
-            "mkdir -p /home/hivemind/.config/opencode/memory\n"
-            "if [ -d /mnt/memory-blocks ]; then\n"
-            "  cp /mnt/memory-blocks/*.md /home/hivemind/.config/opencode/memory/ 2>/dev/null || true\n"
-            "fi\n"
-            "if [ -n \"${OLLAMA_CLOUD_API_KEY:-}\" ]; then\n"
-            "  export OLLAMA_API_KEY=\"$OLLAMA_CLOUD_API_KEY\"\n"
-            "fi\n"
-            "export OPENCODE_CONFIG=/home/hivemind/.config/opencode/opencode.json\n"
-            "export GITLAB_TOKEN GITLAB_HOST GIT_USER GITLAB_USER BRANCH\n"
-            "export GITLAB_USER=${GITLAB_USER:-$GIT_USER}\n"
-            "git config --global user.email 'hivemind-agents@example.com'\n"
-            "git config --global user.name 'HiveMind'\n"
-            "git config --global credential.helper store\n"
-            "echo \"https://${GIT_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}\" > /home/hivemind/.git-credentials\n"
-            "chmod 600 /home/hivemind/.git-credentials\n"
-            "for repo in $(jq -r 'keys[]' /config/repos.json); do\n"
-            "  url=$(jq -r --arg r \"$repo\" '.[$r].url' /config/repos.json)\n"
-            "  branch=$(jq -r --arg r \"$repo\" '.[$r].branch' /config/repos.json)\n"
-            "  if echo \"$url\" | grep -qE '^https?://'; then\n"
-            "    url=$(echo \"$url\" | sed -E \"s|^(https?://)|\\\\1${GIT_USER}:${GITLAB_TOKEN}@|\")\n"
-            "  fi\n"
-            "  if [ -d \"/workspace/$repo\" ] && [ -d \"/workspace/$repo/.git\" ]; then\n"
-            "    cd \"/workspace/$repo\"\n"
-            "  fi\n"
-            "done\n"
-            "PRIMARY_REPO=$(jq -r '.repositories[] | select(.primary == true) | .name' /home/hivemind/.config/opencode/opencode.json 2>/dev/null | head -1 || true)\n"
-            "if [ -n \"$PRIMARY_REPO\" ] && [ -d \"/workspace/$PRIMARY_REPO\" ]; then\n"
-            "  cd \"/workspace/$PRIMARY_REPO\"\n"
-            "fi\n"
-            "TASK_PROMPT=$(cat \"$TASK_FILE\")\n"
-            "opencode web --hostname 0.0.0.0 --port 4096 &\n"
-            "WEB_PID=$!\n"
-            "sleep 3\n"
-            "opencode run --attach \"http://localhost:4096\" ${OPENCODE_SERVER_PASSWORD:+--password \"$OPENCODE_SERVER_PASSWORD\"} --title \"[${TICKET_ID}] ${TICKET_TITLE:-}\" --dangerously-skip-permissions \"$TASK_PROMPT\" || true\n"
-            "RC=$?\n"
-            "echo \"🛑 opencode exited with code $RC\"\n"
-            "LINES_ADDED=0\n"
-            "LINES_REMOVED=0\n"
-            "FILES_CHANGED=0\n"
-            "for dir in /workspace/*/; do\n"
-            "  repo=\"${dir%/}\"\n"
-            "  [ -d \"$repo/.git\" ] || continue\n"
-            "  cd \"$repo\" || continue\n"
-            "  BRANCH_REF=$(git for-each-ref --format='%(upstream:short)' \"refs/heads/$(git branch --show-current 2>/dev/null)\" 2>/dev/null | sed 's|origin/||' || echo 'main')\n"
-            "  [ -z \"$BRANCH_REF\" ] && BRANCH_REF='main'\n"
-            "  STATS=$(git diff --numstat \"origin/$BRANCH_REF\"..HEAD 2>/dev/null || echo '')\n"
-            "  if [ -n \"$STATS\" ]; then\n"
-            "    while IFS=$'\\t' read -r ADD DEL FILE; do\n"
-            "      LINES_ADDED=$((LINES_ADDED + ${ADD:-0}))\n"
-            "      LINES_REMOVED=$((LINES_REMOVED + ${DEL:-0}))\n"
-            "      FILES_CHANGED=$((FILES_CHANGED + 1))\n"
-            "    done <<< \"$STATS\"\n"
-            "  fi\n"
-             "  cd /workspace || true\n"
-             "done\n"
-             "echo \"📊 Stats: +$LINES_ADDED -$LINES_REMOVED in $FILES_CHANGED files\"\n"
-             "MR_URL=''\n"
-             "for dir in /workspace/*/; do\n"
-             "  repo=\"${dir%/}\"\n"
-             "  [ -d \"$repo/.git\" ] || continue\n"
-             "  cd \"$repo\" || continue\n"
-             "  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo '')\n"
-             "  if [ -z \"$CURRENT_BRANCH\" ] || [ \"$CURRENT_BRANCH\" = \"main\" ] || [ \"$CURRENT_BRANCH\" = \"master\" ]; then\n"
-             "    continue\n"
-             "  fi\n"
-             "  REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo '')\n"
-             "  PROJECT_PATH=$(echo \"$REMOTE_URL\" | sed -E 's|https?://[^@]+@||;s|\\.git$||;s|^[^/]+/||' 2>/dev/null || echo '')\n"
-             "  if [ -z \"$PROJECT_PATH\" ]; then\n"
-             "    REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo '')\n"
-             "    PROJECT_PATH=$(echo \"$REMOTE_URL\" | sed -E 's|https?://[^/]+/||;s|\\.git$||' 2>/dev/null || echo '')\n"
-             "  fi\n"
-             "  ENCODED_PATH=$(echo \"$PROJECT_PATH\" | sed 's|/|%2F|g' 2>/dev/null || echo '')\n"
-             "  TARGET_BRANCH=$(jq -r --arg r \"$(basename $repo)\" '.[$r].branch' /config/repos.json 2>/dev/null || echo 'main')\n"
-             "  if [ -z \"$TARGET_BRANCH\" ]; then\n"
-             "    TARGET_BRANCH='main'\n"
-             "  fi\n"
-             "  echo \"🔀 Creating MR: $CURRENT_BRANCH -> $TARGET_BRANCH in $PROJECT_PATH\"\n"
-             "  MR_RESPONSE=$(curl -s -X POST \"${GITLAB_HOST}/api/v4/projects/${ENCODED_PATH}/merge_requests\" \\\n"
-             "    -H \"PRIVATE-TOKEN: ${GITLAB_TOKEN}\" \\\n"
-             "    -H \"Content-Type: application/json\" \\\n"
-             "    -d \"{\\\"source_branch\\\": \\\"${CURRENT_BRANCH}\\\", \\\"target_branch\\\": \\\"${TARGET_BRANCH}\\\", \\\"title\\\": \\\"[${TICKET_ID}] ${TICKET_TITLE:-Automated fix}\\\", \\\"remove_source_branch\\\": true}\" || echo '{}')\n"
-             "  MR_WEB_URL=$(echo \"$MR_RESPONSE\" | jq -r '.web_url // empty' 2>/dev/null || echo '')\n"
-             "  if [ -n \"$MR_WEB_URL\" ]; then\n"
-             "    echo \"✅ MR created: $MR_WEB_URL\"\n"
-             "    MR_URL=\"$MR_WEB_URL\"\n"
-             "  else\n"
-             "    echo \"⚠️ MR creation failed: $(echo $MR_RESPONSE | jq -r '.message // .error // \"unknown\"' 2>/dev/null || echo 'unknown')\"\n"
-             "  fi\n"
-             "  cd /workspace || true\n"
-             "  break\n"
-             "done\n"
-             "echo '📡 Notifying orchestrator of completion...'\n"
-             "AGENT_ID_VAL=\"${AGENT_ID:-$TICKET_ID}\"\n"
-             "curl -s -X POST \"http://orchestrator." + AGENT_NAMESPACE + ".svc.cluster.local:8080/api/agents/$AGENT_ID_VAL/complete\" -H 'Content-Type: application/json' -H 'Authorization: Bearer $HIVEMIND_API_KEY' -d \"{\\\"agent_id\\\": \\\"$AGENT_ID_VAL\\\", \\\"ticket_id\\\": \\\"$TICKET_ID\\\", \\\"queue_id\\\": \\\"$QUEUE_ID\\\", \\\"lines_added\\\": $LINES_ADDED, \\\"lines_removed\\\": $LINES_REMOVED, \\\"files_changed\\\": $FILES_CHANGED, \\\"mr_url\\\": \\\"$MR_URL\\\"}\" || echo '⚠️ Failed to notify orchestrator'\n"
-             "echo '✅ Completion notification sent'\n"
-        ],
+        command=["/scripts/entrypoint.sh"],
+        args=["/etc/task/task.md"],
         ports=[kclient.V1ContainerPort(name="opencode-web", container_port=4096)],
         resources=kclient.V1ResourceRequirements(
             requests={"cpu": "500m", "memory": "1Gi"},
@@ -363,8 +261,10 @@ def _build_opencode_config(opencode_model: str, ollama_base_url: str, plugin_nam
         provider_entry = {
             "npm": "@ai-sdk/openai-compatible",
             "name": "Ollama Cloud",
-            "options": {"baseURL": ollama_base_url or "https://ollama.com"},
-            "apiKey": ollama_cloud_api_key,
+            "options": {
+                "baseURL": (ollama_base_url.rstrip("/") + "/v1") if ollama_base_url else "https://ollama.com/v1",
+                "headers": {"Authorization": f"Bearer {ollama_cloud_api_key}"},
+            },
             "models": {
                 opencode_model: {
                     "name": opencode_model,
