@@ -49,7 +49,7 @@ PROVIDERS = {PROVIDER_OLLAMA, PROVIDER_OLLAMA_CLOUD, PROVIDER_OPENAI, PROVIDER_A
 
 DEFAULT_BASE_URLS = {
     PROVIDER_OLLAMA: "http://localhost:11434/v1",
-    PROVIDER_OLLAMA_CLOUD: "https://ollama.com",
+    PROVIDER_OLLAMA_CLOUD: "https://ollama.com/v1",
     PROVIDER_OPENAI: "https://api.openai.com/v1",
     PROVIDER_ANTHROPIC: "https://api.anthropic.com",
 }
@@ -286,7 +286,7 @@ class LLMClient:
                     }), headers=headers)
                     return resp.status_code in (200, 400)
             elif self.provider == PROVIDER_OLLAMA_CLOUD:
-                url = f"{self.base_url.rstrip('/')}/api/tags"
+                url = f"{self.base_url.rstrip('/')}/models"
                 with httpx.Client(timeout=5, verify=False, follow_redirects=True) as client:
                     resp = client.get(url, headers=headers)
                     return resp.status_code == 200

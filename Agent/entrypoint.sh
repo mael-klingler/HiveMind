@@ -5,7 +5,11 @@ DRY_RUN="${DRY_RUN:-false}"
 COMMENT_POLL_INTERVAL="${COMMENT_POLL_INTERVAL:-30}"
 GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN must be set}"
 GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST must be set}"
+GITLAB_HOST_NO_PROTO="${GITLAB_HOST#https://}"
+GITLAB_HOST_NO_PROTO="${GITLAB_HOST_NO_PROTO#http://}"
+GITLAB_API_URL="${GITLAB_HOST}/api/v4"
 GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
+CURL_OPTS="-sS -k"
 
 TASK_FILE="${1:-}"
 
@@ -22,6 +26,12 @@ if [ ! -f "$TASK_FILE" ]; then
   echo "❌ No task prompt found. Searched: /etc/task/task.md, /workspace/.opencode/assignment.md"
   exit 1
 fi
+
+mkdir -p /home/hivemind/bin
+printf '#!/bin/sh\nexit 0\n' > /home/hivemind/bin/xdg-open && chmod +x /home/hivemind/bin/xdg-open
+export PATH="/home/hivemind/bin:$PATH"
+export BROWSER="none"
+export DISPLAY=""
 
 FIRST_LINE=$(head -1 "$TASK_FILE")
 
@@ -74,15 +84,15 @@ fi
 BRANCH="feature/${TICKET_ID}"
 
 # ── MR URL detection: Checkout existing branch from MR ─────
-MR_URL=$(grep -oE "https?://${GITLAB_HOST}/[^ ]*merge_requests/[0-9]+" "$TASK_FILE" 2>/dev/null | head -1 || true)
+MR_URL=$(grep -oE "https?://${GITLAB_HOST_NO_PROTO}/[^ ]*merge_requests/[0-9]+" "$TASK_FILE" 2>/dev/null | head -1 || true)
 MR_BRANCH=""
 if [ -n "$MR_URL" ]; then
   echo "🔗 MR URL found: $MR_URL"
-  MR_PROJECT=$(echo "$MR_URL" | sed -E "s|https?://${GITLAB_HOST}/||;s|/-/merge_requests.*||;s|/merge_requests.*||")
+  MR_PROJECT=$(echo "$MR_URL" | sed -E "s|https?://${GITLAB_HOST_NO_PROTO}/||;s|/-/merge_requests.*||;s|/merge_requests.*||")
   MR_IID=$(echo "$MR_URL" | grep -oE 'merge_requests/[0-9]+' | grep -oE '[0-9]+')
   if [ -n "$MR_PROJECT" ] && [ -n "$MR_IID" ]; then
     ENCODED_PROJECT=$(echo -n "$MR_PROJECT" | jq -sRr @uri)
-    MR_DATA=$(curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+    MR_DATA=$(curl $CURL_OPTS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       "${GITLAB_API_URL}/projects/${ENCODED_PROJECT}/merge_requests/${MR_IID}" 2>&1 || true)
     MR_BRANCH=$(echo "$MR_DATA" | jq -r '.source_branch // empty' 2>/dev/null || true)
     if [ -n "$MR_BRANCH" ]; then
@@ -205,6 +215,15 @@ else
   exit 1
 fi
 export OPENCODE_CONFIG=/home/hivemind/.config/opencode/opencode.json
+
+# ── OpenCode Auth (API Keys) ─────────────────────────────────────────────
+mkdir -p /home/hivemind/.local/share/opencode
+AUTH_FILE="/home/hivemind/.local/share/opencode/auth.json"
+if [ -n "${OLLAMA_CLOUD_API_KEY:-}" ] && [ ! -f "$AUTH_FILE" ]; then
+  echo '{"ollama_cloud":"'"$OLLAMA_CLOUD_API_KEY"'"}' > "$AUTH_FILE"
+  chmod 600 "$AUTH_FILE"
+  echo "🔑 Wrote Ollama Cloud API key to auth.json"
+fi
 
 # ── Agent Memory Blocks ──────────────────────────────────────────────────
 mkdir -p /home/hivemind/.config/opencode/memory
@@ -331,9 +350,9 @@ inject_git_credentials() {
     cd "$repo" || continue
     local REMOTE_URL
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-    if echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITLAB_HOST}"; then
+    if echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITLAB_HOST_NO_PROTO}"; then
       :
-    elif echo "$REMOTE_URL" | grep -q "^https://${GITLAB_HOST}"; then
+    elif echo "$REMOTE_URL" | grep -q "^https://${GITLAB_HOST_NO_PROTO}"; then
       git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${REMOTE_URL#https://}"
     elif echo "$REMOTE_URL" | grep -q "^https://"; then
       local CLEAN_URL
@@ -373,11 +392,12 @@ post_progress() {
     --arg type "$comment_type" \
     --arg content "[$timestamp] $content" \
     '{author: $author, comment_type: $type, content: $content}')
-  curl -sS -X POST \
+  curl $CURL_OPTS -X POST \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${HIVEMIND_API_KEY}" \
     -d "$body" \
     "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" \
-    >/dev/null 2>&1 || true
+    || true
 }
 
 PROGRESS_FIFO="/tmp/opencode_progress_fifo"
@@ -502,7 +522,7 @@ inject_git_credentials
 
 # ── Phase 2: Commit, Push, MR — only for real Git repos ──────────────────
 
-GITLAB_API_URL="https://${GITLAB_HOST}/api/v4"
+GITLAB_API_URL="${GITLAB_HOST}/api/v4"
 
 create_merge_request() {
   local project_path="$1"
@@ -516,7 +536,7 @@ create_merge_request() {
 
   # Check if project was moved/redirected → use new path
   local project_info
-  project_info=$(curl -sS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_API_URL}/projects/${encoded_path}" 2>&1)
+  project_info=$(curl $CURL_OPTS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_API_URL}/projects/${encoded_path}" 2>&1)
   if echo "$project_info" | jq -e '.message' 2>/dev/null | grep -qi "moved"; then
     echo "⚠️  Project ${project_path} was moved, trying redirect..."
     local redirected_path
@@ -535,7 +555,7 @@ create_merge_request() {
 
   echo "🔍 Searching for existing MR for ${project_path} (${source_branch} → ${target_branch})..."
   local existing
-  existing=$(curl -sS \
+  existing=$(curl $CURL_OPTS \
     -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
     "${GITLAB_API_URL}/projects/${encoded_path}/merge_requests?state=opened&source_branch=${source_branch}&target_branch=${target_branch}" 2>&1)
 
@@ -555,7 +575,7 @@ create_merge_request() {
 
   echo "📝 Creating new MR for ${project_path}..."
   local result
-  result=$(curl -sS \
+  result=$(curl $CURL_OPTS \
     -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
     -H "Content-Type: application/json" \
     -d "$mr_body" \
@@ -606,27 +626,67 @@ for dir in /workspace/*/; do
 
   echo "📦 $(basename "$repo"): Checking branch/MR status..."
 
-  BRANCH_EXISTS_LOCALLY=$(git branch --list "$BRANCH" 2>/dev/null)
-  if [ -z "$BRANCH_EXISTS_LOCALLY" ]; then
-    if [ -z "$(git status --porcelain)" ]; then
-      echo "📦 $(basename "$repo"): No changes and no branch, skipping."
-      continue
-    fi
-    MR_TARGET_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
-    git checkout -b "$BRANCH"
-  else
-    MR_TARGET_BRANCH=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$BRANCH" 2>/dev/null | sed 's|origin/||' || echo "main")
-    git checkout "$BRANCH"
+  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  OPENCODE_BRANCH=""
+  if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ] && [ "$CURRENT_BRANCH" != "master" ] && [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+    OPENCODE_BRANCH="$CURRENT_BRANCH"
+    echo "   🔍 opencode created branch: $OPENCODE_BRANCH"
   fi
-  [ -z "$MR_TARGET_BRANCH" ] && MR_TARGET_BRANCH="main"
+
+  HAS_CHANGES=false
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    HAS_CHANGES=true
+  fi
+
+  HAS_COMMITS=false
+  if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ] && [ "$CURRENT_BRANCH" != "master" ]; then
+    LOCAL_MAIN=$(git rev-parse main 2>/dev/null || git rev-parse master 2>/dev/null || echo "")
+    if [ -n "$LOCAL_MAIN" ]; then
+      NEW_COMMITS=$(git log "${LOCAL_MAIN}..HEAD" --oneline 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$NEW_COMMITS" -gt 0 ]; then
+        HAS_COMMITS=true
+      fi
+    fi
+  fi
+
+  if [ "$HAS_CHANGES" = "false" ] && [ "$HAS_COMMITS" = "false" ]; then
+    echo "📦 $(basename "$repo"): No changes and no commits, skipping."
+    continue
+  fi
+
+  MR_TARGET_BRANCH="main"
   echo "   MR target branch: $MR_TARGET_BRANCH"
 
-  if [ -n "$(git status --porcelain)" ]; then
+  if [ -n "$OPENCODE_BRANCH" ]; then
+    echo "   🔀 Renaming opencode branch '$OPENCODE_BRANCH' → '$BRANCH'"
+    git branch -m "$OPENCODE_BRANCH" "$BRANCH" 2>/dev/null || {
+      echo "   ⚠️  Could not rename, merging instead"
+      git checkout -b "$BRANCH" main 2>/dev/null
+      git merge "$OPENCODE_BRANCH" --no-edit 2>/dev/null || true
+    }
+  else
+    BRANCH_EXISTS_LOCALLY=$(git branch --list "$BRANCH" 2>/dev/null)
+    if [ -z "$BRANCH_EXISTS_LOCALLY" ]; then
+      git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH" 2>/dev/null
+    else
+      git checkout "$BRANCH" 2>/dev/null
+    fi
+  fi
+
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    git add -A
+    git commit -m "[${TICKET_ID}] ${TICKET_TITLE}"
+  fi
+
+  ALL_COMMITS=$(git log "origin/main..HEAD" --oneline 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$ALL_COMMITS" -gt 1 ]; then
+    echo "   🔀 Squashing ${ALL_COMMITS} commits into one"
+    git reset --soft "origin/main" 2>/dev/null || git reset --soft "$(git merge-base HEAD main)" 2>/dev/null || true
     git add -A
     git commit -m "[${TICKET_ID}] ${TICKET_TITLE}" --allow-empty
   fi
 
-  git push -u origin "$BRANCH" 2>&1 | tee /tmp/push_output.txt || git push origin "$BRANCH" 2>&1 | tee -a /tmp/push_output.txt || echo "⚠️  Push already exists or failed for $(basename "$repo")"
+  git push -u origin "$BRANCH" --force-with-lease 2>&1 | tee /tmp/push_output.txt || git push -u origin "$BRANCH" --force 2>&1 | tee -a /tmp/push_output.txt || echo "⚠️  Push failed for $(basename "$repo")"
 
   REMOTE_URL=$(git remote get-url origin 2>/dev/null)
   PROJECT_PATH=$(echo "$REMOTE_URL" | sed -E 's|.*://[^@]*@||;s|\.git$||;s|^.*://||;s|^git@[^:]*:||')
@@ -639,7 +699,7 @@ for dir in /workspace/*/; do
     fi
   fi
 
-  PROJECT_HOST="${GITLAB_HOST}"
+  PROJECT_HOST="${GITLAB_HOST_NO_PROTO}"
   PROJECT_PATH=$(echo "$PROJECT_PATH" | sed "s|^${PROJECT_HOST}/||")
 
   MR_URL=$(create_merge_request \
@@ -659,7 +719,7 @@ done
 echo "🏁 All repos processed."
 post_progress "🏁 Ticket ${TICKET_ID} completed – All repos processed." "system"
 
-# ── Phase 3: Comment polling — react to user feedback ────────────
+# ── Gather token usage from opencode DB ───────────────────────────
 
 if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
   echo "👂 Starting comment polling (every ${COMMENT_POLL_INTERVAL}s)..."
@@ -667,7 +727,7 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
   LAST_SEEN_COMMENT_ID=0
 
   while true; do
-    COMMENTS_JSON=$(curl -sS "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" 2>/dev/null || echo "[]")
+    COMMENTS_JSON=$(curl $CURL_OPTS "${ORCHESTRATOR_URL}/api/tickets/${TICKET_ID}/comments" -H "Authorization: Bearer ${HIVEMIND_API_KEY}" 2>/dev/null || echo "[]")
 
     PENDING_COMMENTS=$(echo "$COMMENTS_JSON" | jq -r "
       [ .[] | select(
@@ -793,11 +853,12 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${TICKET_ID:-}" ]; then
     --arg completion_tokens "$TOKENS_COMPLETION" \
     --arg model "$TOKENS_MODEL" \
     '{agent_id: $agent_id, ticket_id: $ticket_id, lines_added: ($lines_added | tonumber), lines_removed: ($lines_removed | tonumber), files_changed: ($files_changed | tonumber), prompt_tokens: ($prompt_tokens | tonumber), completion_tokens: ($completion_tokens | tonumber), model: $model}')
-  curl -sS -X POST \
+  curl $CURL_OPTS -X POST \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${HIVEMIND_API_KEY}" \
     -d "$COMPLETE_BODY" \
     "${ORCHESTRATOR_URL}/api/agents/$AGENT_ID/complete" \
-    >/dev/null 2>&1 || echo "⚠️ Failed to notify orchestrator of completion"
+    || echo "⚠️ Failed to notify orchestrator of completion"
 fi
 
 # ── Memory Sync-Back ──────────────────────────────────────────────
@@ -828,15 +889,23 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/home/hivem
     SYNC_BLOCKS="${SYNC_BLOCKS}$(printf '%s' '{"label":"'"$_label"'","content":'"$(printf '%s' "$_content" | jq -Rs .)"',"description":"'"$_description"'","block_limit":'"$_block_limit"',"read_only":'"$_read_only"',"repo_name":"_global"}')"
   done
   SYNC_BLOCKS="${SYNC_BLOCKS}]"
-  curl -sS -X POST \
+  curl $CURL_OPTS -X POST \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${HIVEMIND_API_KEY}" \
     -d "{\"blocks\": $SYNC_BLOCKS}" \
     "${ORCHESTRATOR_URL}/api/agent-memory/${AGENT_ID}/sync" \
-    >/dev/null 2>&1 || echo "⚠️ Memory sync-back failed"
+    || echo "⚠️ Memory sync-back failed"
   echo "✅ Memory sync-back complete"
 fi
 
 # opencode web is already running (started before opencode run --attach)
-# Web UI stays available for interactive corrections on port 4096
-echo "🌐 OpenCode Web UI running on port 4096 (PID $WEB_PID) — waiting until terminated..."
-wait $WEB_PID 2>/dev/null || true
+# Wait for web UI briefly for interactive corrections, then exit so the pod can be cleaned up
+KEEP_ALIVE_SECONDS="${KEEP_ALIVE_SECONDS:-120}"
+echo "🌐 OpenCode Web UI running on port 4096 (PID $WEB_PID) — keeping alive for ${KEEP_ALIVE_SECONDS}s..."
+sleep "$KEEP_ALIVE_SECONDS" &
+WAIT_PID=$!
+wait $WAIT_PID 2>/dev/null || true
+echo "🛑 Keep-alive period ended, shutting down..."
+kill $WEB_PID 2>/dev/null || true
+sleep 1
+exit 0

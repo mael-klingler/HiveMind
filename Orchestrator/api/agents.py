@@ -33,6 +33,7 @@ from database import (
     set_ticket_line_stats,
     set_ticket_mr_url,
 )
+from k8s_client import delete_pod, cleanup_agent_resources
 from logging_setup import log, metrics
 from background.sse import broadcast_event
 
@@ -222,6 +223,16 @@ async def api_agent_complete(agent_id: str, req: Request):
         "status": "idle",
     })
 
+    if ticket_id:
+        namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+        pod_name = f"agent-worker-{ticket_id.lower()}"
+        try:
+            delete_pod(pod_name, namespace)
+            log.info(f"Agent {agent_id}: deleted pod {pod_name} after completion")
+        except Exception as e:
+            log.warning(f"Agent {agent_id}: failed to delete pod {pod_name}: {e}")
+        cleanup_agent_resources(ticket_id)
+
     return {"ok": True}
 
 
@@ -254,5 +265,14 @@ async def api_agent_error(agent_id: str, req: Request):
         "agent_id": agent_id,
         "status": "error",
     })
+
+    if ticket_id:
+        namespace = os.getenv("AGENT_NAMESPACE", "hivemind")
+        pod_name = f"agent-worker-{ticket_id.lower()}"
+        try:
+            delete_pod(pod_name, namespace)
+        except Exception:
+            pass
+        cleanup_agent_resources(ticket_id)
 
     return {"ok": True}

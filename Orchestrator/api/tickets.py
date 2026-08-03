@@ -220,7 +220,9 @@ async def api_ticket_logs(ticket_id: str):
     from k8s_client import get_pod_logs
     ns = os.getenv("AGENT_NAMESPACE", "hivemind")
     pod_name = f"agent-worker-{ticket_id.lower()}"
-    logs = get_pod_logs(pod_name, ns, tail_lines=100)
+    logs = get_pod_logs(pod_name, ns, tail_lines=150)
     if not logs:
         return {"logs": "", "pod": pod_name, "status": "not_found"}
+    if isinstance(logs, bytes):
+        logs = logs.decode("utf-8", errors="replace")
     return {"logs": logs, "pod": pod_name, "status": "ok"}

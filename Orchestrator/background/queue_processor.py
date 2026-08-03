@@ -204,7 +204,7 @@ async def queue_processor():
                     labels=json.loads(ticket_data.get("labels", "[]")),
                     issue_type=ticket_data.get("issue_type", "Task"),
                     priority=ticket_data.get("priority", "Medium"),
-                    agent_id=ticket_data.get("agent_id", ""),
+                    agent_id=agent["id"],
                     selected_repos=json.loads(ticket_data.get("selected_repos", "[]")) if ticket_data.get("selected_repos") else [],
                 )
                 log.info(f"Spawning agent pod for ticket {ticket.id}", extra={"ticket_id": ticket.id, "event": "pod_spawning"})

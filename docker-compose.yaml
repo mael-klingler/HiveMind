@@ -120,18 +120,17 @@ services:
         condition: service_healthy
   orchestrator-serve:
     build:
-      context: ./Orchestrator
-      dockerfile: Dockerfile
-    image: hivemind/orchestrator:latest
+      context: .
+      dockerfile: Dockerfile.go
+    image: hivemind/orchestrator-go:latest
     container_name: orchestrator-serve
-    command: ["serve"]
+    command: ["-serve"]
     environment:
-      - DATABASE_URL=${DATABASE_URL:-}
-      - SUPABASE_URL=${SUPABASE_URL:-}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
+      - DATABASE_URL=postgres://hivemind:hivemind@hivemind-postgres-local:5432/hivemind?sslmode=disable
       - GITLAB_HOST=${GITLAB_HOST}
       - GITLAB_TOKEN=${GITLAB_TOKEN}
+      - GITLAB_WEBHOOK_SECRET=${GITLAB_WEBHOOK_SECRET:-}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-glm-5.1:cloud}
@@ -140,13 +139,12 @@ services:
       - AGENT_IMAGE=hivemind-opencode:latest
       - HIVEMIND_API_KEY=${HIVEMIND_API_KEY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - VCS_PROVIDER=${VCS_PROVIDER:-gitlab}
     ports:
       - "8080:8080"
-    volumes:
-      - ./Orchestrator/orchestrator_config.json:/app/config/orchestrator_config.json:ro
-      - repo-storage:/app/workspace/repos
-      - ${SSH_KEY_PATH:-~/.ssh}:/home/hivemind/.ssh:ro
-    depends_on: {}
+    depends_on:
+      hivemind-postgres-local:
+        condition: service_healthy
     profiles:
       - full-local
 

@@ -21,7 +21,7 @@
 
 ```bash
 # 1. Deploy (5 minutes)
-./setup.sh && ./redeploy.sh
+just setup && just deploy
 
 # 2. Submit a ticket
 curl -X POST http://localhost:8080/api/tickets \
@@ -318,10 +318,10 @@ spec:
 
 ```bash
 # 1. Configure — interactive, reads from .env, creates K8s secrets
-./setup.sh
+just setup
 
 # 2. Build & deploy — semver bump, Docker build, manifest apply, rollout wait
-./redeploy.sh
+just deploy
 
 # 3. Open the dashboard
 kubectl port-forward -n hivemind deployment/orchestrator 8080:8080
@@ -359,6 +359,15 @@ curl -X POST http://localhost:8080/api/tickets \
 ./cli/hivemind stream                    # Live SSE event stream
 ```
 
+**Via just (task runner):**
+
+```bash
+just setup          # Interactive K8s setup
+just deploy         # Build + deploy
+just test-integration  # Full integration test
+just --list         # Show all available commands
+```
+
 ### Watch & Interact
 
 ```bash
@@ -371,17 +380,29 @@ kubectl -n hivemind logs -f agent-worker-proj-123
 
 The agent will: analyze the codebase → make changes → run tests → commit & push → create MR → wait for your review. When you comment on the MR, the agent picks it up automatically.
 
-### Deploy flags
+### Deploy commands
 
-`./redeploy.sh` handles the full pipeline. Optional flags:
+All tasks are managed via [`just`](https://just.systems/) — install with `cargo install just` or see [just.systems](https://just.systems/).
 
-| Flag | What it does |
-|------|-------------|
-| `--minor` | Bump minor version (0.x.0) |
-| `--major` | Bump major version (x.0.0) |
-| `--no-cache` | Clean build |
-| `--skip-build` | Re-deploy current version without rebuild |
-| `--docker` | Build via docker-compose (local testing) |
+```bash
+just --list          # show all available recipes
+```
+
+| Command | What it does |
+|---------|-------------|
+| `just setup` | Interactive K8s setup (secrets, .env sync) |
+| `just deploy` | Patch bump + build + K8s deploy |
+| `just deploy-skip` | Re-deploy current version without rebuild |
+| `just deploy-docker` | Patch bump + build + Docker Compose |
+| `just version-minor` | Bump minor version (0.x.0) |
+| `just version-major` | Bump major version (x.0.0) |
+| `just version-patch` | Bump patch version (0.0.x) |
+| `just version-set X.Y.Z` | Set explicit version |
+| `just version-tag` | Create git tag for current version |
+| `just changelog` | Show changelog since last tag |
+| `just test-integration` | Full integration test (Docker-based) |
+| `just docker-build` | Build all Docker images |
+| `just ci` | Run all CI checks locally |
 
 ---
 
@@ -501,11 +522,10 @@ All config flows through `.env` (single source of truth):
 │   └── hivemind                    # Pure stdlib Python CLI (277 lines)
 │
 ├── .github/workflows/
-│   └── ci.yaml                     # CI: test → build → Trivy scan → deploy
+│   └── ci.yaml                     # CI: test → build (uses just)
 │
 ├── docs/                          # Architecture, deployment, usage, security docs
-├── setup.sh                       # Interactive K8s setup (secrets, .env sync)
-├── redeploy.sh                    # Versioned build + deploy (semver, image import, rollout)
+├── justfile                        # Task runner (replaces Makefile, setup.sh, redeploy.sh, test.sh)
 ├── docker-compose.yaml            # Local Docker Compose (full-local profile with PostgreSQL)
 ├── .env.example                   # Config template
 └── .version                       # Current version

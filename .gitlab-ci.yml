@@ -14,12 +14,29 @@ variables:
 
 test:orchestrator:
   stage: test
+  image: golang:1.23-alpine
+  before_script:
+    - apk add --no-cache git gcc musl-dev curl bash
+    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+    - just --version
+    - go mod download
+  script:
+    - just ci-go
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "development"'
+
+test:python:
+  stage: test
   image: python:3.11-slim
   before_script:
-    - cd Orchestrator
-    - pip install --no-cache-dir -r requirements.txt pytest pytest-asyncio httpx
+    - apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+    - just --version
+    - pip install -r Orchestrator/requirements.txt pytest
   script:
-    - cd tests && pytest -v --tb=short || true
+    - just ci-python
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -37,6 +54,8 @@ build:orchestrator:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
+    - apk add --no-cache curl bash
+    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
     - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
   script:
     - ORCHESTRATOR_TAG="${CI_COMMIT_SHORT_SHA}"
@@ -44,11 +63,7 @@ build:orchestrator:
       if [ "$CI_COMMIT_BRANCH" = "main" ]; then
         ORCHESTRATOR_TAG="latest"
       fi
-    - docker build
-        --build-arg BUILDKIT_INLINE_CACHE=1
-        -t ${ORCHESTRATOR_IMAGE}:${ORCHESTRATOR_TAG}
-        -t ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
-        -f Orchestrator/Dockerfile Orchestrator/
+    - just docker-build-go
     - docker push ${ORCHESTRATOR_IMAGE}:${ORCHESTRATOR_TAG}
     - docker push ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
   rules:
@@ -67,6 +82,8 @@ build:agent:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
+    - apk add --no-cache curl bash
+    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
     - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
   script:
     - AGENT_TAG="${CI_COMMIT_SHORT_SHA}"
@@ -74,11 +91,7 @@ build:agent:
       if [ "$CI_COMMIT_BRANCH" = "main" ]; then
         AGENT_TAG="latest"
       fi
-    - docker build
-        --build-arg BUILDKIT_INLINE_CACHE=1
-        -t ${AGENT_IMAGE}:${AGENT_TAG}
-        -t ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}
-        -f Agent/Dockerfile Agent/
+    - just docker-build-agent
     - docker push ${AGENT_IMAGE}:${AGENT_TAG}
     - docker push ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}
   rules:

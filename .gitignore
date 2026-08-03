@@ -43,6 +43,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Go binary
+/orchestrator
+
 # Temp / Build
 *.tmp
 *.bak
