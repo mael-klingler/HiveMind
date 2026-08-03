@@ -183,9 +183,14 @@ def ensure_namespace(name: str):
 def get_pod_logs(name: str, namespace: str = None, tail_lines: int = 100) -> str:
     ns = namespace or _namespace
     try:
-        return get_core_api().read_namespaced_pod_log(
-            name=name, namespace=ns, tail_lines=tail_lines
+        resp = get_core_api().read_namespaced_pod_log(
+            name=name, namespace=ns, tail_lines=tail_lines,
+            _preload_content=False
         )
+        raw = resp.data
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace")
+        return str(raw)
     except ApiException as e:
         if e.status == 404:
             return ""

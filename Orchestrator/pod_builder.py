@@ -261,8 +261,10 @@ def _build_opencode_config(opencode_model: str, ollama_base_url: str, plugin_nam
         provider_entry = {
             "npm": "@ai-sdk/openai-compatible",
             "name": "Ollama Cloud",
-            "options": {"baseURL": (ollama_base_url.rstrip("/") + "/v1") if ollama_base_url else "https://ollama.com/v1"},
-            "apiKey": "{env:OLLAMA_CLOUD_API_KEY}",
+            "options": {
+                "baseURL": (ollama_base_url.rstrip("/") + "/v1") if ollama_base_url else "https://ollama.com/v1",
+                "headers": {"Authorization": f"Bearer {ollama_cloud_api_key}"},
+            },
             "models": {
                 opencode_model: {
                     "name": opencode_model,

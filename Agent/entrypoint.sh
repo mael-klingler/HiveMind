@@ -626,27 +626,67 @@ for dir in /workspace/*/; do
 
   echo "📦 $(basename "$repo"): Checking branch/MR status..."
 
-  BRANCH_EXISTS_LOCALLY=$(git branch --list "$BRANCH" 2>/dev/null)
-  if [ -z "$BRANCH_EXISTS_LOCALLY" ]; then
-    if [ -z "$(git status --porcelain)" ]; then
-      echo "📦 $(basename "$repo"): No changes and no branch, skipping."
-      continue
-    fi
-    MR_TARGET_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
-    git checkout -b "$BRANCH"
-  else
-    MR_TARGET_BRANCH=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$BRANCH" 2>/dev/null | sed 's|origin/||' || echo "main")
-    git checkout "$BRANCH"
+  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  OPENCODE_BRANCH=""
+  if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ] && [ "$CURRENT_BRANCH" != "master" ] && [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+    OPENCODE_BRANCH="$CURRENT_BRANCH"
+    echo "   🔍 opencode created branch: $OPENCODE_BRANCH"
   fi
-  [ -z "$MR_TARGET_BRANCH" ] && MR_TARGET_BRANCH="main"
+
+  HAS_CHANGES=false
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    HAS_CHANGES=true
+  fi
+
+  HAS_COMMITS=false
+  if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ] && [ "$CURRENT_BRANCH" != "master" ]; then
+    LOCAL_MAIN=$(git rev-parse main 2>/dev/null || git rev-parse master 2>/dev/null || echo "")
+    if [ -n "$LOCAL_MAIN" ]; then
+      NEW_COMMITS=$(git log "${LOCAL_MAIN}..HEAD" --oneline 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$NEW_COMMITS" -gt 0 ]; then
+        HAS_COMMITS=true
+      fi
+    fi
+  fi
+
+  if [ "$HAS_CHANGES" = "false" ] && [ "$HAS_COMMITS" = "false" ]; then
+    echo "📦 $(basename "$repo"): No changes and no commits, skipping."
+    continue
+  fi
+
+  MR_TARGET_BRANCH="main"
   echo "   MR target branch: $MR_TARGET_BRANCH"
 
-  if [ -n "$(git status --porcelain)" ]; then
+  if [ -n "$OPENCODE_BRANCH" ]; then
+    echo "   🔀 Renaming opencode branch '$OPENCODE_BRANCH' → '$BRANCH'"
+    git branch -m "$OPENCODE_BRANCH" "$BRANCH" 2>/dev/null || {
+      echo "   ⚠️  Could not rename, merging instead"
+      git checkout -b "$BRANCH" main 2>/dev/null
+      git merge "$OPENCODE_BRANCH" --no-edit 2>/dev/null || true
+    }
+  else
+    BRANCH_EXISTS_LOCALLY=$(git branch --list "$BRANCH" 2>/dev/null)
+    if [ -z "$BRANCH_EXISTS_LOCALLY" ]; then
+      git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH" 2>/dev/null
+    else
+      git checkout "$BRANCH" 2>/dev/null
+    fi
+  fi
+
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    git add -A
+    git commit -m "[${TICKET_ID}] ${TICKET_TITLE}"
+  fi
+
+  ALL_COMMITS=$(git log "origin/main..HEAD" --oneline 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$ALL_COMMITS" -gt 1 ]; then
+    echo "   🔀 Squashing ${ALL_COMMITS} commits into one"
+    git reset --soft "origin/main" 2>/dev/null || git reset --soft "$(git merge-base HEAD main)" 2>/dev/null || true
     git add -A
     git commit -m "[${TICKET_ID}] ${TICKET_TITLE}" --allow-empty
   fi
 
-  git push -u origin "$BRANCH" 2>&1 | tee /tmp/push_output.txt || git push origin "$BRANCH" 2>&1 | tee -a /tmp/push_output.txt || echo "⚠️  Push already exists or failed for $(basename "$repo")"
+  git push -u origin "$BRANCH" --force-with-lease 2>&1 | tee /tmp/push_output.txt || git push -u origin "$BRANCH" --force 2>&1 | tee -a /tmp/push_output.txt || echo "⚠️  Push failed for $(basename "$repo")"
 
   REMOTE_URL=$(git remote get-url origin 2>/dev/null)
   PROJECT_PATH=$(echo "$REMOTE_URL" | sed -E 's|.*://[^@]*@||;s|\.git$||;s|^.*://||;s|^git@[^:]*:||')
@@ -859,6 +899,13 @@ if [ -n "${ORCHESTRATOR_URL:-}" ] && [ -n "${AGENT_ID:-}" ] && [ -d "/home/hivem
 fi
 
 # opencode web is already running (started before opencode run --attach)
-# Web UI stays available for interactive corrections on port 4096
-echo "🌐 OpenCode Web UI running on port 4096 (PID $WEB_PID) — waiting until terminated..."
-wait $WEB_PID 2>/dev/null || true
+# Wait for web UI briefly for interactive corrections, then exit so the pod can be cleaned up
+KEEP_ALIVE_SECONDS="${KEEP_ALIVE_SECONDS:-120}"
+echo "🌐 OpenCode Web UI running on port 4096 (PID $WEB_PID) — keeping alive for ${KEEP_ALIVE_SECONDS}s..."
+sleep "$KEEP_ALIVE_SECONDS" &
+WAIT_PID=$!
+wait $WAIT_PID 2>/dev/null || true
+echo "🛑 Keep-alive period ended, shutting down..."
+kill $WEB_PID 2>/dev/null || true
+sleep 1
+exit 0
