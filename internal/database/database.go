@@ -351,6 +351,13 @@ func (db *DB) SetAgentStatus(ctx context.Context, id string, status string) erro
 	return err
 }
 
+func (db *DB) SetAgentIdle(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE agents SET status = 'idle', current_task = '', progress = '', updated_at = NOW() WHERE id = $1`,
+		id)
+	return err
+}
+
 func (db *DB) UpdateAgentProgress(ctx context.Context, id string, progress string) error {
 	_, err := db.pool.Exec(ctx, `
 		UPDATE agents SET progress = $1, updated_at = NOW() WHERE id = $2`,

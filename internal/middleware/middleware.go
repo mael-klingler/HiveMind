@@ -67,6 +67,15 @@ func APIKeyAuth(apiKey string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+			path := r.URL.Path
+			if path == "/healthz" || path == "/readyz" || path == "/metrics" || path == "/" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/webhooks/") {
+				next.ServeHTTP(w, r)
+				return
+			}
 			provided := r.Header.Get("X-API-Key")
 			if provided == "" {
 				provided = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

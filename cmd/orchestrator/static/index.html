@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HiveMind Orchestrator</title>
+  <link rel="stylesheet" href="/static/css/shared.css">
+  <script src="/static/js/shared.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+</head>
+<body>
+<div x-data="app()" @keydown.escape="closeAllModals()">
+  <button class="hamburger" @click="sidebarOpen = !sidebarOpen">&#9776;</button>
+  <div class="sidebar-overlay" :class="{ open: sidebarOpen }" @click="sidebarOpen = false"></div>
+
+  <div class="layout">
+    <aside class="sidebar" :class="{ open: sidebarOpen }">
+      <div class="sidebar-logo">
+        <h1>HiveMind</h1>
+        <span id="versionLabel">Orchestrator</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="sidebar-link" :class="{ active: page === 'dashboard' }" @click.prevent="navigate('dashboard')">Dashboard</a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'kanban' }" @click.prevent="navigate('kanban')">Kanban <span class="badge-sidebar" x-text="ticketCount">0</span></a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'agent' }" @click.prevent="navigate('agent')">Agent</a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'repos' }" @click.prevent="navigate('repos')">Repos</a>
+        <a href="#" class="sidebar-link" :class="{ active: page === 'settings' }" @click.prevent="navigate('settings')">Settings</a>
+      </nav>
+      <div class="sidebar-footer">
+        <small style="color:var(--muted);font-size:0.7rem">
+          <span class="status-dot" id="connStatus"></span>
+          <span id="connLabel">Connecting...</span>
+        </small>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- ══════════════════════════════════════════════════════════════
+           DASHBOARD
+           ══════════════════════════════════════════════════════════════ -->
+      <template x-if="page === 'dashboard'">
+        <div>
+          <div class="stats-row">
+            <div class="stat-card">
+              <div class="stat-value" x-text="dash.queueCount">0</div>
+              <div class="stat-label">Queue</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" x-text="dash.agents.length">0</div>
+              <div class="stat-label">Agents <span style="color:var(--muted2)" x-text="'(' + dash.activeAgents + ' active)'">(0 active)</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" x-text="dash.completedCount">0</div>
+              <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" x-text="dash.totalCount">0</div>
+              <div class="stat-label">Total</div>
+            </div>
+          </div>
+
+          <div class="content-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Queue &amp; Active Tickets</h2>
+                <button class="btn btn-primary btn-sm" @click="openDashTicketModal" style="font-size:0.75rem;padding:0.35rem 0.7rem">+ New Ticket</button>
+              </div>
+              <div class="panel-body scroll" id="dashQueueList">
+                <template x-if="dash.activeItems.length === 0"><div class="placeholder">No active tickets</div></template>
+                <template x-for="(q, idx) in dash.activeItems" :key="q.ticket_id + idx">
+                  <div class="queue-item">
+                    <div class="q-pos" x-text="idx + 1"></div>
+                    <div class="q-info">
+                      <span class="q-id" x-text="q.ticket_id"></span>
+                      <div class="q-title" x-text="q.title || '—'"></div>
+                      <div class="q-agent" x-text="q.agent_name"></div>
+                    </div>
+                    <span class="badge" :class="'badge-' + q.badge" x-text="q.status"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2>Agents</h2></div>
+              <div class="panel-body">
+                <template x-if="dash.agents.length === 0"><div class="placeholder">No agents</div></template>
+                <template x-for="a in dash.agents" :key="a.id">
+                  <div class="agent-item">
+                    <div class="agent-dot" :class="a.status || 'idle'"></div>
+                    <div class="agent-info">
+                      <div class="agent-name" x-text="a.name"></div>
+                      <div class="agent-ticket" x-text="a.status === 'running' && a.current_ticket_id ? a.current_ticket_id : a.status"></div>
+                      <div class="agent-progress"><div class="agent-progress-bar" :style="'width:' + (a.progress || 0) + '%'"></div></div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><h2>Activity</h2></div>
+            <div class="panel-body scroll" style="max-height:350px">
+              <template x-if="dash.logs.length === 0"><div class="placeholder">No activity yet</div></template>
+              <template x-for="s in dash.logs" :key="s.timestamp + s.step_name">
+                <div class="log-entry">
+                  <span class="log-time" x-text="s.timestamp ? new Date(s.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : ''"></span>
+                  <span class="log-agent" x-text="'[' + (s.agent_id || 'system') + ']'"></span>
+                  <span class="log-msg" x-text="s.step_name + (s.detail ? ': ' + s.detail : '')"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ══════════════════════════════════════════════════════════════
+           KANBAN
+           ══════════════════════════════════════════════════════════════ -->
+      <template x-if="page === 'kanban'">
+        <div x-data="kanbanPage()" @page-show.window="init()" @sse-update.window="loadTickets()">
+          <div class="page-header">
+            <h2>Kanban Board</h2>
+            <div class="page-header-actions">
+              <input type="text" class="search-box" placeholder="Search by ID, title, label..." x-model="searchQuery" @input="debouncedRender()">
+              <button class="btn btn-primary" @click="showNewTicketModal = true">+ New Ticket</button>
+            </div>
+          </div>
+
+          <div class="kanban">
+            <template x-for="col in columns" :key="col.key">
+              <div class="kanban-col" :class="'col-' + col.key">
+                <div class="kanban-col-header">
+                  <span x-text="col.label"></span>
+                  <span class="col-count" x-text="filteredTickets(col.key).length">0</span>
+                </div>
+                <div class="kanban-col-body">
+                  <template x-if="filteredTickets(col.key).length === 0">
+                    <div class="placeholder-col" style="padding:2rem 1rem;text-align:center;color:var(--muted2);font-size:0.78rem">No tickets</div>
+                  </template>
+                  <template x-for="t in filteredTickets(col.key)" :key="t.id">
+                    <div class="ticket-card" @click="openDetail(t.id)">
+                      <div class="ticket-card-top">
+                        <span class="ticket-card-id" x-text="t.id"></span>
+                        <span class="ticket-card-time" x-text="HM.timeAgo(t.created_at)"></span>
+                      </div>
+                      <div class="ticket-card-title" x-text="t.title || '—'"></div>
+                      <div class="ticket-card-meta">
+                        <span class="badge" :class="'badge-priority-' + HM.priorityClass(t.priority)" x-text="t.priority || 'Medium'"></span>
+                        <template x-for="l in parseLabels(t.labels).slice(0,3)" :key="l">
+                          <span class="badge badge-label" x-text="l"></span>
+                        </template>
+                        <template x-if="t.retry_count > 0"><span class="badge badge-retry">R<span x-text="t.retry_count"></span></span></template>
+                        <template x-if="t.mr_url"><span class="badge badge-mr">MR</span></template>
+                        <span x-html="HM.pipelineBadge(t.mr_pipeline_status)"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- New Ticket Modal -->
+          <div class="modal-overlay" :class="{ open: showNewTicketModal }" @click.self="showNewTicketModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3>New Ticket</h3><button class="modal-close" @click="showNewTicketModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-row-2">
+                  <div class="form-group"><label>ID</label><input x-model="newTicket.id" placeholder="PROJ-123"></div>
+                  <div class="form-group"><label>Title</label><input x-model="newTicket.title" placeholder="Login button"></div>
+                </div>
+                <div class="form-group"><label>Description</label><textarea x-model="newTicket.description" rows="3" placeholder="Describe the ticket..."></textarea></div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>Type</label><select x-model="newTicket.issue_type"><option>Task</option><option>Bug</option><option>Feature</option></select></div>
+                  <div class="form-group"><label>Priority</label><select x-model="newTicket.priority"><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>
+                </div>
+                <div class="form-group"><label>Labels (comma-separated)</label><input x-model="newTicket.labelsStr" placeholder="backend, api, bug"></div>
+                <div class="form-group"><label>Repositories</label>
+                  <div class="checkbox-list" style="max-height:140px">
+                    <template x-for="r in repoNames" :key="r">
+                      <div class="checkbox-item"><input type="checkbox" :value="r" x-model="newTicket.selectedRepos"><span x-text="r"></span></div>
+                    </template>
+                  </div>
+                  <div class="help">Select repos manually to skip AI auto-matching</div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showNewTicketModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="createTicket()">Create</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Detail Modal -->
+          <div class="modal-overlay" :class="{ open: showDetailModal }" @click.self="closeDetail()">
+            <div class="modal wide">
+              <div class="modal-header"><h3 x-text="detailTitle"></h3><button class="modal-close" @click="closeDetail()">&times;</button></div>
+               <div class="modal-body" x-html="detailHtml"></div>
+               <div id="liveLogBox" x-show="liveLogContent !== null" x-init="$watch('liveLogContent', v => { const lc = document.getElementById('logContent'); if (lc) { lc.textContent = v || ''; lc.scrollTop = lc.scrollHeight; } })" style="margin-top:.75rem">
+                 <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem">
+                   <label style="font-size:.75rem;font-weight:600;color:var(--text)">Agent Logs</label>
+                   <span x-text="liveLogPod" style="font-size:.65rem;color:var(--muted);margin-left:auto" id="logStatus"></span>
+                   <button class="btn" style="font-size:.65rem;padding:.2rem .5rem" @click="liveLogContent=null;liveLogPod=''">Close</button>
+                   <button class="btn" style="font-size:.65rem;padding:.2rem .5rem" @click="loadLiveLogs(liveLogTicketId)">Refresh</button>
+                 </div>
+                 <div id="logContent" style="background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:.5rem;font-family:monospace;font-size:.7rem;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto"></div>
+               </div>
+               <div class="modal-footer" x-html="detailFooter"></div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ══════════════════════════════════════════════════════════════
+           AGENT
+           ══════════════════════════════════════════════════════════════ -->
+      <template x-if="page === 'agent'">
+        <div x-data="agentPage()" @page-show.window="init()" @sse-update.window="refreshData()">
+          <h1 class="page-title">Agent Configuration</h1>
+          <div class="tabs">
+            <template x-for="t in [{key:'agents',label:'Agents'},{key:'tools',label:'MCP Tools'},{key:'instructions',label:'Instructions'},{key:'memory',label:'Memory'},{key:'plugins',label:'Plugins'},{key:'model',label:'Model'}]" :key="t.key">
+              <button class="tab" :class="{ active: agentTab === t.key }" @click="agentTab = t.key" x-text="t.label"></button>
+            </template>
+          </div>
+
+          <!-- Agents Tab -->
+          <div x-show="agentTab === 'agents'">
+            <div class="panel">
+              <div class="panel-header"><h2>Agent Profiles</h2><button class="btn btn-primary btn-sm" @click="openAgentModal()">+ Create Agent</button></div>
+              <div class="panel-body" style="padding:0">
+                <template x-if="agentProfiles.length === 0"><div class="placeholder">No agents available</div></template>
+                <template x-for="a in agentProfiles" :key="a.id">
+                  <div class="agent-card">
+                    <div class="agent-avatar" x-text="a.name ? a.name.charAt(0).toUpperCase() : '?'"></div>
+                    <div class="agent-details">
+                      <div class="agent-name"><span x-text="a.name"></span> <span class="tag" :class="a.status === 'running' ? 'tag-running' : 'tag-idle'" x-text="a.status"></span></div>
+                      <div class="agent-model">ID: <span x-text="a.id"></span><span x-show="a.model_name"> | Model: <span x-text="a.model_name"></span></span><span x-show="a.current_ticket_id"> | Ticket: <span x-text="a.current_ticket_id"></span></span></div>
+                      <div class="agent-skills">
+                        <template x-for="s in (a.skills || [])" :key="s"><span class="tag tag-skill" x-text="s"></span></template>
+                        <template x-for="iid in (a.instruction_ids || [])" :key="iid">
+                          <span class="tag tag-remote" x-text="getInstructionName(iid)"></span>
+                        </template>
+                        <template x-for="r in (a.repo_affinities || [])" :key="r"><span class="tag tag-local" x-text="r"></span></template>
+                        <template x-if="!(a.skills||[]).length && !(a.instruction_ids||[]).length && !(a.repo_affinities||[]).length">
+                          <span class="tag" style="background:var(--border);color:var(--muted)">No skills assigned</span>
+                        </template>
+                      </div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" @click="editAgent(a.id)">Edit</button>
+                    <button class="btn btn-danger btn-sm" @click="deleteAgent(a.id)">Delete</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- MCP Tools Tab -->
+          <div x-show="agentTab === 'tools'">
+            <div class="panel">
+              <div class="panel-header"><h2>MCP Servers (Tools & Skills)</h2><button class="btn btn-primary btn-sm" @click="openMcpModal()">+ Add</button></div>
+              <div class="panel-body" style="padding:0">
+                <template x-if="mcpServers.length === 0"><div class="placeholder">No MCP servers configured</div></template>
+                <template x-for="s in mcpServers" :key="s.name">
+                  <div class="mcp-item">
+                    <div class="mcp-info">
+                      <div class="mcp-name" x-text="s.name"></div>
+                      <div class="mcp-cmd" x-text="s.command || '—'"></div>
+                      <div class="mcp-desc" x-text="s.description || ''"></div>
+                    </div>
+                    <span class="tag" :class="'tag-' + (s.server_type || 'local')" x-text="s.server_type || 'local'"></span>
+                    <div class="toggle" :class="{ on: s.enabled }" @click="toggleMcp(s.name, !s.enabled)"></div>
+                    <button class="btn btn-secondary btn-sm" @click="editMcp(s.name)">Edit</button>
+                    <button class="btn btn-danger btn-sm" @click="deleteMcp(s.name)">Delete</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Instructions Tab -->
+          <div x-show="agentTab === 'instructions'">
+            <div class="panel">
+              <div class="panel-header"><h2>Agent Instructions (AGENTS.md)</h2><button class="btn btn-primary btn-sm" @click="openInstrModal()">+ Add</button></div>
+              <div class="panel-body" style="padding:0">
+                <template x-if="instructions.length === 0"><div class="placeholder">No instructions defined</div></template>
+                <template x-for="i in instructions" :key="i.id">
+                  <div class="instruction-item">
+                    <div class="instruction-header">
+                      <span class="instruction-name" x-text="i.name"></span>
+                      <div class="toggle" :class="{ on: i.enabled }" @click="toggleInstr(i.id, !i.enabled)"></div>
+                      <button class="btn btn-secondary btn-sm" @click="editInstr(i.id)">Edit</button>
+                      <button class="btn btn-danger btn-sm" @click="deleteInstr(i.id)">Delete</button>
+                    </div>
+                    <div class="instruction-content" @click="$el.classList.toggle('expanded')" x-text="i.content.substring(0, 200) + (i.content.length > 200 ? '...' : '')"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Memory Tab -->
+          <div x-show="agentTab === 'memory'">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Agent Memory Blocks</h2>
+                <div style="display:flex;gap:.5rem;align-items:center">
+                  <select x-model="memoryAgentId" @change="loadMemoryBlocks()" style="background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:.3rem .5rem;border-radius:var(--radius-sm);font-size:.8rem">
+                    <option value="">Select agent...</option>
+                    <template x-for="a in agentProfiles" :key="a.id"><option :value="a.id" x-text="a.name + ' (' + a.id + ')'"></option></template>
+                  </select>
+                  <button class="btn btn-primary btn-sm" @click="openMemoryBlockModal()">+ Add Block</button>
+                </div>
+              </div>
+              <div class="panel-body" style="padding:0">
+                <template x-if="!memoryAgentId"><div class="placeholder">Select an agent to view its memory</div></template>
+                <template x-if="memoryAgentId && memoryBlocks.length === 0"><div class="placeholder">No memory blocks — agent has not learned anything yet</div></template>
+                <template x-for="b in memoryBlocks" :key="b.id">
+                  <div class="mem-block">
+                    <div class="mem-header">
+                      <span class="mem-label" x-text="b.label"></span>
+                      <span class="mem-repo" x-text="b.repo_name"></span>
+                      <template x-if="b.read_only"><span class="tag" style="background:var(--yellow-glow);color:var(--yellow)">read-only</span></template>
+                      <div style="margin-left:auto;display:flex;gap:.3rem">
+                        <button class="btn btn-secondary btn-sm" @click="editMemoryBlock(b.id)">Edit</button>
+                        <button class="btn btn-danger btn-sm" @click="deleteMemoryBlock(b.id)">Delete</button>
+                      </div>
+                    </div>
+                    <template x-if="b.description"><div class="mem-desc" x-text="b.description"></div></template>
+                    <div class="mem-content" @click="$el.classList.toggle('expanded')" x-text="b.content.substring(0, 300) + (b.content.length > 300 ? '...' : '')"></div>
+                    <template x-if="b.updated_at"><div style="font-size:.65rem;color:var(--muted2);margin-top:.35rem">Updated: <span x-text="new Date(b.updated_at).toLocaleString()"></span></div></template>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Plugins Tab -->
+          <div x-show="agentTab === 'plugins'">
+            <div class="panel">
+              <div class="panel-header"><h2>OpenCode Plugins</h2><button class="btn btn-primary btn-sm" @click="openPluginModal()">+ Add</button></div>
+              <div class="panel-body" style="padding:0">
+                <template x-if="plugins.length === 0"><div class="placeholder">No plugins configured</div></template>
+                <template x-for="p in plugins" :key="p.name">
+                  <div class="mcp-item">
+                    <div class="mcp-info">
+                      <div class="mcp-name"><span x-text="p.name"></span> <template x-if="p.requires_binary"><span class="tag" style="background:var(--yellow-glow);color:var(--yellow)">Binary: <span x-text="p.requires_binary"></span></span></template></div>
+                      <div class="mcp-desc" x-text="p.description || ''"></div>
+                    </div>
+                    <div class="toggle" :class="{ on: p.enabled }" @click="togglePlugin(p.name, !p.enabled)"></div>
+                    <button class="btn btn-secondary btn-sm" @click="editPlugin(p.name)">Edit</button>
+                    <button class="btn btn-danger btn-sm" @click="deletePlugin(p.name)">Delete</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="panel" style="margin-top:1rem">
+              <div class="panel-header"><h2>Plugin Details</h2></div>
+              <div class="panel-body" style="font-size:.85rem;color:var(--text2)">
+                <table style="width:100%;border-collapse:collapse">
+                  <tr style="border-bottom:1px solid var(--border)"><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-snip</td><td style="padding:.5rem">Compresses shell output (60-97% token savings). Requires <code>snip</code> binary in the agent image.</td></tr>
+                  <tr style="border-bottom:1px solid var(--border)"><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-agent-memory</td><td style="padding:.5rem">Persistent memory blocks (Letta-inspired). Agent can manage its own memories.</td></tr>
+                  <tr><td style="padding:.5rem;font-weight:600;color:var(--accent)">opencode-handoff</td><td style="padding:.5rem">Session handoff on retries. Generates focused context for the next session.</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model Tab -->
+          <div x-show="agentTab === 'model'">
+            <div class="panel">
+              <div class="panel-header"><h2>Model Configuration</h2></div>
+              <div class="panel-body padded">
+                <div class="form-row-2">
+                  <div class="form-group"><label>OPENCODE_MODEL</label><input x-model="modelSettings.opencode_model" placeholder="glm-5.1:cloud"></div>
+                  <div class="form-group"><label>OLLAMA_MODEL</label><input x-model="modelSettings.ollama_model" placeholder="glm-5.1:cloud"></div>
+                </div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>OLLAMA_BASE_URL</label><input x-model="modelSettings.ollama_base_url" placeholder="http://host.docker.internal:11434/v1"></div>
+                  <div class="form-group"><label>OLLAMA_TIMEOUT (s)</label><input x-model="modelSettings.ollama_timeout" placeholder="300"></div>
+                </div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>AGENT_RETRY_DELAY (s)</label><input x-model="modelSettings.agent_retry_delay" placeholder="120"></div>
+                  <div class="form-group"><label>AGENT_MAX_RETRIES</label><input x-model="modelSettings.agent_max_retries" placeholder="3"></div>
+                </div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>AGENT_IMAGE</label><input x-model="modelSettings.agent_image" placeholder="hivemind-opencode:0.1.37"></div>
+                  <div class="form-group"><label>DRY_RUN</label><select x-model="modelSettings.dry_run"><option value="false">No</option><option value="true">Yes</option></select></div>
+                </div>
+                <div style="margin-top:1rem"><button class="btn btn-primary" @click="saveModelSettings()">Save</button></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent Modal -->
+          <div class="modal-overlay" :class="{ open: showAgentModal }" @click.self="showAgentModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3 x-text="editingAgentId ? 'Edit Agent' : 'Create Agent'"></h3><button class="modal-close" @click="showAgentModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-row-2">
+                  <div class="form-group"><label>Agent ID</label><input x-model="agentForm.id" :disabled="!!editingAgentId" placeholder="agent-4"></div>
+                  <div class="form-group"><label>Name</label><input x-model="agentForm.name" placeholder="Frontend Specialist"></div>
+                </div>
+                <div class="form-group"><label>Model (optional, empty = default)</label><input x-model="agentForm.model_name" placeholder="glm-5.1:cloud"></div>
+                <div class="form-group"><label>MCP Tools (Skills)</label>
+                  <div class="checkbox-list">
+                    <template x-for="s in mcpServers" :key="s.name">
+                      <div class="checkbox-item"><input type="checkbox" :value="s.name" x-model="agentForm.skills"><span x-text="s.name"></span> <span style="color:var(--muted);font-size:.75rem" x-text="s.description || ''"></span></div>
+                    </template>
+                  </div>
+                </div>
+                <div class="form-group"><label>Instructions</label>
+                  <div class="checkbox-list">
+                    <template x-for="i in instructions" :key="i.id">
+                      <div class="checkbox-item"><input type="checkbox" :value="i.id" x-model.number="agentForm.instruction_ids"><span x-text="i.name"></span></div>
+                    </template>
+                  </div>
+                </div>
+                <div class="form-group"><label>Repo Assignment (Affinity)</label>
+                  <div class="checkbox-list">
+                    <template x-for="r in repoNames" :key="r">
+                      <div class="checkbox-item"><input type="checkbox" :value="r" x-model="agentForm.repo_affinities"><span x-text="r"></span></div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showAgentModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveAgent()">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- MCP Modal -->
+          <div class="modal-overlay" :class="{ open: showMcpModal }" @click.self="showMcpModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3 x-text="editingMcp ? 'Edit MCP Server' : 'Add MCP Server'"></h3><button class="modal-close" @click="showMcpModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-group"><label>Name</label><input x-model="mcpForm.name" :disabled="!!editingMcp" placeholder="my-tool"></div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>Type</label><select x-model="mcpForm.server_type"><option value="local">local</option><option value="remote">remote</option></select></div>
+                  <div class="form-group"><label>Enabled</label><select x-model.number="mcpForm.enabled"><option :value="1">Yes</option><option :value="0">No</option></select></div>
+                </div>
+                <div class="form-group"><label>Command</label><input x-model="mcpForm.command" placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp"></div>
+                <div class="form-group"><label>Args (JSON array, optional)</label><input x-model="mcpForm.argsStr" placeholder='["--port", "3000"]'></div>
+                <div class="form-group"><label>Env (JSON object, optional)</label><input x-model="mcpForm.envStr" placeholder='{"API_KEY": "xxx"}'></div>
+                <div class="form-group"><label>Description</label><input x-model="mcpForm.description" placeholder="File system access"></div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showMcpModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveMcp()">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Instruction Modal -->
+          <div class="modal-overlay" :class="{ open: showInstrModal }" @click.self="showInstrModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3 x-text="editingInstrId !== null ? 'Edit Instruction' : 'Add Instruction'"></h3><button class="modal-close" @click="showInstrModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-group"><label>Name</label><input x-model="instrForm.name" placeholder="Coding Conventions"></div>
+                <div class="form-group"><label>Content (Markdown)</label><textarea x-model="instrForm.content" rows="8" placeholder="Use TypeScript strict mode..."></textarea></div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>Enabled</label><select x-model.number="instrForm.enabled"><option :value="1">Yes</option><option :value="0">No</option></select></div>
+                  <div class="form-group"><label>Sort Order</label><input type="number" x-model.number="instrForm.sort_order" value="0"></div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showInstrModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveInstr()">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Plugin Modal -->
+          <div class="modal-overlay" :class="{ open: showPluginModal }" @click.self="showPluginModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3 x-text="editingPlugin ? 'Edit Plugin' : 'Add Plugin'"></h3><button class="modal-close" @click="showPluginModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-group"><label>Name (npm package)</label><input x-model="pluginForm.name" :disabled="!!editingPlugin" placeholder="opencode-snip"></div>
+                <div class="form-group"><label>Description</label><input x-model="pluginForm.description" placeholder="Compress shell output"></div>
+                <div class="form-group"><label>Requires Binary (optional)</label><input x-model="pluginForm.requires_binary" placeholder="snip"></div>
+                <div class="form-row-2">
+                  <div class="form-group"><label>Enabled</label><select x-model.number="pluginForm.enabled"><option :value="1">Yes</option><option :value="0">No</option></select></div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showPluginModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="savePlugin()">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Memory Block Modal -->
+          <div class="modal-overlay" :class="{ open: showMemoryModal }" @click.self="showMemoryModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3 x-text="editingMemId ? 'Edit Memory Block' : 'Add Memory Block'"></h3><button class="modal-close" @click="showMemoryModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-group"><label>Label</label><input x-model="memForm.label" placeholder="persona"></div>
+                <div class="form-group"><label>Repo Name (empty = global)</label><input x-model="memForm.repo_name" placeholder="_global"></div>
+                <div class="form-group"><label>Description</label><input x-model="memForm.description" placeholder="Agent identity and behavior"></div>
+                <div class="form-group"><label>Content (Markdown)</label><textarea x-model="memForm.content" rows="8" placeholder="You are an autonomous developer..."></textarea></div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showMemoryModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveMemoryBlock()">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ══════════════════════════════════════════════════════════════
+           REPOS
+           ══════════════════════════════════════════════════════════════ -->
+      <template x-if="page === 'repos'">
+        <div x-data="reposPage()" @page-show.window="init()" @sse-update.window="loadRepos()">
+          <div class="page-header">
+            <h2>Repositories</h2>
+            <div style="display:flex;gap:.5rem">
+              <button class="btn btn-secondary" @click="showBulkBranchModal = true">Switch Branches</button>
+              <button class="btn btn-secondary" @click="initFromGitlab()">Import from GitLab</button>
+              <button class="btn btn-primary" @click="openAddRepoModal()">+ Add Repository</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><h3>Active Repositories</h3><span style="font-size:.75rem;color:var(--muted)" x-text="repos.filter(r=>r.active).length ? repos.filter(r=>r.active).length + ' active' : ''"></span></div>
+            <div class="panel-body">
+              <template x-if="repos.filter(r=>r.active).length === 0"><div class="placeholder">No active repositories. Activate pending repos below or add a new one.</div></template>
+              <template x-for="r in repos.filter(r=>r.active)" :key="r.name">
+                <div class="repo-card">
+                  <div class="repo-card-top">
+                    <div>
+                      <span class="repo-name" x-text="r.name"></span><span class="repo-status-badge active">active</span>
+                      <span class="repo-branch" x-text="r.branch || 'development'"></span>
+                    </div>
+                    <div class="repo-actions">
+                      <button class="btn btn-secondary btn-sm" @click="toggleRepo(r.name, false)">Deactivate</button>
+                      <button class="btn btn-secondary btn-sm" @click="openEditRepoModal(r.name)">Edit</button>
+                      <button class="btn btn-danger btn-sm" @click="deleteRepo(r.name)">Remove</button>
+                    </div>
+                  </div>
+                  <div class="repo-url" x-text="r.url"></div>
+                  <template x-if="r.description"><div class="repo-desc" x-text="r.description"></div></template>
+                  <template x-if="(r.tags||[]).length > 0">
+                    <div class="repo-tags"><template x-for="t in (r.tags||[])" :key="t"><span class="repo-tag" x-text="t"></span></template></div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h3>Pending Repositories</h3>
+              <div style="display:flex;gap:.5rem;align-items:center">
+                <span style="font-size:.75rem;color:var(--muted)" x-text="repos.filter(r=>!r.active).length ? repos.filter(r=>!r.active).length + ' pending' : ''"></span>
+                <template x-if="repos.filter(r=>!r.active).length > 0"><button class="btn btn-success btn-sm" @click="activateAll()">Activate All</button></template>
+              </div>
+            </div>
+            <div class="panel-body">
+              <template x-if="repos.filter(r=>!r.active).length === 0"><div class="placeholder">No pending repositories. Import from GitLab to discover projects.</div></template>
+              <template x-for="r in repos.filter(r=>!r.active)" :key="r.name">
+                <div class="repo-card">
+                  <div class="repo-card-top">
+                    <div>
+                      <span class="repo-name" x-text="r.name"></span><span class="repo-status-badge pending">pending</span>
+                      <span class="repo-branch" x-text="r.branch || 'development'"></span>
+                    </div>
+                    <div class="repo-actions">
+              <button class="btn btn-success btn-sm" @click="toggleRepo(r.name, true)">Activate</button>
+                      <button class="btn btn-secondary btn-sm" @click="openEditRepoModal(r.name)">Edit</button>
+                      <button class="btn btn-danger btn-sm" @click="deleteRepo(r.name)">Remove</button>
+                    </div>
+                  </div>
+                  <div class="repo-url" x-text="r.url"></div>
+                  <template x-if="r.description"><div class="repo-desc" x-text="r.description"></div></template>
+                  <template x-if="(r.tags||[]).length > 0">
+                    <div class="repo-tags"><template x-for="t in (r.tags||[])" :key="t"><span class="repo-tag" x-text="t"></span></template></div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Add Repo Modal -->
+          <div class="modal-overlay" :class="{ open: showAddRepoModal }" @click.self="showAddRepoModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3>Add Repository</h3><button class="modal-close" @click="showAddRepoModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-group"><label>Name</label><input x-model="addRepoForm.name" placeholder="auth"><div class="help">Unique name for the repository</div></div>
+                <div class="form-group"><label>URL</label><input x-model="addRepoForm.url" placeholder="https://gitlab.com/group/repo.git"><div class="help">Git clone URL (HTTPS)</div></div>
+                <div class="form-group"><label>Branch</label><input x-model="addRepoForm.branch" placeholder="development"><div class="help">Default branch to track</div></div>
+                <div class="form-group"><label>Tags (comma-separated)</label><input x-model="addRepoForm.tagsStr" placeholder="backend, api, service"></div>
+                <div class="form-group"><label>Description</label><textarea x-model="addRepoForm.description" rows="2" placeholder="Short description" style="resize:vertical"></textarea></div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showAddRepoModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="addRepo()">Add</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Edit Repo Modal -->
+          <div class="modal-overlay" :class="{ open: showEditRepoModal }" @click.self="showEditRepoModal = false">
+            <div class="modal">
+              <div class="modal-header"><h3>Edit Repository</h3><button class="modal-close" @click="showEditRepoModal = false">&times;</button></div>
+              <div class="modal-body">
+                <div class="form-group"><label>Name</label><input x-model="editRepoForm.name" disabled style="opacity:.5"></div>
+                <div class="form-group"><label>URL</label><input x-model="editRepoForm.url" placeholder="https://gitlab.com/group/repo.git"></div>
+                <div class="form-group"><label>Branch</label><input x-model="editRepoForm.branch" placeholder="development"></div>
+                <div class="form-group"><label>Tags (comma-separated)</label><input x-model="editRepoForm.tagsStr" placeholder="backend, api, service"></div>
+                <div class="form-group"><label>Description</label><textarea x-model="editRepoForm.description" rows="2" placeholder="Short description" style="resize:vertical"></textarea></div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showEditRepoModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveEditRepo()">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- GitLab Import Modal -->
+          <div class="modal-overlay" :class="{ open: showGitlabModal }" @click.self="showGitlabModal = false">
+            <div class="modal wide">
+              <div class="modal-header"><h3>Import from GitLab</h3><button class="modal-close" @click="showGitlabModal = false">&times;</button></div>
+              <div class="modal-body">
+                <template x-if="gitlabProjects.length === 0"><div class="loading">Loading GitLab projects...</div></template>
+                <template x-if="gitlabProjects.length > 0">
+                  <div style="max-height:50vh;overflow-y:auto">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+                      <label style="font-size:.8rem;color:var(--text2)" x-text="gitlabProjects.filter(p=>!p.already_imported).length + ' projects available'"></label>
+                      <button class="btn btn-secondary btn-sm" @click="toggleAllGitlab()">Toggle All</button>
+                    </div>
+                    <template x-for="p in gitlabProjects.filter(p=>!p.already_imported)" :key="p.name">
+                      <label style="display:flex;align-items:flex-start;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border)">
+                        <input type="checkbox" class="gitlab-project-check" :data-name="p.name" :data-url="p.url" :data-branch="p.default_branch || 'development'" :data-description="p.description || ''" :data-tags="(p.topics||[]).join(',')" checked style="margin-top:.25rem">
+                        <div>
+                          <div style="font-size:.85rem;font-weight:600;color:var(--text)"><span x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch || 'development'"></span></div>
+                          <div style="font-size:.72rem;color:var(--muted2)" x-text="p.url"></div>
+                          <template x-if="p.description"><div style="font-size:.75rem;color:var(--text2);margin-top:.15rem" x-text="p.description.substring(0,80) + (p.description.length > 80 ? '...' : '')"></div></template>
+                        </div>
+                      </label>
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showGitlabModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="importSelectedGitlab()">Import Selected</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bulk Branch Modal -->
+          <div class="modal-overlay" :class="{ open: showBulkBranchModal }" @click.self="showBulkBranchModal = false">
+            <div class="modal" style="max-width:440px">
+              <div class="modal-header"><h3>Switch All Branches</h3><button class="modal-close" @click="showBulkBranchModal = false">&times;</button></div>
+              <div class="modal-body">
+                <p style="font-size:.85rem;color:var(--text2);margin-bottom:1rem">Set the tracking branch for <strong>all</strong> repositories at once.</p>
+                <div class="form-group"><label>New Branch</label><input x-model="bulkBranch" placeholder="development" list="bulkBranchList"><datalist id="bulkBranchList"><option value="development"><option value="main"><option value="master"><option value="qa"><option value="staging"></datalist><div class="help">This will update the branch for every repo. Existing checkouts will re-clone on next pull.</div></div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showBulkBranchModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="bulkSwitchBranch()">Switch All</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ══════════════════════════════════════════════════════════════
+           SETTINGS
+           ══════════════════════════════════════════════════════════════ -->
+      <template x-if="page === 'settings'">
+        <div x-data="settingsPage()" @page-show.window="init()" @sse-update.window="loadAgents()">
+          <div class="page-header" style="max-width:960px">
+            <h2>Settings</h2>
+            <div class="actions">
+              <button class="btn btn-secondary" @click="loadSettings()">Reset</button>
+              <button class="btn btn-primary" @click="saveSettings()">Save</button>
+            </div>
+          </div>
+
+          <div style="max-width:960px">
+            <div class="panel">
+              <div class="panel-header"><h3>GitLab</h3></div>
+              <div class="panel-body padded">
+                <div class="form-group"><label>GITLAB_HOST</label><input x-model="settings.gitlab_host" placeholder=""><div class="help">Base URL of the GitLab server</div></div>
+                <div class="form-group"><label>GIT_USER</label><input x-model="settings.git_user" placeholder="gitlab-ci-token"><div class="help">Git username for clone authentication</div></div>
+                <div class="form-group"><label>GITLAB_TOKEN</label><div class="input-with-toggle"><input x-model="settings.gitlab_token" :type="showGitlabToken ? 'text' : 'password'" placeholder="glpat-xxx"><button class="toggle-vis" @click="showGitlabToken = !showGitlabToken" x-text="showGitlabToken ? 'Hide' : 'Show'"></button></div><div class="help">Personal Access Token / CI Token (masked)</div></div>
+                <div class="form-grid">
+                  <div class="form-group"><label>GITLAB_SSH_KEY_BASE64</label><input x-model="settings.gitlab_ssh_key_base64" :type="showSSHKey ? 'text' : 'password'" placeholder="LS0tLi4u"><button class="toggle-vis" @click="showSSHKey = !showSSHKey" x-text="showSSHKey ? 'Hide' : 'Show'" style="margin-top:.3rem"></button><div class="help">Base64-encoded SSH key</div></div>
+                  <div class="form-group"><label>SSH_KEY_PATH</label><input x-model="settings.ssh_key_path" placeholder="/root/.ssh/id_rsa"><div class="help">Path to SSH key in container</div></div>
+                </div>
+                <div class="form-group"><label>DEFAULT_BRANCH</label><input x-model="settings.default_branch" placeholder="development"><div class="help">Default branch for new repositories</div></div>
+                <div class="form-group" style="margin-top:.75rem"><label>BRANCH_FALLBACK_ORDER</label><input x-model="settings.branch_fallback_order" placeholder="development,qa,main"><div class="help">Comma-separated branch fallback order (first = primary)</div></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>OpenCode</h3></div>
+              <div class="panel-body padded">
+                <div class="form-grid">
+                  <div class="form-group"><label>OPENCODE_MODEL</label><input x-model="settings.opencode_model" placeholder="glm-5.1:cloud"></div>
+                  <div class="form-group"><label>OPENCODE_PORT</label><input x-model="settings.opencode_port" placeholder="4096"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Ollama / LLM</h3></div>
+              <div class="panel-body padded">
+                <div class="form-grid">
+                  <div class="form-group"><label>OLLAMA_HOST</label><input x-model="settings.ollama_host" placeholder="http://localhost:11434"></div>
+                  <div class="form-group"><label>OLLAMA_BASE_URL</label><input x-model="settings.ollama_base_url" placeholder="http://localhost:11434/v1"></div>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group"><label>OLLAMA_MODEL</label><input x-model="settings.ollama_model" placeholder="glm-5.1:cloud"></div>
+                  <div class="form-group"><label>OLLAMA_TIMEOUT</label><input x-model="settings.ollama_timeout" type="number" placeholder="120"></div>
+                </div>
+                <div class="form-group"><label>OLLAMA_CLOUD_API_KEY</label><div class="input-with-toggle"><input x-model="settings.ollama_cloud_api_key" :type="showOllamaKey ? 'text' : 'password'" placeholder="sk-..."><button class="toggle-vis" @click="showOllamaKey = !showOllamaKey" x-text="showOllamaKey ? 'Hide' : 'Show'"></button></div><div class="help">Ollama Cloud API key (masked)</div></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Agent</h3></div>
+              <div class="panel-body padded">
+                <div class="form-grid">
+                  <div class="form-group"><label>AGENT_IMAGE</label><input x-model="settings.agent_image" placeholder="hivemind-opencode:latest"></div>
+                  <div class="form-group"><label>AGENT_RETRY_DELAY</label><input x-model="settings.agent_retry_delay" type="number" placeholder="120"><div class="help">Seconds between retry attempts</div></div>
+                </div>
+                <div class="form-grid">
+                  <div class="form-group"><label>AGENT_MAX_RETRIES</label><input x-model="settings.agent_max_retries" type="number" placeholder="3"></div>
+                  <div class="form-group"><label>Max concurrent agents</label><input x-model="settings.max_agents" type="number" min="1" max="20" placeholder="3"></div>
+                </div>
+                <div class="form-group"><label>DRY_RUN</label><select x-model="settings.dry_run"><option value="false">Disabled</option><option value="true">Enabled</option></select><div class="help">When enabled, no real changes will be made</div></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>K8s Agent Pods</h3><button class="btn btn-secondary" @click="loadAgents()" style="font-size:.7rem;padding:.3rem .6rem">Refresh</button></div>
+              <div class="panel-body" style="padding:0">
+                <table class="pod-table">
+                  <thead><tr><th>Name</th><th>Status</th><th>Ticket</th><th>Progress</th></tr></thead>
+                  <tbody>
+                    <template x-if="agents.length === 0"><tr><td colspan="4" style="color:var(--muted);text-align:center;padding:1.5rem">No agents</td></tr></template>
+                    <template x-for="a in agents" :key="a.id">
+                      <tr>
+                        <td><span class="pod-dot" :class="a.status || 'idle'"></span><span x-text="a.name || a.id"></span></td>
+                        <td x-text="a.status || 'idle'"></td>
+                        <td x-text="a.current_ticket_id || '—'"></td>
+                        <td x-text="a.status === 'running' ? (a.progress || 0) + '%' : '—'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Orchestrator</h3></div>
+              <div class="panel-body padded" style="display:flex;gap:.75rem;align-items:center">
+                <button class="btn btn-danger" @click="restartOrchestrator()">Restart</button>
+                <span style="font-size:.78rem;color:var(--muted)">Restarts the orchestrator process. All running agents will be terminated.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </main>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+function app() {
+  return {
+    page: 'dashboard',
+    sidebarOpen: false,
+    ticketCount: 0,
+    dash: { queueCount: 0, agents: [], activeAgents: 0, completedCount: 0, totalCount: 0, activeItems: [], logs: [] },
+
+    init() {
+      if (location.pathname === '/tickets') { location.replace('/#/kanban'); return; }
+      const hash = location.hash.replace('#', '');
+      this.page = ['dashboard','kanban','agent','repos','settings','tickets'].includes(hash) ? (hash === 'tickets' ? 'kanban' : hash) : 'dashboard';
+      window.addEventListener('hashchange', () => {
+        const h = location.hash.replace('#', '');
+        if (['dashboard','kanban','agent','repos','settings'].includes(h)) {
+          this.page = h;
+          this.$dispatch('page-show', h);
+        }
+      });
+      HM.loadVersion();
+      this.initSSE();
+    },
+
+    navigate(page) {
+      this.page = page;
+      location.hash = page;
+      this.sidebarOpen = false;
+      this.$dispatch('page-show', page);
+    },
+
+    initSSE() {
+      const self = this;
+      HM.sse.connect({
+        onEvent: () => {
+          self.refreshDash();
+          window.dispatchEvent(new CustomEvent('sse-update'));
+        }
+      });
+    },
+
+    async refreshDash() {
+      try {
+        const [queue, agents, tickets, logs] = await Promise.all([
+          HM.api('/queue'), HM.api('/agents'), HM.api('/tickets'), HM.api('/steps')
+        ]);
+        this.ticketCount = tickets.length;
+        const running = tickets.filter(t => t.status === 'running');
+        const queued = tickets.filter(t => t.status === 'queued');
+        this.dash.activeItems = [
+          ...running.map(t => ({ ticket_id: t.id, title: t.title, agent_name: t.agent_id || '—', status: 'running', badge: 'running' })),
+          ...queued.map(t => ({ ticket_id: t.id, title: t.title, agent_name: 'Waiting...', status: 'queued', badge: 'waiting' }))
+        ];
+        this.dash.agents = agents;
+        this.dash.activeAgents = agents.filter(a => a.status === 'running').length;
+        this.dash.queueCount = queued.length;
+        this.dash.completedCount = tickets.filter(t => t.status === 'completed' || t.status === 'merged').length;
+        this.dash.totalCount = tickets.length;
+        this.dash.logs = (logs || []).slice(0, 60);
+      } catch (e) { console.error('Refresh error:', e); }
+    },
+
+    openDashTicketModal() {
+      this.page = 'kanban';
+      location.hash = 'kanban';
+      this.$dispatch('page-show', 'kanban');
+      setTimeout(() => {
+        const kanbanEl = document.querySelector('[x-data="kanbanPage()"]');
+        if (kanbanEl && kanbanEl.__x) {
+          kanbanEl.__x.$data.showNewTicketModal = true;
+        }
+      }, 150);
+    },
+
+    closeAllModals() {
+      // close all open modals via Alpine state
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════
+   KANBAN PAGE
+   ═══════════════════════════════════════════ */
+function kanbanPage() {
+  return {
+    allTickets: [],
+    searchQuery: '',
+    showNewTicketModal: false,
+    showDetailModal: false,
+    detailTitle: '',
+    detailHtml: '',
+    detailFooter: '',
+    detailTicket: null,
+    newTicket: { id: '', title: '', description: '', issue_type: 'Task', priority: 'Medium', labelsStr: '', selectedRepos: [] },
+    repoNames: [],
+    columns: [
+      { key: 'queued', label: 'Queued' },
+      { key: 'running', label: 'Running' },
+      { key: 'review', label: 'Review' },
+      { key: 'completed', label: 'Completed' },
+      { key: 'failed', label: 'Failed' },
+      { key: 'stopped', label: 'Stopped' }
+    ],
+    liveLogInterval: null,
+    liveLogContent: null,
+    liveLogPod: '',
+    liveLogTicketId: '',
+
+    init() {
+      this.loadTickets();
+      this.loadRepoNames();
+    },
+
+    debouncedRender: HM.debounce(function() { /* reactive via x-for */ }, 300),
+
+    parseLabels(labels) {
+      try { return JSON.parse(labels || '[]'); } catch (e) { return []; }
+    },
+
+    classifyTicket(t) {
+      const st = (t.status || 'queued').toLowerCase();
+      if (st === 'stopped') return 'stopped';
+      if (st === 'failed') return 'failed';
+      if (st === 'completed' || st === 'merged') return 'completed';
+      if (st === 'running' && t.mr_status === 'open') return 'review';
+      if (st === 'running') return 'running';
+      return 'queued';
+    },
+
+    filteredTickets(colKey) {
+      const q = this.searchQuery.toLowerCase();
+      return this.allTickets.filter(t => {
+        if (this.classifyTicket(t) !== colKey) return false;
+        if (!q) return true;
+        return (t.id || '').toLowerCase().includes(q) ||
+               (t.title || '').toLowerCase().includes(q) ||
+               (t.description || '').toLowerCase().includes(q) ||
+               (t.labels || '').toLowerCase().includes(q);
+      });
+    },
+
+    async loadTickets() {
+      try {
+        this.allTickets = await HM.api('/tickets');
+        const appEl = document.querySelector('[x-data]');
+        if (appEl && appEl.__x) appEl.__x.$data.ticketCount = this.allTickets.length;
+      } catch (e) { console.error(e); }
+    },
+
+    async loadRepoNames() {
+      try { this.repoNames = await HM.api('/repo-names'); } catch (e) { this.repoNames = []; }
+    },
+
+    async openDetail(ticketId) {
+      const t = this.allTickets.find(x => x.id === ticketId);
+      if (!t) return;
+      this.detailTicket = t;
+      this.detailTitle = t.id + ' – ' + t.title;
+      this.buildDetailHtml(t);
+      this.buildDetailFooter(t);
+      this.showDetailModal = true;
+    },
+
+    buildDetailHtml(t) {
+      const labels = this.parseLabels(t.labels);
+      const labelStr = labels.join(', ') || '—';
+      const selRepos = (() => { try { const r = JSON.parse(t.selected_repos || '[]'); return r.length ? '<div class="detail-field"><label>Manual Repos</label><div class="val" style="color:var(--accent)">' + r.join(', ') + '</div></div>' : ''; } catch(e) { return ''; } })();
+      const mr = t.mr_url ? '<div class="section-block green"><h4>Merge Request</h4><a href="' + HM.escapeHtml(t.mr_url) + '" target="_blank" style="font-size:0.8rem">' + HM.escapeHtml(t.mr_url) + '</a>' + HM.pipelineBadge(t.mr_pipeline_status) + '</div>' : '';
+      const retry = t.retry_count > 0 ? '<div class="detail-field" style="margin-top:.5rem"><label>Retry History</label><div class="val" style="color:var(--yellow)">' + t.retry_count + 'x rejected</div></div>' : '';
+      const review = t.review_notes ? '<div class="detail-field" style="margin-top:.5rem"><label>Review Notes</label><div class="notes-box">' + HM.escapeHtml(t.review_notes) + '</div></div>' : '';
+      const statusCls = {queued:'medium',running:'high',completed:'low',merged:'low',failed:'critical'}[t.status] || 'medium';
+      this.detailHtml = `
+        <div class="detail-grid">
+          <div class="detail-field"><label>Status</label><span class="badge badge-priority-${statusCls}">${HM.escapeHtml(t.status)}</span></div>
+          <div class="detail-field"><label>Priority</label><span class="badge badge-priority-${HM.priorityClass(t.priority)}">${HM.escapeHtml(t.priority || 'Medium')}</span></div>
+          <div class="detail-field"><label>Type</label><div class="val">${HM.escapeHtml(t.issue_type || 'Task')}</div></div>
+          <div class="detail-field"><label>Created</label><div class="val">${t.created_at ? new Date(t.created_at).toLocaleString() : '—'}</div></div>
+        </div>
+        <div class="detail-field"><label>Labels</label><div class="val">${HM.escapeHtml(labelStr)}</div></div>
+        <div class="detail-field"><label>Description</label><div class="val" style="color:var(--text2);white-space:pre-wrap">${HM.escapeHtml(t.description || '—')}</div></div>
+        ${selRepos}${mr}${review}${retry}
+      `;
+    },
+
+    buildDetailFooter(t) {
+      let f = '<button class="btn btn-secondary" @click="showDetailModal=false">Close</button>';
+      if (t.status === 'running' || t.status === 'queued') {
+        f += ' <button class="btn btn-danger" @click="stopTicket(\'' + t.id + '\')">Stop</button>';
+        f += ' <button class="btn btn-primary" @click="loadLiveLogs(\'' + t.id + '\')">Live Logs</button>';
+      }
+      if (t.status === 'completed' || t.mr_status === 'open') {
+        f = '<div style="flex:1"><input id="reviewNotes" placeholder="Review notes (optional)" style="width:100%;background:var(--bg);border:1px solid var(--border-light);color:var(--text);padding:.45rem;border-radius:var(--radius-sm);font-size:.8rem"></div><button class="btn btn-danger" @click="reviewTicket(\'' + t.id + '\',\'changes_requested\')">Changes Requested</button><button class="btn btn-success" @click="reviewTicket(\'' + t.id + '\',\'approved\')">Approve</button>';
+      }
+      if (t.status === 'completed' || t.status === 'failed' || t.status === 'merged' || t.status === 'stopped') {
+        f += ' <button class="btn btn-primary" @click="reopenTicket(\'' + t.id + '\')">Reopen</button>';
+      }
+      this.detailFooter = f;
+    },
+
+    closeDetail() {
+      this.showDetailModal = false;
+      this.liveLogContent = null;
+      this.liveLogPod = '';
+      if (this.liveLogInterval) { clearInterval(this.liveLogInterval); this.liveLogInterval = null; }
+    },
+
+    async stopTicket(id) {
+      if (!confirm('Really stop this ticket?')) return;
+      try { await HM.api('/tickets/' + id + '/stop', 'POST'); this.showDetailModal = false; HM.toast('Ticket stopped'); await this.loadTickets(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+
+    async reviewTicket(id, status) {
+      const notes = document.getElementById('reviewNotes')?.value || '';
+      await HM.api('/tickets/' + id + '/review', 'POST', { status, notes, mr_url: '' });
+      this.showDetailModal = false;
+      await this.loadTickets();
+    },
+
+    async reopenTicket(id) {
+      if (!confirm('Really reopen this ticket?')) return;
+      await HM.api('/tickets/' + id + '/reopen', 'POST');
+      this.showDetailModal = false;
+      await this.loadTickets();
+    },
+
+    async loadLiveLogs(ticketId) {
+      this.liveLogTicketId = ticketId;
+      if (this.liveLogInterval) { clearInterval(this.liveLogInterval); this.liveLogInterval = null; }
+      const fetchLogs = async () => {
+        try {
+          const data = await HM.api('/tickets/' + this.liveLogTicketId + '/logs?tail=150');
+          let logs = data.logs || '(no logs)';
+          this.liveLogContent = logs;
+          this.liveLogPod = data.status === 'ok' ? data.pod : data.status;
+        } catch(e) { console.error(e); this.liveLogContent = 'Error loading logs: ' + e.message; }
+      };
+      await fetchLogs();
+      this.liveLogInterval = setInterval(fetchLogs, 5000);
+    },
+
+    async createTicket() {
+      const data = {
+        id: this.newTicket.id || 'TASK-' + Date.now(),
+        title: this.newTicket.title,
+        description: this.newTicket.description,
+        issue_type: this.newTicket.issue_type,
+        priority: this.newTicket.priority,
+        labels: this.newTicket.labelsStr.split(',').map(s => s.trim()).filter(Boolean),
+        selected_repos: this.newTicket.selectedRepos,
+      };
+      if (!data.title) { HM.toast('Please enter a title', 'error'); return; }
+      try {
+        await HM.api('/tickets', 'POST', data);
+        this.showNewTicketModal = false;
+        this.newTicket = { id: '', title: '', description: '', issue_type: 'Task', priority: 'Medium', labelsStr: '', selectedRepos: [] };
+        HM.toast('Ticket created!');
+        await this.loadTickets();
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════
+   AGENT PAGE
+   ═══════════════════════════════════════════ */
+function agentPage() {
+  return {
+    agentTab: 'agents',
+    agentProfiles: [],
+    mcpServers: [],
+    instructions: [],
+    plugins: [],
+    repoNames: [],
+    modelSettings: { opencode_model: '', ollama_model: '', ollama_base_url: '', ollama_timeout: '', agent_retry_delay: '', agent_max_retries: '', agent_image: '', dry_run: 'false' },
+    memoryBlocks: [],
+    memoryAgentId: '',
+    // modals
+    showAgentModal: false, editingAgentId: null,
+    showMcpModal: false, editingMcp: null,
+    showInstrModal: false, editingInstrId: null,
+    showPluginModal: false, editingPlugin: null,
+    showMemoryModal: false, editingMemId: null,
+    // forms
+    agentForm: { id: '', name: '', model_name: '', skills: [], instruction_ids: [], repo_affinities: [] },
+    mcpForm: { name: '', server_type: 'local', enabled: 1, command: '', argsStr: '', envStr: '', description: '' },
+    instrForm: { name: '', content: '', enabled: 1, sort_order: 0 },
+    pluginForm: { name: '', description: '', requires_binary: '', enabled: 1 },
+    memForm: { label: '', repo_name: '_global', description: '', content: '' },
+
+    init() { this.refreshData(); },
+
+    async refreshData() {
+      try {
+        [this.agentProfiles, this.mcpServers, this.instructions, this.plugins] = await Promise.all([
+          HM.api('/agent-profiles'), HM.api('/mcp-servers'), HM.api('/agent-instructions'), HM.api('/plugins')
+        ]);
+        this.repoNames = await HM.api('/repo-names').catch(() => []);
+      } catch(e) { console.error(e); }
+      try { this.loadModelSettings(); } catch(e) {}
+    },
+
+    getInstructionName(id) { const i = this.instructions.find(x => x.id === id); return i ? i.name : ''; },
+
+    async loadModelSettings() {
+      const s = await HM.api('/settings');
+      const byKey = {}; s.forEach(item => { byKey[item.key] = item.value; });
+      this.modelSettings = {
+        opencode_model: byKey.opencode_model || '',
+        ollama_model: byKey.ollama_model || '',
+        ollama_base_url: byKey.ollama_base_url || '',
+        ollama_timeout: byKey.ollama_timeout || '',
+        agent_retry_delay: byKey.agent_retry_delay || '',
+        agent_max_retries: byKey.agent_max_retries || '',
+        agent_image: byKey.agent_image || '',
+        dry_run: byKey.dry_run || 'false'
+      };
+    },
+
+    async saveModelSettings() {
+      try { await HM.api('/settings', 'POST', this.modelSettings); HM.toast('Saved!'); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+
+    // Agents
+    openAgentModal(agentId = null) {
+      this.editingAgentId = agentId;
+      if (agentId) {
+        const a = this.agentProfiles.find(x => x.id === agentId);
+        if (!a) return;
+        this.agentForm = { id: a.id, name: a.name || '', model_name: a.model_name || '', skills: [...(a.skills || [])], instruction_ids: [...(a.instruction_ids || [])], repo_affinities: [...(a.repo_affinities || [])] };
+      } else {
+        this.agentForm = { id: '', name: '', model_name: '', skills: [], instruction_ids: [], repo_affinities: [] };
+      }
+      this.showAgentModal = true;
+    },
+    editAgent(id) { this.openAgentModal(id); },
+    async saveAgent() {
+      if (!this.agentForm.id) { HM.toast('Agent ID is required', 'error'); return; }
+      const data = { id: this.agentForm.id, name: this.agentForm.name, model_name: this.agentForm.model_name, skills: this.agentForm.skills, instruction_ids: this.agentForm.instruction_ids, repo_affinities: this.agentForm.repo_affinities };
+      try {
+        if (this.editingAgentId) { await HM.api('/agent-profiles/' + this.editingAgentId, 'PATCH', data); }
+        else { await HM.api('/agent-profiles', 'POST', data); }
+        this.showAgentModal = false; await this.refreshData(); HM.toast(this.editingAgentId ? 'Updated!' : 'Created!');
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async deleteAgent(agentId) {
+      if (!confirm('Really delete agent "' + agentId + '"?')) return;
+      try { await HM.api('/agent-profiles/' + agentId, 'DELETE'); await this.refreshData(); HM.toast('Deleted!'); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+
+    // MCP
+    openMcpModal(name = null) {
+      this.editingMcp = name;
+      if (name) {
+        const s = this.mcpServers.find(x => x.name === name);
+        if (!s) return;
+        this.mcpForm = { name: s.name, server_type: s.server_type || 'local', enabled: s.enabled ? 1 : 0, command: s.command || '', argsStr: (() => { try { return JSON.stringify(JSON.parse(s.args || '[]')); } catch(e) { return ''; } })(), envStr: (() => { try { return JSON.stringify(JSON.parse(s.env || '{}')); } catch(e) { return ''; } })(), description: s.description || '' };
+      } else {
+        this.mcpForm = { name: '', server_type: 'local', enabled: 1, command: '', argsStr: '', envStr: '', description: '' };
+      }
+      this.showMcpModal = true;
+    },
+    editMcp(name) { this.openMcpModal(name); },
+    async saveMcp() {
+      if (!this.mcpForm.name) { HM.toast('Name is required', 'error'); return; }
+      const data = { name: this.mcpForm.name, server_type: this.mcpForm.server_type, enabled: this.mcpForm.enabled === 1, command: this.mcpForm.command, description: this.mcpForm.description };
+      if (this.mcpForm.argsStr.trim()) { try { data.args = JSON.parse(this.mcpForm.argsStr); } catch(e) { HM.toast('Invalid JSON in Args', 'error'); return; } }
+      if (this.mcpForm.envStr.trim()) { try { data.env = JSON.parse(this.mcpForm.envStr); } catch(e) { HM.toast('Invalid JSON in Env', 'error'); return; } }
+      try {
+        if (this.editingMcp) { await HM.api('/mcp-servers/' + this.editingMcp, 'PATCH', data); } else { await HM.api('/mcp-servers', 'POST', data); }
+        this.showMcpModal = false; await this.refreshData(); HM.toast(this.editingMcp ? 'Updated!' : 'Added!');
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async toggleMcp(name, val) { await HM.api('/mcp-servers/' + name, 'PATCH', { enabled: val }); await this.refreshData(); },
+    async deleteMcp(name) { if (!confirm('Really delete MCP server "' + name + '"?')) return; await HM.api('/mcp-servers/' + name, 'DELETE'); await this.refreshData(); HM.toast('Deleted!'); },
+
+    // Instructions
+    openInstrModal(id = null) {
+      this.editingInstrId = id;
+      if (id !== null) {
+        const i = this.instructions.find(x => x.id === id);
+        if (!i) return;
+        this.instrForm = { name: i.name, content: i.content, enabled: i.enabled ? 1 : 0, sort_order: i.sort_order || 0 };
+      } else {
+        this.instrForm = { name: '', content: '', enabled: 1, sort_order: 0 };
+      }
+      this.showInstrModal = true;
+    },
+    editInstr(id) { this.openInstrModal(id); },
+    async saveInstr() {
+      if (!this.instrForm.name || !this.instrForm.content) { HM.toast('Name and content are required', 'error'); return; }
+      const data = { name: this.instrForm.name, content: this.instrForm.content, enabled: this.instrForm.enabled === 1, sort_order: this.instrForm.sort_order };
+      try {
+        if (this.editingInstrId !== null) { await HM.api('/agent-instructions/' + this.editingInstrId, 'PATCH', data); } else { await HM.api('/agent-instructions', 'POST', data); }
+        this.showInstrModal = false; await this.refreshData(); HM.toast(this.editingInstrId !== null ? 'Updated!' : 'Added!');
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async toggleInstr(id, val) { await HM.api('/agent-instructions/' + id, 'PATCH', { enabled: val }); await this.refreshData(); },
+    async deleteInstr(id) { if (!confirm('Really delete this instruction?')) return; await HM.api('/agent-instructions/' + id, 'DELETE'); await this.refreshData(); HM.toast('Deleted!'); },
+
+    // Plugins
+    openPluginModal(name = null) {
+      this.editingPlugin = name;
+      if (name) {
+        const p = this.plugins.find(x => x.name === name);
+        if (!p) return;
+        this.pluginForm = { name: p.name, description: p.description || '', requires_binary: p.requires_binary || '', enabled: p.enabled ? 1 : 0 };
+      } else {
+        this.pluginForm = { name: '', description: '', requires_binary: '', enabled: 1 };
+      }
+      this.showPluginModal = true;
+    },
+    editPlugin(name) { this.openPluginModal(name); },
+    async savePlugin() {
+      if (!this.pluginForm.name) { HM.toast('Name is required', 'error'); return; }
+      const data = { name: this.pluginForm.name.trim(), description: this.pluginForm.description.trim(), requires_binary: this.pluginForm.requires_binary.trim(), enabled: this.pluginForm.enabled === 1 };
+      try {
+        if (this.editingPlugin) { await HM.api('/plugins/' + this.editingPlugin, 'PATCH', data); } else { await HM.api('/plugins', 'POST', data); }
+        this.showPluginModal = false; await this.refreshData(); HM.toast(this.editingPlugin ? 'Updated!' : 'Added!');
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async togglePlugin(name, val) { await HM.api('/plugins/' + name, 'PATCH', { enabled: val }); await this.refreshData(); },
+    async deletePlugin(name) { if (!confirm('Really delete plugin "' + name + '"?')) return; await HM.api('/plugins/' + name, 'DELETE'); await this.refreshData(); HM.toast('Deleted!'); },
+
+    // Memory
+    async loadMemoryBlocks() {
+      if (!this.memoryAgentId) { this.memoryBlocks = []; return; }
+      try { this.memoryBlocks = await HM.api('/agent-memory/' + this.memoryAgentId); } catch(e) { this.memoryBlocks = []; }
+    },
+    openMemoryBlockModal(blockId = null) {
+      this.editingMemId = blockId;
+      if (blockId) {
+        const b = this.memoryBlocks.find(x => x.id === blockId);
+        if (!b) return;
+        this.memForm = { label: b.label || '', repo_name: b.repo_name || '_global', description: b.description || '', content: b.content || '' };
+      } else {
+        this.memForm = { label: '', repo_name: '_global', description: '', content: '' };
+      }
+      this.showMemoryModal = true;
+    },
+    editMemoryBlock(id) { this.openMemoryBlockModal(id); },
+    async saveMemoryBlock() {
+      if (!this.memoryAgentId) { HM.toast('Select an agent first', 'error'); return; }
+      if (!this.memForm.label) { HM.toast('Label is required', 'error'); return; }
+      const data = { label: this.memForm.label.trim(), repo_name: this.memForm.repo_name.trim() || '_global', description: this.memForm.description.trim(), content: this.memForm.content };
+      try {
+        await HM.api('/agent-memory/' + this.memoryAgentId, 'POST', data);
+        this.showMemoryModal = false; await this.loadMemoryBlocks(); HM.toast(this.editingMemId ? 'Updated!' : 'Added!');
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async deleteMemoryBlock(blockId) {
+      if (!confirm('Really delete this memory block?')) return;
+      await HM.api('/agent-memory/' + this.memoryAgentId + '/' + blockId, 'DELETE');
+      await this.loadMemoryBlocks(); HM.toast('Deleted!');
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════
+   REPOS PAGE
+   ═══════════════════════════════════════════ */
+function reposPage() {
+  return {
+    repos: [],
+    defaultBranch: 'development',
+    showAddRepoModal: false,
+    showEditRepoModal: false,
+    showGitlabModal: false,
+    showBulkBranchModal: false,
+    gitlabProjects: [],
+    addRepoForm: { name: '', url: '', branch: 'development', tagsStr: '', description: '' },
+    editRepoForm: { name: '', url: '', branch: '', tagsStr: '', description: '' },
+    bulkBranch: 'development',
+
+    init() { this.loadRepos(); this.loadDefaultBranch(); },
+
+    async loadRepos() { try { this.repos = await HM.api('/repos'); } catch(e) { console.error(e); } },
+    async loadDefaultBranch() { try { const s = await HM.api('/settings'); const b = s.find(x => x.key === 'default_branch'); if (b && b.value) this.defaultBranch = b.value; this.addRepoForm.branch = this.defaultBranch; } catch(e) {} },
+
+    async toggleRepo(name, activate) {
+      try { await HM.api('/repos/' + encodeURIComponent(name) + (activate ? '/activate' : '/deactivate'), 'POST'); HM.toast(activate ? 'Repository activated' : 'Repository deactivated'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async activateAll() {
+      const pending = this.repos.filter(r => !r.active);
+      if (!pending.length) return;
+      if (!confirm('Activate all ' + pending.length + ' pending repositories?')) return;
+      let ok = 0;
+      for (const r of pending) { try { await HM.api('/repos/' + encodeURIComponent(r.name) + '/activate', 'POST'); ok++; } catch(e) {} }
+      HM.toast(ok + '/' + pending.length + ' repos activated'); await this.loadRepos();
+    },
+    openAddRepoModal() { this.addRepoForm = { name: '', url: '', branch: this.defaultBranch, tagsStr: '', description: '' }; this.showAddRepoModal = true; },
+    async addRepo() {
+      if (!this.addRepoForm.name || !this.addRepoForm.url) { HM.toast('Name and URL are required', 'error'); return; }
+      try {
+        await HM.api('/repos', 'POST', { name: this.addRepoForm.name, url: this.addRepoForm.url, branch: this.addRepoForm.branch || this.defaultBranch, tags: this.addRepoForm.tagsStr.split(',').map(s => s.trim()).filter(Boolean), description: this.addRepoForm.description.trim() });
+        this.showAddRepoModal = false; HM.toast('Repository added!'); await this.loadRepos();
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async openEditRepoModal(name) {
+      const r = this.repos.find(x => x.name === name);
+      if (!r) return;
+      this.editRepoForm = { name: r.name, url: r.url || '', branch: r.branch || this.defaultBranch, tagsStr: (r.tags || []).join(', '), description: r.description || '' };
+      this.showEditRepoModal = true;
+    },
+    async saveEditRepo() {
+      const data = {};
+      if (this.editRepoForm.url) data.url = this.editRepoForm.url;
+      if (this.editRepoForm.branch) data.branch = this.editRepoForm.branch;
+      data.tags = this.editRepoForm.tagsStr.split(',').map(s => s.trim()).filter(Boolean);
+      data.description = this.editRepoForm.description.trim();
+      try { await HM.api('/repos/' + encodeURIComponent(this.editRepoForm.name), 'PUT', data); this.showEditRepoModal = false; HM.toast('Repository updated!'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async deleteRepo(name) { if (!confirm('Really remove repository "' + name + '"?')) return; try { await HM.api('/repos/' + encodeURIComponent(name), 'DELETE'); HM.toast('Repository removed'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); } },
+    async initFromGitlab() {
+      HM.toast('Loading GitLab projects...'); try { this.gitlabProjects = await HM.api('/repos/gitlab-projects'); this.showGitlabModal = true; } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    toggleAllGitlab() { const checks = document.querySelectorAll('.gitlab-project-check'); const allChecked = [...checks].every(c => c.checked); checks.forEach(c => c.checked = !allChecked); },
+    async importSelectedGitlab() {
+      const checks = document.querySelectorAll('.gitlab-project-check:checked');
+      if (!checks.length) { HM.toast('No projects selected', 'error'); return; }
+      const repos = [...checks].map(c => ({ name: c.dataset.name, url: c.dataset.url, branch: c.dataset.branch, description: c.dataset.description, tags: c.dataset.tags ? c.dataset.tags.split(',').filter(Boolean) : [] }));
+      this.showGitlabModal = false; HM.toast('Importing ' + repos.length + ' repos...');
+      try { const result = await HM.api('/repos/import-selected', 'POST', { repos }); HM.toast(result.added.length + ' repos imported' + (result.skipped.length ? ', ' + result.skipped.length + ' skipped' : '')); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    async bulkSwitchBranch() {
+      const branch = this.bulkBranch.trim();
+      if (!branch) { HM.toast('Branch name required', 'error'); return; }
+      if (!confirm('Switch all ' + this.repos.length + ' repos to branch "' + branch + '"?')) return;
+      this.showBulkBranchModal = false;
+      try { const result = await HM.api('/repos', 'PATCH', { branch }); HM.toast(result.count + ' repos switched to "' + branch + '"'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════
+   SETTINGS PAGE
+   ═══════════════════════════════════════════ */
+function settingsPage() {
+  return {
+    settings: { gitlab_host: '', git_user: '', gitlab_token: '', gitlab_ssh_key_base64: '', ssh_key_path: '', default_branch: '', branch_fallback_order: '', opencode_model: '', opencode_port: '', ollama_host: '', ollama_base_url: '', ollama_model: '', ollama_timeout: '', ollama_cloud_api_key: '', agent_image: '', agent_retry_delay: '', agent_max_retries: '', max_agents: '3', dry_run: 'false' },
+    agents: [],
+    showGitlabToken: false,
+    showSSHKey: false,
+    showOllamaKey: false,
+
+    init() { this.loadSettings(); this.loadAgents(); },
+
+    async loadSettings() {
+      try {
+        const s = await HM.api('/settings');
+        s.forEach(item => { if (this.settings.hasOwnProperty(item.key)) this.settings[item.key] = item.value; });
+      } catch(e) { console.error(e); }
+    },
+
+    async loadAgents() { try { this.agents = await HM.api('/agents'); } catch(e) { console.error(e); } },
+
+    async saveSettings() {
+      try { await HM.api('/settings', 'POST', this.settings); HM.toast('Settings saved'); await this.loadSettings(); } catch(e) { HM.toast('Error saving: ' + e.message, 'error'); }
+    },
+
+    async restartOrchestrator() {
+      if (!confirm('Really restart the orchestrator? Running agents will be terminated.')) return;
+      try { await HM.api('/restart', 'POST'); HM.toast('Restart initiated...'); } catch(e) { HM.toast('Restart request sent (connection will be interrupted)', 'error'); }
+    }
+  };
+}
+
+// Init on page load
+document.addEventListener('alpine:initialized', () => {
+  setTimeout(() => {
+    const el = document.querySelector('[x-data]');
+    if (el && el._x_dataStack) {
+      const data = el._x_dataStack[0];
+      if (data && data.init) data.init();
+    }
+  }, 50);
+});
+</script>
+</body>
+</html>

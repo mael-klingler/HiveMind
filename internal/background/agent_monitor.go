@@ -73,6 +73,14 @@ func (am *AgentMonitor) checkAgentPods(ctx context.Context) error {
 		return err
 	}
 
+	podTickets := make(map[string]bool)
+	for _, pod := range pods {
+		ticketID := pod.Labels["ticket-id"]
+		if ticketID != "" {
+			podTickets[ticketID] = true
+		}
+	}
+
 	for _, pod := range pods {
 		ticketID := pod.Labels["ticket-id"]
 		if ticketID == "" {
@@ -104,10 +112,6 @@ func (am *AgentMonitor) checkAgentPods(ctx context.Context) error {
 					slog.Error("failed to update ticket status to failed", "ticket_id", ticketID, "error", err)
 				}
 			}
-			if err := am.K8s.DeletePod(ctx, pod.Name); err != nil {
-				slog.Error("failed to delete failed pod", "pod", pod.Name, "error", err)
-			}
-			am.K8s.CleanupAgentResources(ctx, ticketID)
 
 		case string(corev1.PodRunning):
 			if am.isStale(pod, am.Config.AgentStaleTimeout) {
@@ -122,6 +126,23 @@ func (am *AgentMonitor) checkAgentPods(ctx context.Context) error {
 			}
 		}
 	}
+
+	agents, err := am.DB.ListAgents(ctx)
+	if err != nil {
+		slog.Error("failed to list agents for orphan check", "error", err)
+	} else {
+		for _, agent := range agents {
+			if agent.Status == "running" && agent.CurrentTask != "" {
+				if !podTickets[agent.CurrentTask] {
+					slog.Warn("orphan agent detected, resetting to idle", "agent_id", agent.ID, "ticket_id", agent.CurrentTask)
+					if err := am.DB.SetAgentIdle(ctx, agent.ID); err != nil {
+						slog.Error("failed to reset orphan agent", "agent_id", agent.ID, "error", err)
+					}
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
