@@ -76,7 +76,8 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 
 	r.Get("/healthz", s.healthz)
 	r.Get("/readyz", s.readyz)
-	r.Get("/metrics", s.metrics)
+	r.Get("/metrics", s.prometheusMetrics)
+	r.Get("/api/metrics", s.metrics)
 
 	r.Route("/api", func(r chi.Router) {
 		// Tickets
@@ -192,6 +193,43 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) prometheusMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	m, err := s.DB.GetMetricsSummary(ctx)
+	if err != nil {
+		http.Error(w, "failed to get metrics", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	fmt.Fprintf(w, "# HELP hivemind_total_tickets Total number of tickets\n")
+	fmt.Fprintf(w, "# TYPE hivemind_total_tickets gauge\n")
+	fmt.Fprintf(w, "hivemind_total_tickets %d\n", m.TotalTickets)
+	fmt.Fprintf(w, "# HELP hivemind_completed_tickets Completed tickets\n")
+	fmt.Fprintf(w, "# TYPE hivemind_completed_tickets gauge\n")
+	fmt.Fprintf(w, "hivemind_completed_tickets %d\n", m.CompletedTickets)
+	fmt.Fprintf(w, "# HELP hivemind_failed_tickets Failed tickets\n")
+	fmt.Fprintf(w, "# TYPE hivemind_failed_tickets gauge\n")
+	fmt.Fprintf(w, "hivemind_failed_tickets %d\n", m.FailedTickets)
+	fmt.Fprintf(w, "# HELP hivemind_merged_tickets Merged tickets\n")
+	fmt.Fprintf(w, "# TYPE hivemind_merged_tickets gauge\n")
+	fmt.Fprintf(w, "hivemind_merged_tickets %d\n", m.MergedTickets)
+	fmt.Fprintf(w, "# HELP hivemind_total_retries Total retries\n")
+	fmt.Fprintf(w, "# TYPE hivemind_total_retries gauge\n")
+	fmt.Fprintf(w, "hivemind_total_retries %d\n", m.TotalRetries)
+	fmt.Fprintf(w, "# HELP hivemind_avg_review_cycles Average review cycles\n")
+	fmt.Fprintf(w, "# TYPE hivemind_avg_review_cycles gauge\n")
+	fmt.Fprintf(w, "hivemind_avg_review_cycles %.2f\n", m.AvgReviewCycles)
+	fmt.Fprintf(w, "# HELP hivemind_total_prompt_tokens Total LLM prompt tokens\n")
+	fmt.Fprintf(w, "# TYPE hivemind_total_prompt_tokens gauge\n")
+	fmt.Fprintf(w, "hivemind_total_prompt_tokens %d\n", m.TotalPromptTokens)
+	fmt.Fprintf(w, "# HELP hivemind_total_completion_tokens Total LLM completion tokens\n")
+	fmt.Fprintf(w, "# TYPE hivemind_total_completion_tokens gauge\n")
+	fmt.Fprintf(w, "hivemind_total_completion_tokens %d\n", m.TotalCompletionTokens)
+	fmt.Fprintf(w, "# HELP hivemind_total_llm_cost_usd Total LLM cost in USD\n")
+	fmt.Fprintf(w, "# TYPE hivemind_total_llm_cost_usd gauge\n")
+	fmt.Fprintf(w, "hivemind_total_llm_cost_usd %.6f\n", m.TotalLLMCostUSD)
 }
 
 func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
@@ -386,11 +424,10 @@ func (s *Server) getTicketLogs(w http.ResponseWriter, r *http.Request) {
 	podName := "agent-worker-" + strings.ToLower(id)
 	logs, err := kc.GetPodLogs(ctx, podName, tailLines)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get logs: "+err.Error())
+		writeJSON(w, http.StatusOK, map[string]interface{}{"logs": "", "status": "error", "pod": podName})
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(logs))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"logs": logs, "status": "ok", "pod": podName})
 }
 
 func (s *Server) listTicketComments(w http.ResponseWriter, r *http.Request) {

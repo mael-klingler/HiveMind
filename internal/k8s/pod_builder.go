@@ -421,9 +421,9 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   fi
   echo "Init leankg $repo ..."
   cd "/workspace/$repo"
-  leankg init || echo "leankg init failed for $repo"
+  command -v leankg >/dev/null 2>&1 && { leankg init || echo "leankg init failed for $repo"; } || echo "leankg not installed, skipping init for $repo"
   echo "Index leankg $repo ..."
-  leankg index . || echo "leankg index failed for $repo"
+  command -v leankg >/dev/null 2>&1 && { leankg index . || echo "leankg index failed for $repo"; } || echo "leankg not installed, skipping index for $repo"
 done
 echo "All repos processed"
 `
