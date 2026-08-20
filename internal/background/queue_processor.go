@@ -192,8 +192,8 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		})
 	}
 
-	assignment := fmt.Sprintf("# %s\n\n%s\n\n## Selected Repositories\n%s\n\n## Instructions\nPlease implement the changes described above.",
-		ticket.Title, ticket.Description, strings.Join(selectedRepos, ", "))
+	assignment := fmt.Sprintf("# Task: %s – %s\n\n%s\n\n## Selected Repositories\n%s\n\n## Instructions\nPlease implement the changes described above.",
+		ticket.ID, ticket.Title, ticket.Description, strings.Join(selectedRepos, ", "))
 
 	params := k8s.PodSpecParams{
 		TicketID:           ticket.ID,
@@ -205,6 +205,8 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		GitLabHost:         qp.Config.GitLabHost,
 		GitUser:            qp.Config.GitUser,
 		GitLabToken:        qp.Config.GitLabToken,
+		GitHubToken:        qp.Config.GitHubToken,
+		GitHubHost:         qp.Config.GitHubHost,
 		OllamaBaseURL:      qp.Config.OllamaBaseURL,
 		OpencodeModel:      qp.Config.OpencodeModel,
 		OllamaCloudAPIKey:  qp.Config.OllamaCloudAPIKey,

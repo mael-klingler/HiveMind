@@ -39,6 +39,8 @@ type PodSpecParams struct {
 	GitLabHost         string
 	GitUser            string
 	GitLabToken        string
+	GitHubToken        string
+	GitHubHost         string
 	OllamaBaseURL      string
 	OpencodeModel      string
 	OllamaCloudAPIKey  string
@@ -94,6 +96,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 					Key:                  "token",
 				},
 			}},
+			{Name: "GITHUB_TOKEN", Value: params.GitHubToken},
+			{Name: "GITHUB_HOST", Value: params.GitHubHost},
 			{Name: "GIT_USER", Value: params.GitUser},
 			{Name: "GIT_SSL_NO_VERIFY", Value: func() string {
 				if params.GitSSLNoVerify {
@@ -126,9 +130,16 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 		{Name: "GITLAB_HOST", Value: params.GitLabHost},
 		{Name: "GIT_USER", Value: params.GitUser},
 		{Name: "GITLAB_USER", Value: params.GitUser},
+		{Name: "GITHUB_TOKEN", Value: params.GitHubToken},
+		{Name: "GITHUB_HOST", Value: params.GitHubHost},
 		{Name: "OLLAMA_BASE_URL", Value: params.OllamaBaseURL},
 		{Name: "OPENCODE_MODEL", Value: params.OpencodeModel},
-		{Name: "OPENCODE_PLUGINS", Value: toJSONString(params.PluginNames)},
+		{Name: "OPENCODE_PLUGINS", Value: func() string {
+			if len(params.PluginNames) == 0 {
+				return `["opencode-snip","opencode-agent-memory","opencode-handoff"]`
+			}
+			return toJSONString(params.PluginNames)
+		}()},
 		{Name: "QUEUE_ID", Value: params.QueueID},
 		{Name: "TICKET_ID", Value: params.TicketID},
 		{Name: "AGENT_ID", Value: params.AgentID},
@@ -373,12 +384,12 @@ func buildCloneScript(repos []RepoRef) string {
 	reposJSON := buildReposJSON(repos)
 	script := `set -uo pipefail
 FALLBACK_BRANCHES="development qa main master"
-cat > /config/repos.json << 'REPOSEOF'
+cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
 REPOSEOF
-for repo in $(jq -r 'keys[]' /config/repos.json); do
-  url=$(jq -r --arg r "$repo" '.[$r].url' /config/repos.json)
-  branch=$(jq -r --arg r "$repo" '.[$r].branch' /config/repos.json)
+for repo in $(jq -r 'keys[]' /workspace/repos.json); do
+  url=$(jq -r --arg r "$repo" '.[$r].url' /workspace/repos.json)
+  branch=$(jq -r --arg r "$repo" '.[$r].branch' /workspace/repos.json)
   if echo "$url" | grep -qE "^https?://"; then
     url=$(echo "$url" | sed -E "s|^(https?://)|\\1${GIT_USER}:${GITLAB_TOKEN}@|")
   fi
@@ -467,7 +478,7 @@ func buildOpencodeConfig(params PodSpecParams) opencodeConfig {
 	if llmProvider == "ollama_cloud" && params.OllamaCloudAPIKey != "" {
 		providerKey = "ollama_cloud"
 		providerName = "Ollama Cloud"
-		providerURL = strings.TrimSuffix(providerURL, "/") + "/v1"
+		providerURL = strings.TrimSuffix(providerURL, "/")
 		if params.OllamaBaseURL == "" {
 			providerURL = "https://ollama.com/v1"
 		}
@@ -501,7 +512,7 @@ func buildOpencodeConfig(params PodSpecParams) opencodeConfig {
 		SmallModel: modelRef,
 		Autoupdate: false,
 		Share:      "disabled",
-		Plugin:     params.PluginNames,
+		Plugin:     append([]string{}, params.PluginNames...),
 		Provider: map[string]providerEntry{
 			providerKey: {
 				NPM:     "@ai-sdk/openai-compatible",

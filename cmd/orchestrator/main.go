@@ -26,6 +26,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/pressly/goose/v3"
 
 	"github.com/maelklingler/hivemind/internal/api"
@@ -105,7 +107,7 @@ func main() {
 		reviewMonitor.Run(ctx)
 	}()
 
-	server := api.NewServer(cfg, db, k8sClient, broadcaster)
+	server := api.NewServer(cfg, db, k8sClient, broadcaster, getStaticFS())
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	httpServer := &http.Server{

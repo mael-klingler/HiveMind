@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -42,6 +43,7 @@ type Server struct {
 	Router      *chi.Mux
 	Broadcaster *sse.Broadcaster
 	Shutdown    context.CancelFunc
+	staticFS    fs.FS
 }
 
 func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
@@ -52,12 +54,13 @@ func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
 	return s.K8s
 }
 
-func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster) *Server {
+func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, staticFS fs.FS) *Server {
 	s := &Server{
 		Config:      cfg,
-		DB:         db,
-		K8s:        k8sClient,
+		DB:          db,
+		K8s:         k8sClient,
 		Broadcaster: broadcaster,
+		staticFS:    staticFS,
 	}
 
 	r := chi.NewRouter()
@@ -117,9 +120,23 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Delete("/repos/{name}", s.deleteRepo)
 		r.Get("/repos/{name}/branches", s.listRepoBranches)
 
-		// Settings
 		r.Get("/settings", s.getSettings)
 		r.Post("/settings", s.updateSettings)
+
+		// Config
+		r.Get("/config", s.getConfig)
+
+		// Repo names
+		r.Get("/repo-names", s.getRepoNames)
+
+		// Steps
+		r.Get("/steps", s.getSteps)
+
+		// Agent instructions
+		r.Get("/agent-instructions", s.listAgentInstructions)
+		r.Post("/agent-instructions", s.createAgentInstruction)
+		r.Patch("/agent-instructions/{id}", s.updateAgentInstruction)
+		r.Delete("/agent-instructions/{id}", s.deleteAgentInstruction)
 
 		// MCP Servers
 		r.Get("/mcp-servers", s.listMCPServers)
@@ -144,7 +161,10 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 	// Agent session proxy
 	r.Handle("/agent-session/{ticketID}/*", http.HandlerFunc(s.agentSessionProxy))
 
-	// Static files (SPA)
+	// Static assets (CSS, JS)
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
+
+	// SPA fallback — serves index.html for all non-API, non-static routes
 	r.Get("/*", s.serveSPA)
 
 	s.Router = r
@@ -504,6 +524,58 @@ func (s *Server) completeAgentTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": newStatus})
 }
 
+func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version":       "0.1.0",
+		"vcs_provider":  s.Config.VCSProvider,
+		"agent_image":   s.Config.AgentImage,
+		"namespace":     s.Config.AgentNamespace,
+		"model_routing": fmt.Sprintf("%v", s.Config.ModelRoutingEnabled),
+		"simple_model":  s.Config.SimpleModel,
+		"complex_model": s.Config.ComplexModel,
+	})
+}
+
+func (s *Server) getRepoNames(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	repos, err := s.DB.ListRepos(ctx, false)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list repos: "+err.Error())
+		return
+	}
+	names := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		names = append(names, repo.Name)
+	}
+	writeJSON(w, http.StatusOK, names)
+}
+
+func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
+	steps := []map[string]interface{}{
+		{"id": "plan", "name": "Plan", "order": 1},
+		{"id": "work", "name": "Work", "order": 2},
+		{"id": "review", "name": "Review", "order": 3},
+		{"id": "ship", "name": "Ship", "order": 4},
+	}
+	writeJSON(w, http.StatusOK, steps)
+}
+
+func (s *Server) listAgentInstructions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []interface{}{})
+}
+
+func (s *Server) createAgentInstruction(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func (s *Server) updateAgentInstruction(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) deleteAgentInstruction(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 func (s *Server) listAgentProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, []interface{}{})
 }
@@ -541,6 +613,9 @@ func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list repos: "+err.Error())
 		return
+	}
+	if repos == nil {
+		repos = []*models.Repo{}
 	}
 	writeJSON(w, http.StatusOK, repos)
 }
@@ -611,7 +686,12 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get settings: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, config.MaskSettings(settings))
+	masked := config.MaskSettings(settings)
+	result := make([]map[string]string, 0, len(masked))
+	for k, v := range masked {
+		result = append(result, map[string]string{"key": k, "value": v})
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
@@ -708,8 +788,18 @@ func (s *Server) agentSessionProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
-	// TODO: Serve static files from embedded FS or disk
-	http.NotFound(w, r)
+	path := r.URL.Path
+	if path == "/" {
+		data, err := fs.ReadFile(s.staticFS, "index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(data)
+		return
+	}
+	http.StripPrefix("/", http.FileServer(http.FS(s.staticFS))).ServeHTTP(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

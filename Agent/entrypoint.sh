@@ -342,32 +342,56 @@ fi
 cd "$PRIMARY_REPO"
 echo "📂 Working directory: $PRIMARY_REPO"
 
-inject_git_credentials() {
-  local _saved_pwd="$PWD"
-  for dir in /workspace/*/; do
-    local repo="${dir%/}"
-    [ -d "$repo/.git" ] || continue
-    cd "$repo" || continue
-    local REMOTE_URL
-    REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-    if echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITLAB_HOST_NO_PROTO}"; then
-      :
-    elif echo "$REMOTE_URL" | grep -q "^https://${GITLAB_HOST_NO_PROTO}"; then
-      git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${REMOTE_URL#https://}"
-    elif echo "$REMOTE_URL" | grep -q "^https://"; then
-      local CLEAN_URL
-      CLEAN_URL=$(echo "$REMOTE_URL" | sed "s|https://[^@]*@|https://|")
-      git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${CLEAN_URL#https://}"
-    elif echo "$REMOTE_URL" | grep -q "^git@"; then
-      local CLEAN_PATH
-      CLEAN_PATH=$(echo "$REMOTE_URL" | sed 's|git@[^:]*:||;s|\.git$||')
-      git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}/${CLEAN_PATH}.git"
-    fi
-    cd "$_saved_pwd" || true
-  done
-}
+ inject_git_credentials() {
+   local _saved_pwd="$PWD"
+   for dir in /workspace/*/; do
+     local repo="${dir%/}"
+     [ -d "$repo/.git" ] || continue
+     cd "$repo" || continue
+     local REMOTE_URL
+     REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
+     if [ -z "$REMOTE_URL" ]; then
+       cd "$_saved_pwd" || true
+       continue
+     fi
+     local GITHUB_HOST_NO_PROTO="github.com"
+     if echo "$REMOTE_URL" | grep -q "${GITHUB_HOST_NO_PROTO}"; then
+       if [ -n "${GITHUB_TOKEN:-}" ]; then
+         if echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITHUB_HOST_NO_PROTO}"; then
+           :
+         elif echo "$REMOTE_URL" | grep -q "^https://${GITHUB_HOST_NO_PROTO}"; then
+           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@${REMOTE_URL#https://}"
+         elif echo "$REMOTE_URL" | grep -q "^https://"; then
+           local CLEAN_URL
+           CLEAN_URL=$(echo "$REMOTE_URL" | sed "s|https://[^@]*@|https://|")
+           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@${CLEAN_URL#https://}"
+         elif echo "$REMOTE_URL" | grep -q "^git@"; then
+           local CLEAN_PATH
+           CLEAN_PATH=$(echo "$REMOTE_URL" | sed 's|git@[^:]*:||;s|\.git$||')
+           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@${GITHUB_HOST_NO_PROTO}/${CLEAN_PATH}.git"
+         fi
+       fi
+     elif echo "$REMOTE_URL" | grep -q "^https://[^@]*@${GITLAB_HOST_NO_PROTO}"; then
+       :
+     elif echo "$REMOTE_URL" | grep -q "^https://${GITLAB_HOST_NO_PROTO}"; then
+       git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${REMOTE_URL#https://}"
+     elif echo "$REMOTE_URL" | grep -q "^https://"; then
+       local CLEAN_URL
+       CLEAN_URL=$(echo "$REMOTE_URL" | sed "s|https://[^@]*@|https://|")
+       git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${CLEAN_URL#https://}"
+     elif echo "$REMOTE_URL" | grep -q "^git@"; then
+       local CLEAN_PATH
+       CLEAN_PATH=$(echo "$REMOTE_URL" | sed 's|git@[^:]*:||;s|\.git$||')
+       git remote set-url origin "https://${GITLAB_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}/${CLEAN_PATH}.git"
+     fi
+     cd "$_saved_pwd" || true
+   done
+ }
 
 echo "https://${GITLAB_USER}:${GITLAB_TOKEN}@${GITLAB_HOST}" > /home/hivemind/.git-credentials
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  echo "https://x-access-token:${GITHUB_TOKEN}@github.com" >> /home/hivemind/.git-credentials
+fi
 chmod 600 /home/hivemind/.git-credentials
 
 inject_git_credentials
