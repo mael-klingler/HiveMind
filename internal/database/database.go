@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/models"
 )
 
@@ -844,4 +845,88 @@ const (
 	ReviewPending           = "pending"
 	ReviewApproved          = "approved"
 	ReviewChangesRequested = "changes_requested"
-) 
+)
+
+// --- Pipeline step helpers (delegate to pgxpool) ---
+
+func (db *DB) CreatePipelineStep(ctx context.Context, step *repository.PipelineStep) error {
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO pipeline_steps (id, ticket_id, phase, status, role, agent_id, started_at, completed_at, retry_count, context, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+		step.ID, step.TicketID, string(step.Phase), step.Status, step.Role, step.AgentID,
+		step.StartedAt, step.CompletedAt, step.RetryCount, step.Context)
+	return err
+}
+
+func (db *DB) ListPipelineSteps(ctx context.Context, ticketID string) ([]*repository.PipelineStep, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, ticket_id, phase, status, role, agent_id, started_at, completed_at, retry_count, context, created_at
+		FROM pipeline_steps WHERE ticket_id = $1 ORDER BY created_at ASC`, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var steps []*repository.PipelineStep
+	for rows.Next() {
+		s := &repository.PipelineStep{}
+		var phase string
+		var startedAt, completedAt *time.Time
+		if err := rows.Scan(&s.ID, &s.TicketID, &phase, &s.Status, &s.Role, &s.AgentID,
+			&startedAt, &completedAt, &s.RetryCount, &s.Context, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		s.Phase = repository.Phase(phase)
+		s.StartedAt = startedAt
+		s.CompletedAt = completedAt
+		steps = append(steps, s)
+	}
+	return steps, rows.Err()
+}
+
+func (db *DB) UpdateTicketPhaseTimestamp(ctx context.Context, id, phase string) error {
+	col := ""
+	switch phase {
+	case "work":
+		col = "phase_work_started_at"
+	case "test":
+		col = "phase_test_started_at"
+	case "ship":
+		col = "phase_ship_started_at"
+	case "listen":
+		col = "phase_listen_started_at"
+	default:
+		return fmt.Errorf("unknown phase: %s", phase)
+	}
+	_, err := db.pool.Exec(ctx, fmt.Sprintf(`UPDATE tickets SET %s = NOW(), updated_at = NOW() WHERE id = $1`, col), id)
+	return err
+}
+
+// --- Group / team channel helpers ---
+
+func (db *DB) AddGroupMessage(ctx context.Context, groupID, agentID, messageType, content string) error {
+	id := fmt.Sprintf("msg-%s-%d", groupID, time.Now().UnixNano())
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO team_channel_messages (id, group_id, agent_id, content, message_type, created_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())`,
+		id, groupID, agentID, content, messageType)
+	return err
+}
+
+func (db *DB) ListGroupMessages(ctx context.Context, groupID string) ([]*repository.GroupMessage, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, group_id, agent_id, content, message_type, created_at
+		FROM team_channel_messages WHERE group_id = $1 ORDER BY created_at ASC`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var msgs []*repository.GroupMessage
+	for rows.Next() {
+		m := &repository.GroupMessage{}
+		if err := rows.Scan(&m.ID, &m.GroupID, &m.AgentID, &m.Content, &m.MessageType, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+} 

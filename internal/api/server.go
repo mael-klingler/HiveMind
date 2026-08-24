@@ -31,6 +31,7 @@ import (
 	"github.com/maelklingler/hivemind/internal/config"
 	"github.com/maelklingler/hivemind/internal/database"
 	"github.com/maelklingler/hivemind/internal/database/repository"
+	"github.com/maelklingler/hivemind/internal/background"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/middleware"
 	"github.com/maelklingler/hivemind/internal/models"
@@ -38,15 +39,16 @@ import (
 )
 
 type Server struct {
-	Config      *config.Config
-	DB          *database.DB
-	K8s         *k8s.Client
-	Router      *chi.Mux
-	Broadcaster *sse.Broadcaster
-	Dedup       repository.DedupRepository
-	RateLimiter repository.RateLimitRepository
-	Shutdown    context.CancelFunc
-	staticFS    fs.FS
+	Config         *config.Config
+	DB             *database.DB
+	K8s            *k8s.Client
+	Router         *chi.Mux
+	Broadcaster    *sse.Broadcaster
+	Dedup          repository.DedupRepository
+	RateLimiter    repository.RateLimitRepository
+	PipelineEngine *background.PipelineEngine
+	Shutdown       context.CancelFunc
+	staticFS       fs.FS
 }
 
 func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
@@ -57,15 +59,16 @@ func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
 	return s.K8s
 }
 
-func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, dedup repository.DedupRepository, rateLimiter repository.RateLimitRepository, staticFS fs.FS) *Server {
+func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, dedup repository.DedupRepository, rateLimiter repository.RateLimitRepository, pipelineEngine *background.PipelineEngine, staticFS fs.FS) *Server {
 	s := &Server{
-		Config:      cfg,
-		DB:          db,
-		K8s:         k8sClient,
-		Broadcaster: broadcaster,
-		Dedup:       dedup,
-		RateLimiter: rateLimiter,
-		staticFS:    staticFS,
+		Config:         cfg,
+		DB:             db,
+		K8s:            k8sClient,
+		Broadcaster:    broadcaster,
+		Dedup:          dedup,
+		RateLimiter:    rateLimiter,
+		PipelineEngine: pipelineEngine,
+		staticFS:       staticFS,
 	}
 
 	r := chi.NewRouter()
@@ -158,6 +161,18 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 
 		// Stream
 		r.Get("/stream", s.streamEvents)
+
+		// Pipeline
+		r.Get("/phases", s.listPhases)
+		r.Get("/roles", s.listRoles)
+		r.Get("/roles/{role}/instruction", s.getRoleInstruction)
+		r.Get("/tickets/{id}/pipeline", s.getTicketPipeline)
+		r.Post("/agents/{id}/phase_complete", s.phaseComplete)
+		r.Post("/agents/{id}/phase_fail", s.phaseFail)
+
+		// Groups (team channel)
+		r.Get("/groups/{id}/messages", s.listGroupMessages)
+		r.Post("/groups/{id}/messages", s.addGroupMessage)
 	})
 
 	// VCS Webhooks
@@ -827,6 +842,166 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) agentSessionProxy(w http.ResponseWriter, r *http.Request) {
 	// TODO: Implement reverse proxy to agent pods
 	writeError(w, http.StatusNotImplemented, "agent session proxy not yet implemented")
+}
+
+// --- Pipeline handlers ---
+
+func (s *Server) listPhases(w http.ResponseWriter, r *http.Request) {
+	phases := []map[string]interface{}{
+		{"id": "work", "name": "Work", "order": 1, "role": "developer"},
+		{"id": "test", "name": "Test", "order": 2, "role": "qa"},
+		{"id": "review", "name": "Review", "order": 3, "role": "reviewer"},
+		{"id": "ship", "name": "Ship", "order": 4, "role": "release"},
+		{"id": "listen", "name": "Listen", "order": 5, "role": "monitor"},
+	}
+	writeJSON(w, http.StatusOK, phases)
+}
+
+func (s *Server) listRoles(w http.ResponseWriter, r *http.Request) {
+	roles := []map[string]interface{}{
+		{"id": "developer", "name": "Developer", "instruction": "Implement the requested changes."},
+		{"id": "qa", "name": "QA", "instruction": "Run tests and verify the implementation."},
+		{"id": "reviewer", "name": "Reviewer", "instruction": "Review code quality and correctness."},
+		{"id": "release", "name": "Release", "instruction": "Create MR and handle pipeline."},
+		{"id": "monitor", "name": "Monitor", "instruction": "Watch MR feedback and respond."},
+	}
+	writeJSON(w, http.StatusOK, roles)
+}
+
+func (s *Server) getRoleInstruction(w http.ResponseWriter, r *http.Request) {
+	role := chi.URLParam(r, "role")
+	instructions := map[string]string{
+		"developer": "Implement the requested changes. Write tests. Follow project conventions.",
+		"qa":        "Run all tests. Report failures with context. Suggest fixes.",
+		"reviewer":  "Review code quality, correctness, and adherence to conventions.",
+		"release":   "Create a merge request with a clear description. Monitor pipeline.",
+		"monitor":   "Watch MR feedback. Respond to comments. Handle requested changes.",
+	}
+	instr, ok := instructions[role]
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown role")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"role": role, "instruction": instr})
+}
+
+func (s *Server) getTicketPipeline(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	steps, err := s.DB.ListPipelineSteps(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list pipeline steps: "+err.Error())
+		return
+	}
+	if steps == nil {
+		steps = []*repository.PipelineStep{}
+	}
+	writeJSON(w, http.StatusOK, steps)
+}
+
+func (s *Server) phaseComplete(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentID := chi.URLParam(r, "id")
+	var req struct {
+		TicketID    string `json:"ticket_id"`
+		Phase       string `json:"phase"`
+		Result      string `json:"result"`
+		LLMUsage    string `json:"llm_usage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TicketID == "" || req.Phase == "" {
+		writeError(w, http.StatusBadRequest, "ticket_id and phase are required")
+		return
+	}
+	if s.PipelineEngine == nil {
+		writeError(w, http.StatusServiceUnavailable, "pipeline engine not available")
+		return
+	}
+	next, err := s.PipelineEngine.CompletePhase(ctx, agentID, req.TicketID, req.Phase, req.Result, req.LLMUsage)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "phase complete failed: "+err.Error())
+		return
+	}
+	resp := map[string]interface{}{"agent_id": agentID, "ticket_id": req.TicketID, "completed_phase": req.Phase}
+	if next != "" {
+		resp["next_phase"] = string(next)
+	} else {
+		resp["status"] = "completed"
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) phaseFail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentID := chi.URLParam(r, "id")
+	var req struct {
+		TicketID string `json:"ticket_id"`
+		Phase    string `json:"phase"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TicketID == "" || req.Phase == "" {
+		writeError(w, http.StatusBadRequest, "ticket_id and phase are required")
+		return
+	}
+	if s.PipelineEngine == nil {
+		writeError(w, http.StatusServiceUnavailable, "pipeline engine not available")
+		return
+	}
+	if err := s.PipelineEngine.FailPhase(ctx, agentID, req.TicketID, req.Phase, req.Reason); err != nil {
+		writeError(w, http.StatusInternalServerError, "phase fail failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": agentID, "ticket_id": req.TicketID, "failed_phase": req.Phase, "reason": req.Reason})
+}
+
+// --- Group / team channel handlers ---
+
+func (s *Server) listGroupMessages(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	msgs, err := s.DB.ListGroupMessages(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list messages: "+err.Error())
+		return
+	}
+	if msgs == nil {
+		msgs = []*repository.GroupMessage{}
+	}
+	writeJSON(w, http.StatusOK, msgs)
+}
+
+func (s *Server) addGroupMessage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var req struct {
+		AgentID     string `json:"agent_id"`
+		Content     string `json:"content"`
+		MessageType string `json:"message_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+	if req.MessageType == "" {
+		req.MessageType = "message"
+	}
+	if err := s.DB.AddGroupMessage(ctx, id, req.AgentID, req.MessageType, req.Content); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add message: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("group_message", map[string]string{"group_id": id, "agent_id": req.AgentID})
+	writeJSON(w, http.StatusCreated, map[string]string{"group_id": id, "status": "created"})
 }
 
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {

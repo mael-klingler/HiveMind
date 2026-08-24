@@ -137,9 +137,10 @@ func main() {
 	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient)
 	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient)
 	reviewMonitor := background.NewReviewMonitor(cfg, db, k8sClient, broadcaster)
+	pipelineEngine := background.NewPipelineEngine(cfg, db, broadcaster)
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		queueProcessor.Run(ctx)
@@ -152,8 +153,12 @@ func main() {
 		defer wg.Done()
 		reviewMonitor.Run(ctx)
 	}()
+	go func() {
+		defer wg.Done()
+		pipelineEngine.Run(ctx)
+	}()
 
-	server := api.NewServer(cfg, db, k8sClient, broadcaster, redisClient, redisClient, getStaticFS())
+	server := api.NewServer(cfg, db, k8sClient, broadcaster, redisClient, redisClient, pipelineEngine, getStaticFS())
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	httpServer := &http.Server{
@@ -185,6 +190,7 @@ func main() {
 	queueProcessor.Stop()
 	agentMonitor.Stop()
 	reviewMonitor.Stop()
+	pipelineEngine.Stop()
 	wg.Wait()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
