@@ -21,6 +21,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -187,7 +189,7 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 	r.Post("/webhooks/gitlab", s.gitlabWebhook)
 	r.Post("/webhooks/github", s.githubWebhook)
 
-	// Agent session proxy
+	// Agent session proxy (HTTP reverse proxy to agent pod)
 	r.Handle("/agent-session/{ticketID}/*", http.HandlerFunc(s.agentSessionProxy))
 
 	// Static assets (CSS, JS)
@@ -1103,8 +1105,35 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) agentSessionProxy(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement reverse proxy to agent pods
-	writeError(w, http.StatusNotImplemented, "agent session proxy not yet implemented")
+	kc := s.k8sOrError(w)
+	if kc == nil {
+		return
+	}
+	ctx := r.Context()
+	ticketID := chi.URLParam(r, "ticketID")
+	podName := "agent-worker-" + strings.ToLower(ticketID)
+	podIP, err := kc.GetPodIP(ctx, podName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get pod: "+err.Error())
+		return
+	}
+	if podIP == "" {
+		writeError(w, http.StatusNotFound, "agent pod not found or has no IP")
+		return
+	}
+	target := fmt.Sprintf("http://%s:4096", podIP)
+	proxy := httputil.NewSingleHostReverseProxy(mustParseURL(target))
+	proxy.FlushInterval = -1
+	r.URL.Path = "/" + chi.URLParam(r, "*")
+	proxy.ServeHTTP(w, r)
+}
+
+func mustParseURL(raw string) *url.URL {
+	u, err := url.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+	return u
 }
 
 // --- Pipeline handlers ---

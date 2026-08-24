@@ -27,6 +27,7 @@ import (
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/llm"
 	"github.com/maelklingler/hivemind/internal/models"
+	"github.com/maelklingler/hivemind/internal/workspace"
 )
 
 type QueueProcessor struct {
@@ -34,15 +35,17 @@ type QueueProcessor struct {
 	DB     *database.DB
 	K8s    *k8s.Client
 	LLM    *llm.LLMClient
+	WS     *workspace.Builder
 	stopCh chan struct{}
 }
 
-func NewQueueProcessor(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, llmClient *llm.LLMClient) *QueueProcessor {
+func NewQueueProcessor(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, llmClient *llm.LLMClient, wsBuilder *workspace.Builder) *QueueProcessor {
 	return &QueueProcessor{
 		Config: cfg,
 		DB:     db,
 		K8s:    k8sClient,
 		LLM:    llmClient,
+		WS:     wsBuilder,
 		stopCh: make(chan struct{}),
 	}
 }
@@ -144,41 +147,46 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		return fmt.Errorf("list repos: %w", err)
 	}
 
-	repoRefs := make([]k8s.RepoRef, 0, len(repos))
-	selectedRepos := make([]string, 0)
-	primaryRepo := ""
-
-	if ticket.AIPlanning != "" {
-		var planning map[string]interface{}
-		if err := jsonUnmarshal(ticket.AIPlanning, &planning); err == nil {
-			if sr, ok := planning["selected_repos"].([]interface{}); ok {
-				for _, r := range sr {
-					if name, ok := r.(string); ok {
-						selectedRepos = append(selectedRepos, name)
-					}
-				}
-			}
-			if pr, ok := planning["primary_repo"].(string); ok {
-				primaryRepo = pr
-			}
-		}
-	}
-
+	availableRepos := make([]workspace.RepoRef, 0, len(repos))
 	for _, repo := range repos {
-		if len(selectedRepos) == 0 || contains(selectedRepos, repo.Name) {
-			repoRefs = append(repoRefs, k8s.RepoRef{
-				Name:   repo.Name,
-				URL:    repo.URL,
-				Branch: repo.Branch,
-			})
+		availableRepos = append(availableRepos, workspace.RepoRef{
+			Name:   repo.Name,
+			URL:    repo.URL,
+			Branch: repo.Branch,
+		})
+	}
+
+	var analysis *workspace.AnalysisOutput
+	if qp.WS != nil {
+		analysis, err = qp.WS.Analyze(ctx, workspace.AnalysisRequest{
+			Ticket:        ticket,
+			AvailableRepo: availableRepos,
+		})
+		if err != nil {
+			slog.Warn("LLM analysis failed, using fallback", "ticket_id", ticket.ID, "error", err)
 		}
 	}
-	if len(repoRefs) == 0 && len(repos) > 0 {
+	if analysis == nil {
+		analysis = (&workspace.Builder{}).AnalyzeFallback(ticket, availableRepos)
+	}
+
+	if analysis.AIPlanning != "" {
+		if err := qp.DB.SetTicketAIPlanning(ctx, ticket.ID, analysis.AIPlanning); err != nil {
+			slog.Warn("failed to persist AI planning", "ticket_id", ticket.ID, "error", err)
+		}
+	}
+
+	repoRefs := make([]k8s.RepoRef, 0, len(analysis.SelectedRepos))
+	for _, r := range analysis.SelectedRepos {
 		repoRefs = append(repoRefs, k8s.RepoRef{
-			Name:   repos[0].Name,
-			URL:    repos[0].URL,
-			Branch: repos[0].Branch,
+			Name:   r.Name,
+			URL:    r.URL,
+			Branch: r.Branch,
 		})
+	}
+	selectedRepos := make([]string, 0, len(repoRefs))
+	for _, r := range repoRefs {
+		selectedRepos = append(selectedRepos, r.Name)
 	}
 
 	branch := ticket.Branch
@@ -198,15 +206,12 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		})
 	}
 
-	assignment := fmt.Sprintf("# Task: %s – %s\n\n%s\n\n## Selected Repositories\n%s\n\n## Instructions\nPlease implement the changes described above.",
-		ticket.ID, ticket.Title, ticket.Description, strings.Join(selectedRepos, ", "))
-
 	params := k8s.PodSpecParams{
 		TicketID:           ticket.ID,
 		TicketTitle:        ticket.Title,
 		Repos:              repoRefs,
-		AssignmentMD:       assignment,
-		Analysis:           map[string]interface{}{"primary_repo": primaryRepo, "selected_repos": selectedRepos},
+		AssignmentMD:       analysis.AssignmentMD,
+		Analysis:           map[string]interface{}{"primary_repo": analysis.PrimaryRepo, "selected_repos": selectedRepos, "complexity": analysis.Complexity},
 		AgentID:            agent.ID,
 		GitLabHost:         qp.Config.GitLabHost,
 		GitUser:            qp.Config.GitUser,
@@ -218,10 +223,10 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		OllamaCloudAPIKey:  qp.Config.OllamaCloudAPIKey,
 		MCPServers:         mcpRefs,
 		Branch:             branch,
-		GitSSLNoVerify:      qp.Config.GitSSLNoVerify,
-		PermissionWrite:     qp.Config.AgentPermWrite,
-		PermissionBash:      qp.Config.AgentPermBash,
-		PermissionExtDir:    qp.Config.AgentPermExtDir,
+		GitSSLNoVerify:     qp.Config.GitSSLNoVerify,
+		PermissionWrite:    qp.Config.AgentPermWrite,
+		PermissionBash:     qp.Config.AgentPermBash,
+		PermissionExtDir:   qp.Config.AgentPermExtDir,
 		PermissionDoomLoop: qp.Config.AgentPermDoomLoop,
 	}
 
@@ -230,7 +235,7 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		return fmt.Errorf("spawn agent pod: %w", err)
 	}
 
-	slog.Info("agent pod spawned", "ticket_id", ticket.ID, "pod", result.PodName)
+	slog.Info("agent pod spawned", "ticket_id", ticket.ID, "pod", result.PodName, "complexity", analysis.Complexity, "primary", analysis.PrimaryRepo, "repos", len(repoRefs))
 	return nil
 }
 

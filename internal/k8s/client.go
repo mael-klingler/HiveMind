@@ -226,6 +226,19 @@ func (c *Client) GetPodLogs(ctx context.Context, name string, tailLines int64) (
 	return string(logs), nil
 }
 
+// GetPodIP returns the pod IP of a running pod, or empty string if not found
+// or not yet assigned.
+func (c *Client) GetPodIP(ctx context.Context, name string) (string, error) {
+	pod, err := c.GetPod(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if pod == nil {
+		return "", nil
+	}
+	return pod.Status.PodIP, nil
+}
+
 func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 	_, err := c.ClientSet.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 	if err == nil {

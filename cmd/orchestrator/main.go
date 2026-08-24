@@ -39,7 +39,9 @@ import (
 	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/llm"
+	llmprovider "github.com/maelklingler/hivemind/internal/llm/provider"
 	"github.com/maelklingler/hivemind/internal/sse"
+	"github.com/maelklingler/hivemind/internal/workspace"
 )
 
 func main() {
@@ -98,6 +100,15 @@ func main() {
 
 	llmClient := llm.NewLLMClient(cfg)
 
+	llmProvider, err := llmprovider.NewFromConfig(cfg)
+	if err != nil {
+		slog.Warn("failed to create LLM provider", "error", err)
+	}
+	var wsBuilder *workspace.Builder
+	if llmProvider != nil {
+		wsBuilder = workspace.NewBuilder(llmProvider)
+	}
+
 	var redisClient *redisrepo.Client
 	var pubsubRepo repository.PubSubRepository
 	if cfg.RedisURL != "" {
@@ -134,7 +145,7 @@ func main() {
 
 	broadcaster := sse.NewBroadcaster(pubsubRepo)
 
-	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient)
+	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient, wsBuilder)
 	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient)
 	reviewMonitor := background.NewReviewMonitor(cfg, db, k8sClient, broadcaster)
 	pipelineEngine := background.NewPipelineEngine(cfg, db, broadcaster)
