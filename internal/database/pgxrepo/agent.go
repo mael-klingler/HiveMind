@@ -127,7 +127,7 @@ func (r *AgentRepo) EnsureAgentPool(ctx context.Context, maxAgents int) error {
 	return nil
 }
 
-// --- AgentProfileRepository (stubs — DB methods added in Phase 2 with migration 002) ---
+// --- AgentProfileRepository ---
 
 // AgentProfileRepo implements repository.AgentProfileRepository.
 type AgentProfileRepo struct{ pool *pgxpool.Pool }
@@ -135,22 +135,54 @@ type AgentProfileRepo struct{ pool *pgxpool.Pool }
 func NewAgentProfileRepo(pool *pgxpool.Pool) *AgentProfileRepo { return &AgentProfileRepo{pool: pool} }
 
 func (r *AgentProfileRepo) ListAgentProfiles(ctx context.Context) ([]*models.AgentProfile, error) {
-	return []*models.AgentProfile{}, nil
-}
-func (r *AgentProfileRepo) GetAgentProfile(ctx context.Context, id string) (*models.AgentProfile, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-func (r *AgentProfileRepo) CreateAgentProfile(ctx context.Context, p *models.AgentProfile) error {
-	return fmt.Errorf("not implemented")
-}
-func (r *AgentProfileRepo) UpdateAgentProfile(ctx context.Context, p *models.AgentProfile) error {
-	return fmt.Errorf("not implemented")
-}
-func (r *AgentProfileRepo) DeleteAgentProfile(ctx context.Context, id string) error {
-	return fmt.Errorf("not implemented")
+	rows, err := r.pool.Query(ctx, `SELECT id, name, description, skills, instructions, memory_summary FROM agent_profiles ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var profiles []*models.AgentProfile
+	for rows.Next() {
+		p := &models.AgentProfile{}
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Skills, &p.Instructions, &p.MemorySummary); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, rows.Err()
 }
 
-// --- AgentSkillRepository (stubs — added in Phase 2) ---
+func (r *AgentProfileRepo) GetAgentProfile(ctx context.Context, id string) (*models.AgentProfile, error) {
+	row := r.pool.QueryRow(ctx, `SELECT id, name, description, skills, instructions, memory_summary FROM agent_profiles WHERE id = $1`, id)
+	p := &models.AgentProfile{}
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Skills, &p.Instructions, &p.MemorySummary)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (r *AgentProfileRepo) CreateAgentProfile(ctx context.Context, p *models.AgentProfile) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO agent_profiles (id, name, description, skills, instructions, memory_summary)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		p.ID, p.Name, p.Description, p.Skills, p.Instructions, p.MemorySummary)
+	return err
+}
+
+func (r *AgentProfileRepo) UpdateAgentProfile(ctx context.Context, p *models.AgentProfile) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE agent_profiles SET name = $2, description = $3, skills = $4, instructions = $5, memory_summary = $6
+		WHERE id = $1`,
+		p.ID, p.Name, p.Description, p.Skills, p.Instructions, p.MemorySummary)
+	return err
+}
+
+func (r *AgentProfileRepo) DeleteAgentProfile(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM agent_profiles WHERE id = $1`, id)
+	return err
+}
+
+// --- AgentSkillRepository ---
 
 // AgentSkillRepo implements repository.AgentSkillRepository.
 type AgentSkillRepo struct{ pool *pgxpool.Pool }
@@ -158,26 +190,85 @@ type AgentSkillRepo struct{ pool *pgxpool.Pool }
 func NewAgentSkillRepo(pool *pgxpool.Pool) *AgentSkillRepo { return &AgentSkillRepo{pool: pool} }
 
 func (r *AgentSkillRepo) ListSkills(ctx context.Context, agentID string) ([]string, error) {
-	return []string{}, nil
+	rows, err := r.pool.Query(ctx, `SELECT skill FROM agent_skills WHERE agent_id = $1 ORDER BY skill`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var skills []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		skills = append(skills, s)
+	}
+	return skills, rows.Err()
 }
+
 func (r *AgentSkillRepo) AddSkill(ctx context.Context, agentID, skill string) error {
-	return fmt.Errorf("not implemented")
+	id := fmt.Sprintf("skl-%s-%s-%d", agentID, skill, time.Now().UnixNano())
+	_, err := r.pool.Exec(ctx, `INSERT INTO agent_skills (id, agent_id, skill) VALUES ($1, $2, $3) ON CONFLICT (agent_id, skill) DO NOTHING`, id, agentID, skill)
+	return err
 }
+
 func (r *AgentSkillRepo) RemoveSkill(ctx context.Context, agentID, skill string) error {
-	return fmt.Errorf("not implemented")
+	_, err := r.pool.Exec(ctx, `DELETE FROM agent_skills WHERE agent_id = $1 AND skill = $2`, agentID, skill)
+	return err
 }
+
 func (r *AgentSkillRepo) ListAffinities(ctx context.Context, agentID string) (map[string]int, error) {
-	return map[string]int{}, nil
+	rows, err := r.pool.Query(ctx, `SELECT repo_name, weight FROM agent_repo_affinities WHERE agent_id = $1`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	affinities := map[string]int{}
+	for rows.Next() {
+		var name string
+		var weight int
+		if err := rows.Scan(&name, &weight); err != nil {
+			return nil, err
+		}
+		affinities[name] = weight
+	}
+	return affinities, rows.Err()
 }
+
 func (r *AgentSkillRepo) SetAffinity(ctx context.Context, agentID, repoName string, weight int) error {
-	return fmt.Errorf("not implemented")
+	id := fmt.Sprintf("aff-%s-%s-%d", agentID, repoName, time.Now().UnixNano())
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO agent_repo_affinities (id, agent_id, repo_name, weight)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (agent_id, repo_name) DO UPDATE SET weight = EXCLUDED.weight`,
+		id, agentID, repoName, weight)
+	return err
 }
+
 func (r *AgentSkillRepo) ListInstructionAssignments(ctx context.Context, agentID string) ([]string, error) {
-	return []string{}, nil
+	rows, err := r.pool.Query(ctx, `SELECT instruction_id FROM agent_instruction_assignments WHERE agent_id = $1`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
+
 func (r *AgentSkillRepo) AssignInstruction(ctx context.Context, agentID, instructionID string) error {
-	return fmt.Errorf("not implemented")
+	id := fmt.Sprintf("asg-%s-%s-%d", agentID, instructionID, time.Now().UnixNano())
+	_, err := r.pool.Exec(ctx, `INSERT INTO agent_instruction_assignments (id, agent_id, instruction_id) VALUES ($1, $2, $3) ON CONFLICT (agent_id, instruction_id) DO NOTHING`, id, agentID, instructionID)
+	return err
 }
+
 func (r *AgentSkillRepo) UnassignInstruction(ctx context.Context, agentID, instructionID string) error {
-	return fmt.Errorf("not implemented")
+	_, err := r.pool.Exec(ctx, `DELETE FROM agent_instruction_assignments WHERE agent_id = $1 AND instruction_id = $2`, agentID, instructionID)
+	return err
 }
