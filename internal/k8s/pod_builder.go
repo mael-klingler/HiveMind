@@ -323,17 +323,9 @@ func SpawnAgentPod(ctx context.Context, client *Client, params PodSpecParams) (*
 	}
 	slog.Info("configmap created", "name", fmt.Sprintf("%s-memory", podName))
 
-	if params.OllamaCloudAPIKey != "" {
-		if _, err := client.CreateSecret(ctx, "ollama-cloud-api-key", map[string]string{"api-key": params.OllamaCloudAPIKey}, corev1.SecretTypeOpaque); err != nil {
-			return nil, fmt.Errorf("create ollama cloud secret: %w", err)
-		}
-	}
-
-	if params.GitLabToken != "" {
-		if _, err := client.CreateSecret(ctx, "gitlab-token", map[string]string{"token": params.GitLabToken}, corev1.SecretTypeOpaque); err != nil {
-			return nil, fmt.Errorf("create gitlab token secret: %w", err)
-		}
-	}
+	// Secrets (gitlab-token, ollama-cloud-api-key, openai-api-key,
+	// anthropic-api-key, orchestrator-env) are ensured once at orchestrator
+	// startup via Client.EnsureSecrets to avoid concurrent-spawn races.
 
 	pod := BuildPodSpec(params)
 
@@ -345,16 +337,8 @@ func SpawnAgentPod(ctx context.Context, client *Client, params PodSpecParams) (*
 		if err := client.DeletePod(ctx, podName); err != nil {
 			return nil, fmt.Errorf("delete existing pod: %w", err)
 		}
-		// Poll until pod is deleted
-		for i := 0; i < 30; i++ {
-			time.Sleep(500 * time.Millisecond)
-			pod, err := client.GetPod(ctx, podName)
-			if err != nil {
-				return nil, fmt.Errorf("check pod deletion: %w", err)
-			}
-			if pod == nil {
-				break
-			}
+		if err := client.WaitForPodDeletion(ctx, podName, 30*time.Second); err != nil {
+			return nil, fmt.Errorf("wait for pod deletion: %w", err)
 		}
 	}
 
@@ -384,15 +368,33 @@ func buildCloneScript(repos []RepoRef) string {
 	reposJSON := buildReposJSON(repos)
 	script := `set -uo pipefail
 FALLBACK_BRANCHES="development qa main master"
+
+# Configure git credential helper so tokens never appear in URLs / logs.
+git config --global credential.helper store
+git config --global credential.interactive false
+
 cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
 REPOSEOF
 for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   url=$(jq -r --arg r "$repo" '.[$r].url' /workspace/repos.json)
   branch=$(jq -r --arg r "$repo" '.[$r].branch' /workspace/repos.json)
+
+  # Strip any existing credentials from the URL and write them to the
+  # credential store instead. This keeps tokens out of ` + "`git log`" + `,
+  # ` + "`kubectl describe pod`" + `, and shell history.
+  proto=""
+  host=""
   if echo "$url" | grep -qE "^https?://"; then
-    url=$(echo "$url" | sed -E "s|^(https?://)|\\1${GIT_USER}:${GITLAB_TOKEN}@|")
+    proto=$(echo "$url" | sed -E "s|^(https?://).*|\1|")
+    host=$(echo "$url" | sed -E "s|^https?://([^/@]+).*|\1|")
+    url="${proto}${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
+    if [ -n "$GITLAB_TOKEN" ]; then
+      echo "${proto}${GIT_USER}:${GITLAB_TOKEN}@${host}" > ~/.git-credentials
+      chmod 600 ~/.git-credentials
+    fi
   fi
+
   echo "Cloning $repo (branch: $branch) ..."
   if git clone -b "$branch" --single-branch "$url" "/workspace/$repo" 2>&1; then
     echo "Cloned $repo on branch $branch"
@@ -425,6 +427,9 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   echo "Index leankg $repo ..."
   command -v leankg >/dev/null 2>&1 && { leankg index . || echo "leankg index failed for $repo"; } || echo "leankg not installed, skipping index for $repo"
 done
+
+# Clean up credentials after clone to minimize exposure window.
+rm -f ~/.git-credentials
 echo "All repos processed"
 `
 	return script

@@ -70,6 +70,10 @@ type Config struct {
 	TrackBranch         string
 	BranchFallbackOrder []string
 	LeankgEnabled       bool
+	AgentPermWrite      string
+	AgentPermBash       string
+	AgentPermExtDir     string
+	AgentPermDoomLoop   string
 }
 
 func Load() *Config {
@@ -122,6 +126,10 @@ func Load() *Config {
 		TrackBranch:         getEnv("TRACK_BRANCH", "development"),
 		BranchFallbackOrder: getEnvSlice("BRANCH_FALLBACK_ORDER", []string{"development", "qa", "main", "master"}),
 		LeankgEnabled:       getEnvBool("LEANKG_ENABLED", true),
+		AgentPermWrite:      getEnv("AGENT_PERM_WRITE", "allow"),
+		AgentPermBash:       getEnv("AGENT_PERM_BASH", "allow"),
+		AgentPermExtDir:     getEnv("AGENT_PERM_EXT_DIR", "allow"),
+		AgentPermDoomLoop:   getEnv("AGENT_PERM_DOOM_LOOP", "deny"),
 	}
 }
 

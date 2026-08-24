@@ -80,6 +80,19 @@ func main() {
 	k8sClient, err := k8s.NewClient(cfg.AgentNamespace)
 	if err != nil {
 		slog.Warn("kubernetes client not available (running outside cluster?)", "error", err)
+	} else {
+		if err := k8sClient.EnsureNamespace(ctx, cfg.AgentNamespace); err != nil {
+			slog.Warn("failed to ensure agent namespace", "error", err)
+		}
+		if err := k8sClient.EnsureSecrets(ctx, k8s.SecretParams{
+			GitLabToken:       cfg.GitLabToken,
+			OllamaCloudAPIKey: cfg.OllamaCloudAPIKey,
+			OpenAIAPIKey:      cfg.OpenAIAPIKey,
+			AnthropicAPIKey:   cfg.AnthropicAPIKey,
+			HivemindAPIKey:    cfg.HivemindAPIKey,
+		}); err != nil {
+			slog.Warn("failed to ensure agent secrets", "error", err)
+		}
 	}
 
 	llmClient := llm.NewLLMClient(cfg)

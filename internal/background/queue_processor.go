@@ -212,11 +212,11 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		OllamaCloudAPIKey:  qp.Config.OllamaCloudAPIKey,
 		MCPServers:         mcpRefs,
 		Branch:             branch,
-		GitSSLNoVerify:     qp.Config.GitSSLNoVerify,
-		PermissionWrite:     "allow",
-		PermissionBash:      "allow",
-		PermissionExtDir:    "allow",
-		PermissionDoomLoop: "deny",
+		GitSSLNoVerify:      qp.Config.GitSSLNoVerify,
+		PermissionWrite:     qp.Config.AgentPermWrite,
+		PermissionBash:      qp.Config.AgentPermBash,
+		PermissionExtDir:    qp.Config.AgentPermExtDir,
+		PermissionDoomLoop: qp.Config.AgentPermDoomLoop,
 	}
 
 	result, err := k8s.SpawnAgentPod(ctx, qp.K8s, params)

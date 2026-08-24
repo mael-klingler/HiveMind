@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -89,12 +90,33 @@ func (c *Client) ListPods(ctx context.Context, labelSelector string) ([]corev1.P
 
 func (c *Client) DeletePod(ctx context.Context, name string) error {
 	err := c.ClientSet.CoreV1().Pods(c.Namespace).Delete(ctx, name, metav1.DeleteOptions{
-		GracePeriodSeconds: ptr(int64(300)),
+		GracePeriodSeconds:     ptr(int64(300)),
+		PropagationPolicy:      ptr(metav1.DeletePropagationForeground),
 	})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
 	return nil
+}
+
+// WaitForPodDeletion polls until the pod is gone or timeout expires.
+func (c *Client) WaitForPodDeletion(ctx context.Context, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pod, err := c.GetPod(ctx, name)
+		if err != nil {
+			return err
+		}
+		if pod == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("pod %s still exists after %s", name, timeout)
 }
 
 func (c *Client) CreatePod(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, error) {
@@ -216,6 +238,61 @@ func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 	}, metav1.CreateOptions{})
 	return err
+}
+
+// EnsureSecret creates a secret if it does not already exist. If it exists,
+// it is left unchanged (secrets are managed externally or via EnsureSecrets).
+func (c *Client) EnsureSecret(ctx context.Context, name string, stringData map[string]string, secretType corev1.SecretType) error {
+	existing, err := c.GetSecret(ctx, name)
+	if err != nil {
+		return fmt.Errorf("check secret %s: %w", name, err)
+	}
+	if existing != nil {
+		return nil
+	}
+	_, err = c.CreateSecret(ctx, name, stringData, secretType)
+	return err
+}
+
+// EnsureSecrets idempotently creates the set of secrets required by agent pods.
+// This is called once at orchestrator startup (not per spawn) to avoid races
+// when multiple agent pods are spawned concurrently.
+func (c *Client) EnsureSecrets(ctx context.Context, params SecretParams) error {
+	if params.GitLabToken != "" {
+		if err := c.EnsureSecret(ctx, "gitlab-token", map[string]string{"token": params.GitLabToken}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure gitlab-token secret: %w", err)
+		}
+	}
+	if params.OllamaCloudAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "ollama-cloud-api-key", map[string]string{"api-key": params.OllamaCloudAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure ollama-cloud secret: %w", err)
+		}
+	}
+	if params.OpenAIAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "openai-api-key", map[string]string{"api-key": params.OpenAIAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure openai secret: %w", err)
+		}
+	}
+	if params.AnthropicAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "anthropic-api-key", map[string]string{"api-key": params.AnthropicAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure anthropic secret: %w", err)
+		}
+	}
+	if params.HivemindAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "orchestrator-env", map[string]string{"HIVEMIND_API_KEY": params.HivemindAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure orchestrator-env secret: %w", err)
+		}
+	}
+	return nil
+}
+
+// SecretParams holds the secret values to ensure at startup.
+type SecretParams struct {
+	GitLabToken       string
+	OllamaCloudAPIKey string
+	OpenAIAPIKey      string
+	AnthropicAPIKey   string
+	HivemindAPIKey    string
 }
 
 func (c *Client) CleanupAgentResources(ctx context.Context, ticketID string) {
