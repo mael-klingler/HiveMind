@@ -1485,3 +1485,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
+
+// WriteJSONForTest exports writeJSON for testing.
+func WriteJSONForTest(w http.ResponseWriter, status int, v interface{}) { writeJSON(w, status, v) }
+
+// WriteErrorForTest exports writeError for testing.
+func WriteErrorForTest(w http.ResponseWriter, status int, msg string) { writeError(w, status, msg) }

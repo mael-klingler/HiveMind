@@ -77,11 +77,10 @@ type MetricRepo struct{ pool *pgxpool.Pool }
 func NewMetricRepo(pool *pgxpool.Pool) *MetricRepo { return &MetricRepo{pool: pool} }
 
 func (r *MetricRepo) RecordMetricEvent(ctx context.Context, in *repository.MetricEventInput) error {
-	id := fmt.Sprintf("me-%d", time.Now().UnixNano())
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO metric_events (id, event_type, ticket_id, agent_id, phase, duration_seconds, labels, value, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-		id, in.EventType, in.TicketID, in.AgentID, in.Phase, in.DurationSeconds, in.Labels, in.Value)
+		INSERT INTO metric_events (event_type, ticket_id, agent_id, phase, duration_seconds, labels, value, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+		in.EventType, in.TicketID, in.AgentID, in.Phase, in.DurationSeconds, in.Labels, in.Value)
 	return err
 }
 

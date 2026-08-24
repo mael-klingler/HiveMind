@@ -581,3 +581,9 @@ func toJSONString(v interface{}) string {
 	data, _ := json.Marshal(v)
 	return string(data)
 }
+
+// BuildCloneScriptForTest exports buildCloneScript for testing.
+func BuildCloneScriptForTest(repos []RepoRef) string { return buildCloneScript(repos) }
+
+// BuildReposJSONForTest exports buildReposJSON for testing.
+func BuildReposJSONForTest(repos []RepoRef) string { return buildReposJSON(repos) }
