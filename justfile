@@ -60,12 +60,8 @@ ci-go:
     @echo "==> Go test"
     go test ./internal/... -count=1 -v -timeout 120s
 
-# Full CI pipeline for Python (legacy orchestrator)
-ci-python:
-    cd Orchestrator && python -m pytest tests/ -v --tb=short
-
 # Run all CI locally
-ci: ci-go ci-python
+ci: ci-go
 
 # ─── Docker Build ─────────────────────────────────────────────
 

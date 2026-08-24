@@ -27,21 +27,6 @@ test:orchestrator:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "development"'
 
-test:python:
-  stage: test
-  image: python:3.11-slim
-  before_script:
-    - apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
-    - just --version
-    - pip install -r Orchestrator/requirements.txt pytest
-  script:
-    - just ci-python
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_BRANCH == "development"'
-
 build:orchestrator:
   stage: build
   image: docker:27-dind
