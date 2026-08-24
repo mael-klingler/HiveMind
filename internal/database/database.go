@@ -929,4 +929,81 @@ func (db *DB) ListGroupMessages(ctx context.Context, groupID string) ([]*reposit
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
+}
+
+// --- Agent profile helpers ---
+
+func (db *DB) ListAgentProfilesDB(ctx context.Context) ([]*models.AgentProfile, error) {
+	rows, err := db.pool.Query(ctx, `SELECT id, name, description, skills, instructions, memory_summary FROM agent_profiles ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var profiles []*models.AgentProfile
+	for rows.Next() {
+		p := &models.AgentProfile{}
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Skills, &p.Instructions, &p.MemorySummary); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, rows.Err()
+}
+
+func (db *DB) CreateAgentProfileDB(ctx context.Context, p *models.AgentProfile) error {
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO agent_profiles (id, name, description, skills, instructions, memory_summary)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description,
+			skills = EXCLUDED.skills, instructions = EXCLUDED.instructions, memory_summary = EXCLUDED.memory_summary`,
+		p.ID, p.Name, p.Description, p.Skills, p.Instructions, p.MemorySummary)
+	return err
+}
+
+// --- Memory block helpers ---
+
+func (db *DB) ListMemoryBlocksDB(ctx context.Context, agentID string) ([]*repository.MemoryBlock, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, agent_id, label, content, description, read_only, block_limit, repo_name, created_at, updated_at
+		FROM agent_memory_blocks WHERE agent_id = $1 ORDER BY label ASC`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var blocks []*repository.MemoryBlock
+	for rows.Next() {
+		b := &repository.MemoryBlock{}
+		var readOnly int
+		if err := rows.Scan(&b.ID, &b.AgentID, &b.Label, &b.Content, &b.Description, &readOnly, &b.BlockLimit, &b.RepoName, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		b.ReadOnly = readOnly == 1
+		blocks = append(blocks, b)
+	}
+	return blocks, rows.Err()
+}
+
+func (db *DB) SetMemoryBlockDB(ctx context.Context, agentID string, in *repository.MemoryBlockInput) error {
+	id := fmt.Sprintf("mem-%s-%s-%d", agentID, in.Label, time.Now().UnixNano())
+	readOnly := 0
+	if in.ReadOnly {
+		readOnly = 1
+	}
+	limit := in.BlockLimit
+	if limit == 0 {
+		limit = 5000
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO agent_memory_blocks (id, agent_id, label, content, description, read_only, block_limit, repo_name, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		ON CONFLICT (agent_id, label) DO UPDATE SET
+			content = EXCLUDED.content, description = EXCLUDED.description, read_only = EXCLUDED.read_only,
+			block_limit = EXCLUDED.block_limit, repo_name = EXCLUDED.repo_name, updated_at = NOW()`,
+		id, agentID, in.Label, in.Content, in.Description, readOnly, limit, in.RepoName)
+	return err
+}
+
+func (db *DB) DeleteMemoryBlockDB(ctx context.Context, agentID, label string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM agent_memory_blocks WHERE agent_id = $1 AND label = $2`, agentID, label)
+	return err
 } 

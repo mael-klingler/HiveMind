@@ -634,23 +634,82 @@ func (s *Server) deleteAgentInstruction(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) listAgentProfiles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	profiles, err := s.DB.ListAgentProfilesDB(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list agent profiles: "+err.Error())
+		return
+	}
+	if profiles == nil {
+		profiles = []*models.AgentProfile{}
+	}
+	writeJSON(w, http.StatusOK, profiles)
 }
 
 func (s *Server) createAgentProfile(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var p models.AgentProfile
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if p.ID == "" || p.Name == "" {
+		writeError(w, http.StatusBadRequest, "id and name are required")
+		return
+	}
+	if err := s.DB.CreateAgentProfileDB(ctx, &p); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create agent profile: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
 }
 
 func (s *Server) getAgentMemory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	blocks, err := s.DB.ListMemoryBlocksDB(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list memory blocks: "+err.Error())
+		return
+	}
+	if blocks == nil {
+		blocks = []*repository.MemoryBlock{}
+	}
+	writeJSON(w, http.StatusOK, blocks)
 }
 
 func (s *Server) updateAgentMemory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.MemoryBlockInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Label == "" {
+		writeError(w, http.StatusBadRequest, "label is required")
+		return
+	}
+	if err := s.DB.SetMemoryBlockDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to set memory block: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": id, "label": in.Label, "status": "updated"})
 }
 
 func (s *Server) deleteAgentMemory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	label := r.URL.Query().Get("label")
+	if label == "" {
+		writeError(w, http.StatusBadRequest, "label query parameter is required")
+		return
+	}
+	if err := s.DB.DeleteMemoryBlockDB(ctx, id, label); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete memory block: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": id, "label": label, "status": "deleted"})
 }
 
 func (s *Server) getQueue(w http.ResponseWriter, r *http.Request) {
