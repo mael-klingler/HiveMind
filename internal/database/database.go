@@ -1048,4 +1048,169 @@ func (db *DB) SetMemoryBlockDB(ctx context.Context, agentID string, in *reposito
 func (db *DB) DeleteMemoryBlockDB(ctx context.Context, agentID, label string) error {
 	_, err := db.pool.Exec(ctx, `DELETE FROM agent_memory_blocks WHERE agent_id = $1 AND label = $2`, agentID, label)
 	return err
+}
+
+// --- MCP server CRUD helpers ---
+
+func (db *DB) CreateMCPServerDB(ctx context.Context, in *repository.MCPServerInput) (string, error) {
+	id := fmt.Sprintf("mcp-%d", time.Now().UnixNano())
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO mcp_servers (id, name, command, args, env, server_type, enabled, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, in.Name, in.Command, in.Args, in.Env, in.ServerType, enabled, in.Description)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) UpdateMCPServerDB(ctx context.Context, id string, in *repository.MCPServerInput) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE mcp_servers SET name = $2, command = $3, args = $4, env = $5, server_type = $6, enabled = $7, description = $8
+		WHERE id = $1`,
+		id, in.Name, in.Command, in.Args, in.Env, in.ServerType, enabled, in.Description)
+	return err
+}
+
+func (db *DB) DeleteMCPServerDB(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM mcp_servers WHERE id = $1`, id)
+	return err
+}
+
+// --- Plugin CRUD helpers ---
+
+func (db *DB) ListPluginsDB(ctx context.Context) ([]*repository.Plugin, error) {
+	rows, err := db.pool.Query(ctx, `SELECT id, name, package, enabled, description, config FROM opencode_plugins ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var plugins []*repository.Plugin
+	for rows.Next() {
+		p := &repository.Plugin{}
+		var enabled int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Package, &enabled, &p.Description, &p.Config); err != nil {
+			return nil, err
+		}
+		p.Enabled = enabled == 1
+		plugins = append(plugins, p)
+	}
+	return plugins, rows.Err()
+}
+
+func (db *DB) CreatePluginDB(ctx context.Context, in *repository.PluginInput) (string, error) {
+	id := fmt.Sprintf("plg-%d", time.Now().UnixNano())
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	config := in.Config
+	if config == "" {
+		config = "{}"
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO opencode_plugins (id, name, package, enabled, description, config, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+		id, in.Name, in.Package, enabled, in.Description, config)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) UpdatePluginDB(ctx context.Context, id string, in *repository.PluginInput) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE opencode_plugins SET name = $2, package = $3, enabled = $4, description = $5, config = $6, updated_at = NOW()
+		WHERE id = $1`,
+		id, in.Name, in.Package, enabled, in.Description, in.Config)
+	return err
+}
+
+func (db *DB) DeletePluginDB(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM opencode_plugins WHERE id = $1`, id)
+	return err
+}
+
+// --- Instruction CRUD helpers ---
+
+func (db *DB) ListInstructionsDB(ctx context.Context) ([]*repository.Instruction, error) {
+	rows, err := db.pool.Query(ctx, `SELECT id, name, content, description, enabled FROM agent_instructions ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var instructions []*repository.Instruction
+	for rows.Next() {
+		i := &repository.Instruction{}
+		var enabled int
+		if err := rows.Scan(&i.ID, &i.Name, &i.Content, &i.Description, &enabled); err != nil {
+			return nil, err
+		}
+		i.Enabled = enabled == 1
+		instructions = append(instructions, i)
+	}
+	return instructions, rows.Err()
+}
+
+func (db *DB) CreateInstructionDB(ctx context.Context, in *repository.InstructionInput) (string, error) {
+	id := fmt.Sprintf("ins-%d", time.Now().UnixNano())
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO agent_instructions (id, name, content, description, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+		id, in.Name, in.Content, in.Description, enabled)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) UpdateInstructionDB(ctx context.Context, id string, in *repository.InstructionInput) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE agent_instructions SET name = $2, content = $3, description = $4, enabled = $5, updated_at = NOW()
+		WHERE id = $1`,
+		id, in.Name, in.Content, in.Description, enabled)
+	return err
+}
+
+func (db *DB) DeleteInstructionDB(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM agent_instructions WHERE id = $1`, id)
+	return err
+}
+
+// --- Telemetry helpers ---
+
+func (db *DB) SetTicketLLMUsageDB(ctx context.Context, id string, promptTokens, completionTokens int, totalCostUSD float64) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET llm_prompt_tokens = llm_prompt_tokens + $1,
+			llm_completion_tokens = llm_completion_tokens + $2,
+			llm_total_cost_usd = llm_total_cost_usd + $3, updated_at = NOW() WHERE id = $4`,
+		promptTokens, completionTokens, totalCostUSD, id)
+	return err
+}
+
+func (db *DB) SetTicketLineStatsDB(ctx context.Context, id string, added, removed, filesChanged int) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET lines_added = $1, lines_removed = $2, files_changed = $3, updated_at = NOW() WHERE id = $4`,
+		added, removed, filesChanged, id)
+	return err
 } 

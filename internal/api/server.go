@@ -169,6 +169,9 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Patch("/plugins/{id}", s.updatePlugin)
 		r.Delete("/plugins/{id}", s.deletePlugin)
 
+		// Agent error reporting
+		r.Post("/agents/{id}/error", s.reportAgentError)
+
 		// Stream
 		r.Get("/stream", s.streamEvents)
 
@@ -548,8 +551,15 @@ func (s *Server) completeAgentTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 	var req struct {
-		TicketID string `json:"ticket_id"`
-		Status   string `json:"status"`
+		TicketID           string  `json:"ticket_id"`
+		Status             string  `json:"status"`
+		LLMPromptTokens    int     `json:"llm_prompt_tokens"`
+		LLMCompletionTokens int    `json:"llm_completion_tokens"`
+		LLMTotalCostUSD    float64 `json:"llm_total_cost_usd"`
+		LinesAdded         int     `json:"lines_added"`
+		LinesRemoved       int     `json:"lines_removed"`
+		FilesChanged       int     `json:"files_changed"`
+		ModelUsed          string  `json:"model_used"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -572,6 +582,16 @@ func (s *Server) completeAgentTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.TicketID != "" {
+		if req.LLMPromptTokens > 0 || req.LLMCompletionTokens > 0 {
+			if err := s.DB.SetTicketLLMUsageDB(ctx, req.TicketID, req.LLMPromptTokens, req.LLMCompletionTokens, req.LLMTotalCostUSD); err != nil {
+				slog.Warn("failed to persist LLM usage", "ticket_id", req.TicketID, "error", err)
+			}
+		}
+		if req.LinesAdded > 0 || req.LinesRemoved > 0 || req.FilesChanged > 0 {
+			if err := s.DB.SetTicketLineStatsDB(ctx, req.TicketID, req.LinesAdded, req.LinesRemoved, req.FilesChanged); err != nil {
+				slog.Warn("failed to persist line stats", "ticket_id", req.TicketID, "error", err)
+			}
+		}
 		if err := s.DB.UpdateTicketStatus(ctx, req.TicketID, "completed"); err != nil {
 			slog.Warn("failed to complete ticket", "ticket_id", req.TicketID, "error", err)
 		} else {
@@ -628,19 +648,89 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAgentInstructions(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	instructions, err := s.DB.ListInstructionsDB(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list instructions: "+err.Error())
+		return
+	}
+	if instructions == nil {
+		instructions = []*repository.Instruction{}
+	}
+	writeJSON(w, http.StatusOK, instructions)
 }
 
 func (s *Server) createAgentInstruction(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var in repository.InstructionInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Name == "" || in.Content == "" {
+		writeError(w, http.StatusBadRequest, "name and content are required")
+		return
+	}
+	id, err := s.DB.CreateInstructionDB(ctx, &in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create instruction: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
 func (s *Server) updateAgentInstruction(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.InstructionInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.DB.UpdateInstructionDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update instruction: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
 }
 
 func (s *Server) deleteAgentInstruction(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeleteInstructionDB(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete instruction: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+}
+
+func (s *Server) reportAgentError(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentID := chi.URLParam(r, "id")
+	var req struct {
+		TicketID string `json:"ticket_id"`
+		Error    string `json:"error"`
+		Phase    string `json:"phase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TicketID == "" {
+		writeError(w, http.StatusBadRequest, "ticket_id is required")
+		return
+	}
+	slog.Warn("agent reported error", "agent_id", agentID, "ticket_id", req.TicketID, "error", req.Error, "phase", req.Phase)
+	if err := s.DB.SetAgentStatus(ctx, agentID, "error"); err != nil {
+		slog.Error("failed to set agent error status", "agent_id", agentID, "error", err)
+	}
+	if err := s.DB.RequeueTicket(ctx, req.TicketID, s.Config.AgentMaxRetries); err != nil {
+		slog.Error("failed to requeue ticket after agent error", "ticket_id", req.TicketID, "error", err)
+	}
+	s.Broadcaster.Broadcast("ticket_requeued", map[string]string{
+		"ticket_id": req.TicketID, "reason": "agent error: " + req.Error,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": agentID, "ticket_id": req.TicketID, "status": "requeued"})
 }
 
 func (s *Server) listAgentProfiles(w http.ResponseWriter, r *http.Request) {
@@ -1047,31 +1137,104 @@ func (s *Server) listMCPServers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createMCPServer(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var in repository.MCPServerInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Name == "" || in.Command == "" {
+		writeError(w, http.StatusBadRequest, "name and command are required")
+		return
+	}
+	id, err := s.DB.CreateMCPServerDB(ctx, &in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create MCP server: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
 func (s *Server) updateMCPServer(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.MCPServerInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.DB.UpdateMCPServerDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update MCP server: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
 }
 
 func (s *Server) deleteMCPServer(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeleteMCPServerDB(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete MCP server: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
 func (s *Server) listPlugins(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	plugins, err := s.DB.ListPluginsDB(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list plugins: "+err.Error())
+		return
+	}
+	if plugins == nil {
+		plugins = []*repository.Plugin{}
+	}
+	writeJSON(w, http.StatusOK, plugins)
 }
 
 func (s *Server) createPlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var in repository.PluginInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	id, err := s.DB.CreatePluginDB(ctx, &in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create plugin: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
 func (s *Server) updatePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.PluginInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.DB.UpdatePluginDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update plugin: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
 }
 
 func (s *Server) deletePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeletePluginDB(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete plugin: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
 func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
