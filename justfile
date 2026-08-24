@@ -387,13 +387,13 @@ _deploy-k8s:
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 
-    KUSTOMIZATION="Orchestrator/kustomize/base/kustomization.yaml"
+    KUSTOMIZATION="deploy/kustomize/base/kustomization.yaml"
     if [ -f "$KUSTOMIZATION" ]; then
         sed -i '' "s/newTag: .*/newTag: {{VERSION}}/" "$KUSTOMIZATION"
         echo "Updated kustomization.yaml → newTag: {{VERSION}}"
     fi
 
-    DEPLOYMENT_YAML="Orchestrator/kustomize/base/deployment.yaml"
+    DEPLOYMENT_YAML="deploy/kustomize/base/deployment.yaml"
     if [ -f "$DEPLOYMENT_YAML" ]; then
         sed -i '' "s|hivemind-orchestrator:[0-9]*\.[0-9]*\.[0-9]*|hivemind-orchestrator:{{VERSION}}|g" "$DEPLOYMENT_YAML"
         echo "Updated deployment.yaml → image: {{VERSION}}"
@@ -424,7 +424,7 @@ _deploy-k8s:
 
     echo ""
     echo "--- Applying Kustomize manifests ---"
-    kubectl apply -k Orchestrator/kustomize/base/
+    kubectl apply -k deploy/kustomize/base/
 
     ENABLE_MONITORING="${ENABLE_MONITORING:-false}"
     if [ "$ENABLE_MONITORING" = "true" ] || [ "$ENABLE_MONITORING" = "y" ]; then
@@ -463,7 +463,24 @@ kind-load: docker-build-local
 
 # Create secrets from .env for local deployment
 local-secrets:
-    bash Orchestrator/kustomize/overlays/local/create-secrets.sh
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env 2>/dev/null || true; set +a
+    kubectl create secret generic orchestrator-env -n hivemind \
+        --from-literal=GITLAB_HOST="${GITLAB_HOST:-}" \
+        --from-literal=GITLAB_TOKEN="${GITLAB_TOKEN:-}" \
+        --from-literal=HIVEMIND_API_KEY="${HIVEMIND_API_KEY:-}" \
+        --from-literal=OLLAMA_HOST="${OLLAMA_HOST:-}" \
+        --from-literal=OLLAMA_MODEL="${OLLAMA_MODEL:-}" \
+        --from-literal=OPENCODE_MODEL="${OPENCODE_MODEL:-}" \
+        --from-literal=VCS_PROVIDER="${VCS_PROVIDER:-gitlab}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret generic orchestrator-db -n hivemind \
+        --from-literal=url="postgres://hivemind:hivemind@hivemind-postgres:5432/hivemind?sslmode=disable" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret generic orchestrator-redis -n hivemind \
+        --from-literal=url="redis://redis:6379" \
+        --dry-run=client -o yaml | kubectl apply -f -
 
 # Deploy to local kind cluster
 deploy-local: kind-load local-secrets
@@ -475,14 +492,8 @@ deploy-local: kind-load local-secrets
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
     echo "--- Applying Kustomize manifests ---"
-    kubectl apply -k Orchestrator/kustomize/overlays/local/
+    kubectl apply -k deploy/kustomize/overlays/local/
     echo ""
-    echo "--- Waiting for Postgres ---"
-    kubectl rollout status statefulset/hivemind-postgres -n hivemind --timeout=120s
-    echo "--- Waiting for Redis ---"
-    kubectl rollout status statefulset/redis -n hivemind --timeout=60s
-    echo "--- Waiting for Gitea ---"
-    kubectl rollout status deployment/gitea -n hivemind --timeout=120s
     echo "--- Waiting for Orchestrator ---"
     kubectl rollout status deployment/orchestrator -n hivemind --timeout=120s
     echo ""
@@ -490,19 +501,11 @@ deploy-local: kind-load local-secrets
     echo "  HiveMind deployed to local kind cluster!"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
-    echo "  Set up Gitea demo repo:"
-    echo "    just local-gitea-setup"
-    echo ""
     echo "  Access services:"
     echo "    kubectl port-forward -n hivemind svc/orchestrator 8080:8080"
-    echo "    kubectl port-forward -n hivemind svc/gitea 3000:3000"
-    echo "    kubectl port-forward -n hivemind svc/grafana 3001:3000"
+    echo "    kubectl port-forward -n hivemind svc/grafana 3000:3000"
     echo "    kubectl port-forward -n hivemind svc/prometheus 9090:9090"
     echo ""
-
-# Set up Gitea with demo repo (run after deploy-local)
-local-gitea-setup:
-    bash Orchestrator/kustomize/overlays/local/setup-gitea.sh
 
 # Tear down local deployment
 local-teardown:
@@ -513,11 +516,9 @@ local-access:
     #!/usr/bin/env bash
     echo "Port-forwarding HiveMind services (Ctrl+C to stop)..."
     echo "  Orchestrator: http://localhost:8080"
-    echo "  Gitea:         http://localhost:3000"
-    echo "  Grafana:       http://localhost:3001 (admin/hivemind)"
-    echo "  Prometheus:    http://localhost:9090"
+    echo "  Grafana:      http://localhost:3000 (admin/hivemind)"
+    echo "  Prometheus:   http://localhost:9090"
     kubectl port-forward -n hivemind svc/orchestrator 8080:8080 &
-    kubectl port-forward -n hivemind svc/gitea 3000:3000 &
-    kubectl port-forward -n hivemind svc/grafana 3001:3000 &
+    kubectl port-forward -n hivemind svc/grafana 3000:3000 &
     kubectl port-forward -n hivemind svc/prometheus 9090:9090 &
     wait

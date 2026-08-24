@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hivemind
+
+resources:
+  - namespace.yaml
+  - service.yaml
+  - deployment.yaml
+  - pdb.yaml
+  - networkpolicy.yaml
+
+configMapGenerator:
+  - name: orchestrator-config
+    literals:
+      - VCS_PROVIDER=gitlab
+      - AGENT_NAMESPACE=hivemind
+      - AGENT_IMAGE=hivemind-opencode
+      - AGENT_PERM_DOOM_LOOP=deny
+
+images:
+  - name: hivemind-orchestrator
+    newName: reg.capturecore.org/hivemind/hivemind-orchestrator
+    newTag: v0.1.0
+  - name: hivemind-opencode
+    newName: reg.capturecore.org/hivemind/hivemind-opencode
+    newTag: v0.1.0

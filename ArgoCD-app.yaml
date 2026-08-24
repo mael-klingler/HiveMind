@@ -12,12 +12,13 @@ metadata:
 spec:
   project: platform
   source:
-    repoURL: https://gitlab.capturecore.org/ai/hivemind.git
-    targetRevision: HEAD
-    path: Orchestrator/kustomize/base
+    repoURL: https://gitlab.capturecore.org/ai/hivemind-deploy.git
+    targetRevision: main
+    path: orchestrator/base
     kustomize:
       images:
-        - hivemind-orchestrator=reg.capturecore.org/capturecore/hivemind-orchestrator:latest
+        - hivemind-orchestrator=reg.capturecore.org/hivemind/hivemind-orchestrator:v0.1.0
+        - hivemind-opencode=reg.capturecore.org/hivemind/hivemind-opencode:v0.1.0
   destination:
     server: https://kubernetes.default.svc
     namespace: hivemind
