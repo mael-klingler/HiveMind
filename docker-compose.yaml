@@ -127,6 +127,7 @@ services:
     command: ["-serve"]
     environment:
       - DATABASE_URL=postgres://hivemind:hivemind@hivemind-postgres-local:5432/hivemind?sslmode=disable
+      - REDIS_URL=redis://hivemind-redis-local:6379
       - GITLAB_HOST=${GITLAB_HOST}
       - GITLAB_TOKEN=${GITLAB_TOKEN}
       - GITLAB_WEBHOOK_SECRET=${GITLAB_WEBHOOK_SECRET:-}
@@ -145,6 +146,8 @@ services:
     depends_on:
       hivemind-postgres-local:
         condition: service_healthy
+      hivemind-redis-local:
+        condition: service_healthy
     profiles:
       - full-local
 
@@ -161,6 +164,22 @@ services:
       - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hivemind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - full-local
+
+  hivemind-redis-local:
+    image: redis:7-alpine
+    container_name: hivemind-redis-local
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - hivemind-redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -204,5 +223,6 @@ volumes:
   workspace:
   ticketservice-db-data:
   hivemind-pgdata:
+  hivemind-redis-data:
   prometheus-data:
   grafana-data:

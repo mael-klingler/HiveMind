@@ -34,6 +34,8 @@ import (
 	"github.com/maelklingler/hivemind/internal/background"
 	"github.com/maelklingler/hivemind/internal/config"
 	"github.com/maelklingler/hivemind/internal/database"
+	"github.com/maelklingler/hivemind/internal/database/redisrepo"
+	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/llm"
 	"github.com/maelklingler/hivemind/internal/sse"
@@ -82,11 +84,23 @@ func main() {
 
 	llmClient := llm.NewLLMClient(cfg)
 
+	var redisClient *redisrepo.Client
+	var pubsubRepo repository.PubSubRepository
+	if cfg.RedisURL != "" {
+		redisClient, err = redisrepo.New(ctx, cfg.RedisURL)
+		if err != nil {
+			slog.Warn("redis not available, falling back to in-memory", "error", err)
+		} else {
+			pubsubRepo = redisClient
+			slog.Info("redis connected", "url", cfg.RedisURL)
+		}
+	}
+
 	if err := db.EnsureAgentPool(ctx, 3); err != nil {
 		slog.Warn("failed to ensure agent pool", "error", err)
 	}
 
-	broadcaster := sse.NewBroadcaster()
+	broadcaster := sse.NewBroadcaster(pubsubRepo)
 
 	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient)
 	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient)
@@ -145,6 +159,11 @@ func main() {
 		slog.Error("server shutdown error", "error", err)
 	}
 
+	broadcaster.Close()
+	if redisClient != nil {
+		redisClient.Close()
+	}
+
 	slog.Info("shutdown complete")
 }
 
@@ -159,7 +178,10 @@ func runMigrations(cfg *config.Config) error {
 	}
 	defer db.Close()
 
-	migrationsDir := database.MigrationsDir()
+	migrationsDir, err := database.MigrationsDir()
+	if err != nil {
+		return fmt.Errorf("resolve migrations dir: %w", err)
+	}
 	if err := goose.Up(db, migrationsDir); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}

@@ -89,7 +89,7 @@ func (c *Client) ListPods(ctx context.Context, labelSelector string) ([]corev1.P
 
 func (c *Client) DeletePod(ctx context.Context, name string) error {
 	err := c.ClientSet.CoreV1().Pods(c.Namespace).Delete(ctx, name, metav1.DeleteOptions{
-		GracePeriodSeconds: ptr(int64(0)),
+		GracePeriodSeconds: ptr(int64(300)),
 	})
 	if err != nil && !errors.IsNotFound(err) {
 		return err

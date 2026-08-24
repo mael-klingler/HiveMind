@@ -35,35 +35,35 @@ var migrationFS embed.FS
 // MigrationsDir returns the path to SQL migration files.
 // In development it uses the local source tree; in production containers
 // it writes the embedded files to a temp directory and returns that path.
-func MigrationsDir() string {
+func MigrationsDir() (string, error) {
 	local := filepath.Join("internal", "database", "migrations")
 	if _, err := os.Stat(local); err == nil {
-		return local
+		return local, nil
 	}
 
 	container := "/app/migrations"
 	if _, err := os.Stat(container); err == nil {
-		return container
+		return container, nil
 	}
 
 	tmpDir, err := os.MkdirTemp("", "hivemind-migrations")
 	if err != nil {
-		panic("cannot create temp migrations dir: " + err.Error())
+		return "", fmt.Errorf("cannot create temp migrations dir: %w", err)
 	}
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {
-		panic("cannot read embedded migrations: " + err.Error())
+		return "", fmt.Errorf("cannot read embedded migrations: %w", err)
 	}
 	for _, entry := range entries {
 		data, err := migrationFS.ReadFile(filepath.Join("migrations", entry.Name()))
 		if err != nil {
-			panic("cannot read embedded migration " + entry.Name() + ": " + err.Error())
+			return "", fmt.Errorf("cannot read embedded migration %s: %w", entry.Name(), err)
 		}
 		if err := os.WriteFile(filepath.Join(tmpDir, entry.Name()), data, 0644); err != nil {
-			panic("cannot write migration " + entry.Name() + ": " + err.Error())
+			return "", fmt.Errorf("cannot write migration %s: %w", entry.Name(), err)
 		}
 	}
-	return tmpDir
+	return tmpDir, nil
 }
 
 type DB struct {
