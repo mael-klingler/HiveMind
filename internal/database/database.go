@@ -194,6 +194,12 @@ func (db *DB) GetTicket(ctx context.Context, id string) (*models.Ticket, error) 
 }
 
 func (db *DB) ListTickets(ctx context.Context, status string) ([]*models.Ticket, error) {
+	return db.ListTicketsPaged(ctx, status, 0, 0)
+}
+
+// ListTicketsPaged returns tickets filtered by status with optional limit/offset.
+// limit <= 0 means no limit.
+func (db *DB) ListTicketsPaged(ctx context.Context, status string, limit, offset int) ([]*models.Ticket, error) {
 	query := `SELECT id, title, description, labels, status, mr_status, mr_url, agent_id,
 		retry_count, created_at, updated_at FROM tickets`
 	args := []interface{}{}
@@ -202,6 +208,13 @@ func (db *DB) ListTickets(ctx context.Context, status string) ([]*models.Ticket,
 		args = append(args, status)
 	}
 	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		if len(args) == 0 {
+			query += fmt.Sprintf(` LIMIT %d OFFSET %d`, limit, offset)
+		} else {
+			query += fmt.Sprintf(` LIMIT %d OFFSET %d`, limit, offset)
+		}
+	}
 
 	rows, err := db.pool.Query(ctx, query, args...)
 	if err != nil {

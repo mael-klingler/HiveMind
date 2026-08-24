@@ -120,13 +120,19 @@ func (qp *QueueProcessor) processQueue(ctx context.Context) error {
 
 		slog.Info("assigning ticket to agent", "ticket_id", ticket.ID, "agent_id", agent.ID)
 
-		if err := qp.spawnAgentForTicket(ctx, ticket, agent); err != nil {
-			slog.Error("failed to spawn agent", "ticket_id", ticket.ID, "error", err)
+		// Atomically claim the queue item BEFORE spawning the pod, so a
+		// spawn failure leaves the ticket requeueable instead of orphaned.
+		if err := qp.DB.ClaimQueueItem(ctx, ticket.ID, agent.ID); err != nil {
+			slog.Error("failed to claim queue item atomically", "ticket_id", ticket.ID, "error", err)
 			continue
 		}
 
-		if err := qp.DB.ClaimQueueItem(ctx, ticket.ID, agent.ID); err != nil {
-			slog.Error("failed to claim queue item atomically", "ticket_id", ticket.ID, "error", err)
+		if err := qp.spawnAgentForTicket(ctx, ticket, agent); err != nil {
+			slog.Error("failed to spawn agent, requeueing ticket", "ticket_id", ticket.ID, "error", err)
+			if err := qp.DB.RequeueTicket(ctx, ticket.ID, qp.Config.AgentMaxRetries); err != nil {
+				slog.Error("failed to requeue ticket after spawn failure", "ticket_id", ticket.ID, "error", err)
+			}
+			continue
 		}
 	}
 	return nil

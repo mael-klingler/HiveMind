@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -113,6 +114,24 @@ func main() {
 		slog.Warn("failed to ensure agent pool", "error", err)
 	}
 
+	// Startup orphan recovery: reset running tickets whose agent pod no
+	// longer exists back to queued, so they get reprocessed.
+	if k8sClient != nil {
+		running, err := db.ListTicketsPaged(ctx, "running", 500, 0)
+		if err == nil {
+			for _, t := range running {
+				podName := "agent-worker-" + strings.ToLower(t.ID)
+				pod, err := k8sClient.GetPod(ctx, podName)
+				if err == nil && pod == nil {
+					slog.Info("orphan ticket detected at startup, requeueing", "ticket_id", t.ID)
+					if err := db.UpdateTicketStatus(ctx, t.ID, "queued"); err != nil {
+						slog.Error("failed to requeue orphan ticket", "ticket_id", t.ID, "error", err)
+					}
+				}
+			}
+		}
+	}
+
 	broadcaster := sse.NewBroadcaster(pubsubRepo)
 
 	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient)
@@ -134,7 +153,7 @@ func main() {
 		reviewMonitor.Run(ctx)
 	}()
 
-	server := api.NewServer(cfg, db, k8sClient, broadcaster, getStaticFS())
+	server := api.NewServer(cfg, db, k8sClient, broadcaster, redisClient, redisClient, getStaticFS())
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	httpServer := &http.Server{

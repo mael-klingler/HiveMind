@@ -60,6 +60,30 @@ func init() {
 	startDedupCleaner()
 }
 
+// isDuplicateWebhook checks the Redis dedup repo if available, otherwise
+// falls back to the in-memory map.
+func (s *Server) isDuplicateWebhook(eventID string) bool {
+	if s.Dedup != nil {
+		dup, err := s.Dedup.IsDuplicate(context.Background(), eventID, webhookDedupTTL)
+		if err != nil {
+			slog.Warn("redis dedup failed, falling back to in-memory", "error", err)
+		} else {
+			return dup
+		}
+	}
+	return inMemoryIsDuplicate(eventID)
+}
+
+func inMemoryIsDuplicate(eventID string) bool {
+	webhookDedupMu.Lock()
+	defer webhookDedupMu.Unlock()
+	if _, exists := webhookDedup[eventID]; exists {
+		return true
+	}
+	webhookDedup[eventID] = time.Now()
+	return false
+}
+
 func (s *Server) gitlabWebhook(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
 	eventType := r.Header.Get("X-Gitlab-Event")
@@ -77,7 +101,7 @@ func (s *Server) gitlabWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eventUUID := r.Header.Get("X-Gitlab-Event-UUID")
-	if eventUUID != "" && isDuplicateWebhook(eventUUID) {
+	if eventUUID != "" && s.isDuplicateWebhook(eventUUID) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
 		return
 	}
@@ -126,7 +150,7 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
-	if deliveryID != "" && isDuplicateWebhook(deliveryID) {
+	if deliveryID != "" && s.isDuplicateWebhook(deliveryID) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
 		return
 	}
@@ -284,16 +308,6 @@ func verifyGitHubWebhook(body []byte, signature, secret string) bool {
 	mac.Write(body)
 	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(signature), []byte(expected))
-}
-
-func isDuplicateWebhook(eventID string) bool {
-	webhookDedupMu.Lock()
-	defer webhookDedupMu.Unlock()
-	if _, exists := webhookDedup[eventID]; exists {
-		return true
-	}
-	webhookDedup[eventID] = time.Now()
-	return false
 }
 
 func readBody(r *http.Request) []byte {

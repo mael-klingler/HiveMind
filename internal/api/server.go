@@ -30,6 +30,7 @@ import (
 
 	"github.com/maelklingler/hivemind/internal/config"
 	"github.com/maelklingler/hivemind/internal/database"
+	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/middleware"
 	"github.com/maelklingler/hivemind/internal/models"
@@ -42,6 +43,8 @@ type Server struct {
 	K8s         *k8s.Client
 	Router      *chi.Mux
 	Broadcaster *sse.Broadcaster
+	Dedup       repository.DedupRepository
+	RateLimiter repository.RateLimitRepository
 	Shutdown    context.CancelFunc
 	staticFS    fs.FS
 }
@@ -54,12 +57,14 @@ func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
 	return s.K8s
 }
 
-func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, staticFS fs.FS) *Server {
+func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, dedup repository.DedupRepository, rateLimiter repository.RateLimitRepository, staticFS fs.FS) *Server {
 	s := &Server{
 		Config:      cfg,
 		DB:          db,
 		K8s:         k8sClient,
 		Broadcaster: broadcaster,
+		Dedup:       dedup,
+		RateLimiter: rateLimiter,
 		staticFS:    staticFS,
 	}
 
@@ -71,7 +76,7 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 	r.Use(chiMiddleware.Timeout(60 * time.Second))
 	r.Use(middleware.CORS(cfg.CORSOrigins))
 	r.Use(middleware.APIKeyAuth(cfg.HivemindAPIKey))
-	r.Use(middleware.RateLimit(cfg.RateLimitPerMinute))
+	r.Use(middleware.RateLimitWithRedis(cfg.RateLimitPerMinute, s.RateLimiter))
 	r.Use(middleware.MaxBodySize(10 * 1024 * 1024))
 
 	r.Get("/healthz", s.healthz)
