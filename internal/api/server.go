@@ -36,6 +36,9 @@ import (
 	"github.com/maelklingler/hivemind/internal/middleware"
 	"github.com/maelklingler/hivemind/internal/models"
 	"github.com/maelklingler/hivemind/internal/sse"
+	"github.com/maelklingler/hivemind/internal/vcs"
+	"github.com/maelklingler/hivemind/internal/vcs/github"
+	"github.com/maelklingler/hivemind/internal/vcs/gitlab"
 )
 
 type Server struct {
@@ -123,11 +126,16 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Get("/repos", s.listRepos)
 		r.Post("/repos", s.addRepo)
 		r.Patch("/repos", s.bulkUpdateRepos)
+		r.Get("/repos/gitlab-projects", s.listGitLabProjects)
+		r.Post("/repos/import-selected", s.importSelectedRepos)
+		r.Post("/repos/init-from-gitlab", s.initFromGitLab)
 		r.Get("/repos/{name}", s.getRepo)
 		r.Put("/repos/{name}", s.updateRepo)
 		r.Patch("/repos/{name}", s.patchRepo)
 		r.Delete("/repos/{name}", s.deleteRepo)
 		r.Get("/repos/{name}/branches", s.listRepoBranches)
+		r.Post("/repos/{name}/activate", s.activateRepo)
+		r.Post("/repos/{name}/deactivate", s.deactivateRepo)
 
 		r.Get("/settings", s.getSettings)
 		r.Post("/settings", s.updateSettings)
@@ -755,8 +763,19 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) bulkUpdateRepos(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement bulk update
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx := r.Context()
+	var repos []database.RepoInput
+	if err := json.NewDecoder(r.Body).Decode(&repos); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	for _, repo := range repos {
+		if err := s.DB.UpdateRepoDB(ctx, &repo); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update repo "+repo.Name+": "+err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "updated": len(repos)})
 }
 
 func (s *Server) getRepo(w http.ResponseWriter, r *http.Request) {
@@ -771,13 +790,41 @@ func (s *Server) getRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateRepo(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	var repo database.RepoInput
+	if err := json.NewDecoder(r.Body).Decode(&repo); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	repo.Name = name
+	if err := s.DB.UpdateRepoDB(ctx, &repo); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "updated"})
 }
 
 func (s *Server) patchRepo(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	var patch map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	allowed := map[string]bool{"url": true, "branch": true, "description": true, "active": true}
+	filtered := make(map[string]interface{})
+	for k, v := range patch {
+		if allowed[k] {
+			filtered[k] = v
+		}
+	}
+	if err := s.DB.PatchRepoDB(ctx, name, filtered); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to patch repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "patched"})
 }
 
 func (s *Server) deleteRepo(w http.ResponseWriter, r *http.Request) {
@@ -791,8 +838,165 @@ func (s *Server) deleteRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRepoBranches(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement via VCS provider
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	repo, err := s.DB.GetRepo(ctx, name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "repo not found")
+		return
+	}
+	provider := s.buildVCSProvider()
+	if provider == nil {
+		writeError(w, http.StatusServiceUnavailable, "VCS provider not configured")
+		return
+	}
+	projectPath := extractProjectPath(repo.URL, provider)
+	branches, err := provider.ListBranches(ctx, projectPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list branches: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, branches)
+}
+
+func (s *Server) activateRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	if err := s.DB.SetRepoActiveDB(ctx, name, true); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to activate repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "active"})
+}
+
+func (s *Server) deactivateRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	if err := s.DB.SetRepoActiveDB(ctx, name, false); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to deactivate repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "inactive"})
+}
+
+func (s *Server) listGitLabProjects(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	provider := s.buildVCSProvider()
+	if provider == nil {
+		writeError(w, http.StatusServiceUnavailable, "VCS provider not configured")
+		return
+	}
+	projects, err := provider.ListProjects(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list projects: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) importSelectedRepos(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req struct {
+		Repos []struct {
+			Name        string `json:"name"`
+			URL         string `json:"url"`
+			Branch      string `json:"branch"`
+			Description string `json:"description"`
+		} `json:"repos"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	imported := 0
+	for _, r := range req.Repos {
+		in := &database.RepoInput{
+			Name: r.Name, URL: r.URL, Branch: r.Branch, Description: r.Description, Active: true,
+		}
+		if in.Branch == "" {
+			in.Branch = "development"
+		}
+		if err := s.DB.AddRepo(ctx, in); err != nil {
+			slog.Warn("failed to import repo", "name", r.Name, "error", err)
+			continue
+		}
+		imported++
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "imported": imported})
+}
+
+func (s *Server) initFromGitLab(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	provider := s.buildVCSProvider()
+	if provider == nil {
+		writeError(w, http.StatusServiceUnavailable, "VCS provider not configured")
+		return
+	}
+	projects, err := provider.ListProjects(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list projects: "+err.Error())
+		return
+	}
+	imported := 0
+	for _, p := range projects {
+		name, _ := p["name"].(string)
+		url, _ := p["url"].(string)
+		if name == "" || url == "" {
+			continue
+		}
+		in := &database.RepoInput{Name: name, URL: url, Branch: "development", Active: true}
+		if err := s.DB.AddRepo(ctx, in); err != nil {
+			slog.Warn("failed to import repo", "name", name, "error", err)
+			continue
+		}
+		imported++
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "imported": imported})
+}
+
+func (s *Server) buildVCSProvider() vcs.VCSProvider {
+	if s.Config.VCSProvider == "github" {
+		return github.New(s.Config.GitHubHost, s.Config.GitHubToken)
+	}
+	return gitlab.New(s.Config.GitLabHost, s.Config.GitLabToken)
+}
+
+func extractProjectPath(repoURL string, provider vcs.VCSProvider) string {
+	host := provider.GetHost()
+	if host == "" {
+		return ""
+	}
+	hostIdx := indexOf(repoURL, host)
+	if hostIdx < 0 {
+		return ""
+	}
+	rest := repoURL[hostIdx+len(host):]
+	rest = trimPrefix(rest, "/")
+	rest = trimSuffix(rest, ".git")
+	return rest
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimPrefix(s, prefix string) string {
+	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
+		return s[len(prefix):]
+	}
+	return s
+}
+
+func trimSuffix(s, suffix string) string {
+	if len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix {
+		return s[:len(s)-len(suffix)]
+	}
+	return s
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {

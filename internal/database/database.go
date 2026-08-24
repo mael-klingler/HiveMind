@@ -481,6 +481,48 @@ func (db *DB) DeleteRepo(ctx context.Context, name string) error {
 	return err
 }
 
+func (db *DB) UpdateRepoDB(ctx context.Context, r *RepoInput) error {
+	tags, _ := json.Marshal(r.Tags)
+	active := 0
+	if r.Active {
+		active = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE repos SET url = $2, branch = $3, description = $4, tags = $5, active = $6
+		WHERE name = $1`,
+		r.Name, r.URL, r.Branch, r.Description, string(tags), active)
+	return err
+}
+
+func (db *DB) PatchRepoDB(ctx context.Context, name string, patch map[string]interface{}) error {
+	if len(patch) == 0 {
+		return nil
+	}
+	setClauses := ""
+	args := []interface{}{name}
+	argIdx := 2
+	for k, v := range patch {
+		if setClauses != "" {
+			setClauses += ", "
+		}
+		setClauses += fmt.Sprintf("%s = $%d", k, argIdx)
+		args = append(args, v)
+		argIdx++
+	}
+	query := fmt.Sprintf(`UPDATE repos SET %s WHERE name = $1`, setClauses)
+	_, err := db.pool.Exec(ctx, query, args...)
+	return err
+}
+
+func (db *DB) SetRepoActiveDB(ctx context.Context, name string, active bool) error {
+	v := 0
+	if active {
+		v = 1
+	}
+	_, err := db.pool.Exec(ctx, `UPDATE repos SET active = $1 WHERE name = $2`, v, name)
+	return err
+}
+
 // --- Queue operations ---
 
 func (db *DB) EnqueueTicket(ctx context.Context, ticketID string, priority int) error {
