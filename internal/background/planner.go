@@ -53,9 +53,7 @@ func (p *Planner) processIdeas(ctx context.Context) error {
 		return err
 	}
 	for _, t := range tickets {
-		if t.Type == "" || t.Type == "task" {
-			continue
-		}
+		slog.Info("planner scanning ticket", "ticket_id", t.ID, "type", t.Type, "status", t.Status)
 		if t.Type != "idea" {
 			continue
 		}
@@ -67,13 +65,17 @@ func (p *Planner) processIdeas(ctx context.Context) error {
 }
 
 func (p *Planner) decompose(ctx context.Context, ticket *database.TicketFull) error {
+	slog.Info("planner decomposing idea", "ticket_id", ticket.ID, "title", ticket.Title)
 	if p.LLM == nil {
 		slog.Warn("planner: LLM not available, skipping decomposition", "ticket_id", ticket.ID)
 		return nil
 	}
 	dec := mnesis.CRODecide(ticket.Title + " " + ticket.Description)
 	society := mnesis.NewAgentSociety(p.LLM, dec.Topic, dec.AgentSet)
-	result, err := society.Run(ctx, ticket.Title+"\n\n"+ticket.Description, mnesis.DefaultRunOptions(), nil)
+	opts := mnesis.DefaultRunOptions()
+	opts.MaxTurns = 10
+	opts.MaxDurationSeconds = 120
+	result, err := society.Run(ctx, ticket.Title+"\n\n"+ticket.Description, opts, nil)
 	if err != nil {
 		return fmt.Errorf("agent society run: %w", err)
 	}
