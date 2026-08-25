@@ -381,10 +381,13 @@ func buildCloneScript(repos []RepoRef) string {
 	script := `set -uo pipefail
 FALLBACK_BRANCHES="development qa main master"
 
+# HOME must be set BEFORE git config so .gitconfig lands in /workspace
+# (shared with the main container via the workspace volume).
+export HOME=/workspace
+
 # Configure git credential helper so tokens never appear in URLs / logs.
 git config --global credential.helper store
 git config --global credential.interactive false
-export HOME=/workspace
 
 cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
@@ -416,7 +419,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   branch=$(jq -r --arg r "$repo" '.[$r].branch' /workspace/repos.json)
 
   # Strip any existing credentials from the URL.
-  # Credentials are already in ~/.git-credentials (set before the loop).
+  # Credentials are already in /workspace/.git-credentials (set before the loop).
   proto=""
   host=""
   if echo "$url" | grep -qE "^https?://"; then
