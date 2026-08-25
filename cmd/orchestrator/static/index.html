@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HiveMind Orchestrator</title>
-  <link rel="stylesheet" href="/static/css/shared.css?v=19">
-  <script src="/static/js/shared.js?v=19"></script>
+  <link rel="stylesheet" href="/static/css/shared.css?v=20">
+  <script src="/static/js/shared.js?v=20"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
 <body>
@@ -878,6 +878,7 @@ function kanbanPage() {
     detailHtml: '',
     detailFooter: '',
     detailTicket: null,
+    vcsHost: '',
     newTicket: { id: '', title: '', description: '', issue_type: 'Task', priority: 'Medium', labelsStr: '', selectedRepos: [] },
     repoNames: [],
     columns: [
@@ -930,7 +931,14 @@ function kanbanPage() {
       try {
         this.allTickets = await HM.api('/tickets');
         const appEl = document.querySelector('[x-data]');
-        if (appEl && appEl.__x) appEl.__x.$data.ticketCount = this.allTickets.length;
+        if (appEl && appEl.__x) appEl.$data.ticketCount = this.allTickets.length;
+        if (!this.vcsHost) {
+          try {
+            const settings = await HM.api('/settings');
+            const h = (settings || []).find(s => s.key === 'gitlab_host');
+            if (h && h.value) this.vcsHost = h.value;
+          } catch(e2) {}
+        }
       } catch (e) { console.error(e); }
     },
 
@@ -952,7 +960,15 @@ function kanbanPage() {
       const labels = this.parseLabels(t.labels);
       const labelStr = labels.join(', ') || '—';
       const selRepos = (() => { try { const r = JSON.parse(t.selected_repos || '[]'); return r.length ? '<div class="detail-field"><label>Manual Repos</label><div class="val" style="color:var(--accent)">' + r.join(', ') + '</div></div>' : ''; } catch(e) { return ''; } })();
-      const mr = t.mr_url ? '<div class="section-block green"><h4>Merge Request</h4><a href="' + HM.escapeHtml(t.mr_url) + '" target="_blank" style="font-size:0.8rem">' + HM.escapeHtml(t.mr_url) + '</a>' + HM.pipelineBadge(t.mr_pipeline_status) + '</div>' : '';
+      let mr = '';
+      if (t.mr_url) {
+        mr = '<div class="section-block green"><h4>Merge Request</h4><div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap"><a href="' + HM.escapeHtml(t.mr_url) + '" target="_blank" class="btn btn-primary btn-sm">Open MR &rarr;</a><span style="font-size:.75rem;color:var(--muted)">' + HM.escapeHtml(t.mr_url) + '</span></div>' + HM.pipelineBadge(t.mr_pipeline_status) + '</div>';
+      } else if (t.branch && t.mr_project_path) {
+        const host = (this.vcsHost || 'gitlab.capturecore.org').replace(/^https?:\/\//, '');
+        const branchUrl = 'https://' + host + '/' + HM.escapeHtml(t.mr_project_path) + '/-/tree/' + encodeURIComponent(t.branch);
+        const commitsUrl = 'https://' + host + '/' + HM.escapeHtml(t.mr_project_path) + '/-/commits/' + encodeURIComponent(t.branch);
+        mr = '<div class="section-block blue"><h4>Agent Branch</h4><div style="font-size:.8rem;margin-bottom:.25rem"><code>' + HM.escapeHtml(t.branch) + '</code> in <code>' + HM.escapeHtml(t.mr_project_path) + '</code></div><div style="display:flex;gap:.5rem;flex-wrap:wrap"><a href="' + branchUrl + '" target="_blank" class="btn btn-sm" style="background:var(--accent);color:#fff">View Files &rarr;</a><a href="' + commitsUrl + '" target="_blank" class="btn btn-secondary btn-sm">View Commits &rarr;</a></div></div>';
+      }
       const retry = t.retry_count > 0 ? '<div class="detail-field" style="margin-top:.5rem"><label>Retry History</label><div class="val" style="color:var(--yellow)">' + t.retry_count + 'x rejected</div></div>' : '';
       const review = t.review_notes ? '<div class="detail-field" style="margin-top:.5rem"><label>Review Notes</label><div class="notes-box">' + HM.escapeHtml(t.review_notes) + '</div></div>' : '';
       const statusCls = {queued:'medium',running:'high',completed:'low',merged:'low',failed:'critical'}[t.status] || 'medium';
