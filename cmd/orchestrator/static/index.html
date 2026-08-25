@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HiveMind Orchestrator</title>
-  <link rel="stylesheet" href="/static/css/shared.css?v=18">
-  <script src="/static/js/shared.js?v=18"></script>
+  <link rel="stylesheet" href="/static/css/shared.css?v=19">
+  <script src="/static/js/shared.js?v=19"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
 <body>
@@ -627,21 +627,32 @@
               <div class="modal-body">
                 <template x-if="gitlabProjects.length === 0"><div class="loading">Loading GitLab projects...</div></template>
                 <template x-if="gitlabProjects.length > 0">
-                  <div style="max-height:50vh;overflow-y:auto">
+                  <div>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
+                      <button class="btn btn-sm" :class="gitlabGroupFilter === '' ? 'btn-primary' : 'btn-secondary'" @click="gitlabGroupFilter = ''">All</button>
+                      <template x-for="g in gitlabGroups" :key="g.path">
+                        <button class="btn btn-sm" :class="gitlabGroupFilter === g.path ? 'btn-primary' : 'btn-secondary'" @click="gitlabGroupFilter = g.path" x-text="g.name + ' (' + g.count + ')'"></button>
+                      </template>
+                    </div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
-                      <label style="font-size:.8rem;color:var(--text2)" x-text="gitlabProjects.filter(p=>!p.already_imported).length + ' projects available'"></label>
+                      <label style="font-size:.8rem;color:var(--text2)" x-text="filteredGitlabProjects.filter(p=>!p.already_imported).length + ' projects available'"></label>
                       <button class="btn btn-secondary btn-sm" @click="toggleAllGitlab()">Toggle All</button>
                     </div>
-                    <template x-for="p in gitlabProjects.filter(p=>!p.already_imported)" :key="p.name">
-                      <label style="display:flex;align-items:flex-start;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border)">
-                        <input type="checkbox" class="gitlab-project-check" :data-name="p.name" :data-url="p.url" :data-branch="p.default_branch || 'development'" :data-description="p.description || ''" :data-tags="(p.topics||[]).join(',')" checked style="margin-top:.25rem">
-                        <div>
-                          <div style="font-size:.85rem;font-weight:600;color:var(--text)"><span x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch || 'development'"></span></div>
-                          <div style="font-size:.72rem;color:var(--muted2)" x-text="p.url"></div>
-                          <template x-if="p.description"><div style="font-size:.75rem;color:var(--text2);margin-top:.15rem" x-text="p.description.substring(0,80) + (p.description.length > 80 ? '...' : '')"></div></template>
-                        </div>
-                      </label>
-                    </template>
+                    <div style="max-height:45vh;overflow-y:auto">
+                      <template x-for="p in filteredGitlabProjects.filter(p=>!p.already_imported)" :key="p.id">
+                        <label style="display:flex;align-items:flex-start;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border)">
+                          <input type="checkbox" class="gitlab-project-check" :data-name="p.name" :data-url="p.url" :data-branch="p.default_branch" :data-description="p.description || ''" :data-tags="(p.topics||[]).join(',')" :data-group="p.group_path" checked style="margin-top:.25rem">
+                          <div>
+                            <div style="font-size:.85rem;font-weight:600;color:var(--text)"><span x-text="p.path_with_namespace"></span> <span class="repo-branch" x-text="p.default_branch"></span></div>
+                            <div style="font-size:.72rem;color:var(--muted2)" x-text="p.url"></div>
+                            <template x-if="p.description"><div style="font-size:.75rem;color:var(--text2);margin-top:.15rem" x-text="p.description.substring(0,100) + (p.description.length > 100 ? '...' : '')"></div></template>
+                            <template x-if="(p.topics||[]).length > 0">
+                              <div style="margin-top:.2rem"><template x-for="t in (p.topics||[])" :key="t"><span class="repo-tag" style="font-size:.65rem" x-text="t"></span></template></div>
+                            </template>
+                          </div>
+                        </label>
+                      </template>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -1226,6 +1237,7 @@ function reposPage() {
     showGitlabModal: false,
     showBulkBranchModal: false,
     gitlabProjects: [],
+    gitlabGroupFilter: '',
     addRepoForm: { name: '', url: '', branch: 'development', tagsStr: '', description: '' },
     editRepoForm: { name: '', url: '', branch: '', tagsStr: '', description: '' },
     bulkBranch: 'development',
@@ -1270,7 +1282,25 @@ function reposPage() {
     },
     async deleteRepo(name) { if (!confirm('Really remove repository "' + name + '"?')) return; try { await HM.api('/repos/' + encodeURIComponent(name), 'DELETE'); HM.toast('Repository removed'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); } },
     async initFromGitlab() {
-      HM.toast('Loading GitLab projects...'); try { this.gitlabProjects = await HM.api('/repos/gitlab-projects'); this.showGitlabModal = true; } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+      HM.toast('Loading GitLab projects...');
+      try {
+        this.gitlabProjects = await HM.api('/repos/gitlab-projects');
+        this.gitlabGroupFilter = '';
+        this.showGitlabModal = true;
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+    },
+    get gitlabGroups() {
+      const groups = {};
+      for (const p of this.gitlabProjects) {
+        const g = p.group_path || 'other';
+        if (!groups[g]) groups[g] = { path: g, name: p.group_name || g.split('/').pop(), count: 0 };
+        groups[g].count++;
+      }
+      return Object.values(groups).sort((a, b) => a.path.localeCompare(b.path));
+    },
+    get filteredGitlabProjects() {
+      if (!this.gitlabGroupFilter) return this.gitlabProjects;
+      return this.gitlabProjects.filter(p => (p.group_path || 'other') === this.gitlabGroupFilter);
     },
     toggleAllGitlab() { const checks = document.querySelectorAll('.gitlab-project-check'); const allChecked = [...checks].every(c => c.checked); checks.forEach(c => c.checked = !allChecked); },
     async importSelectedGitlab() {

@@ -993,7 +993,74 @@ func (s *Server) listGitLabProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list projects: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, projects)
+	repos, _ := s.DB.ListRepos(ctx, false)
+	repoMap := map[string]bool{}
+	for _, r := range repos {
+		repoMap[r.Name] = true
+	}
+	type gitlabProject struct {
+		ID               int                    `json:"id"`
+		Name             string                 `json:"name"`
+		PathWithNamespace string                `json:"path_with_namespace"`
+		URL              string                 `json:"url"`
+		DefaultBranch    string                 `json:"default_branch"`
+		Description      string                 `json:"description"`
+		Topics           []string               `json:"topics"`
+		GroupPath        string                 `json:"group_path"`
+		GroupName        string                 `json:"group_name"`
+		AlreadyImported  bool                   `json:"already_imported"`
+	}
+	result := make([]gitlabProject, 0, len(projects))
+	for _, p := range projects {
+		url, _ := p["http_url_to_repo"].(string)
+		if url == "" {
+			url, _ = p["ssh_url_to_repo"].(string)
+		}
+		if url == "" {
+			continue
+		}
+		name, _ := p["name"].(string)
+		pathWithNS, _ := p["path_with_namespace"].(string)
+		defaultBranch, _ := p["default_branch"].(string)
+		desc, _ := p["description"].(string)
+		if defaultBranch == "" {
+			defaultBranch = "main"
+		}
+		var topics []string
+		if raw, ok := p["topics"]; ok {
+			if arr, ok := raw.([]interface{}); ok {
+				for _, v := range arr {
+					if s, ok := v.(string); ok {
+						topics = append(topics, s)
+					}
+				}
+			}
+		}
+		groupPath := ""
+		groupName := ""
+		if ns, ok := p["namespace"].(map[string]interface{}); ok {
+			groupPath, _ = ns["full_path"].(string)
+			groupName, _ = ns["name"].(string)
+		}
+		if groupPath == "" {
+			if idx := strings.LastIndex(pathWithNS, "/"); idx >= 0 {
+				groupPath = pathWithNS[:idx]
+			}
+		}
+		result = append(result, gitlabProject{
+			ID:               int(p["id"].(float64)),
+			Name:             name,
+			PathWithNamespace: pathWithNS,
+			URL:              url,
+			DefaultBranch:    defaultBranch,
+			Description:      desc,
+			Topics:           topics,
+			GroupPath:        groupPath,
+			GroupName:        groupName,
+			AlreadyImported:  repoMap[name],
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) importSelectedRepos(w http.ResponseWriter, r *http.Request) {
