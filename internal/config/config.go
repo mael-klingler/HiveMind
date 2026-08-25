@@ -197,9 +197,14 @@ func MaskSettings(settings map[string]string) map[string]string {
 
 var allowedSettings = map[string]bool{
 	"git_token": true, "gitlab_token": true, "gitlab_host": true,
+	"git_user": true, "gitlab_ssh_key_base64": true, "ssh_key_path": true,
+	"default_branch": true, "branch_fallback_order": true,
 	"ollama_host": true, "ollama_base_url": true, "ollama_model": true,
-	"opencode_model": true, "agent_namespace": true, "agent_image": true,
-	"agent_max_retries": true, "dry_run": true, "vcs_provider": true,
+	"ollama_timeout": true, "ollama_cloud_api_key": true,
+	"opencode_model": true, "opencode_port": true,
+	"agent_namespace": true, "agent_image": true,
+	"agent_max_retries": true, "agent_retry_delay": true, "max_agents": true,
+	"dry_run": true, "vcs_provider": true,
 	"comment_poll_interval": true, "agent_stale_timeout": true,
 	"track_branch": true, "test_command": true, "pvc_mount_path": true,
 	"work_dir": true, "leankg_enabled": true,
