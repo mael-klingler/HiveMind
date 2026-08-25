@@ -128,13 +128,17 @@ func (db *DB) CreateTicketAndEnqueue(ctx context.Context, t *TicketInput) error 
 	now := time.Now().UTC()
 	status := "queued"
 	labels, _ := json.Marshal(t.Labels)
+	ticketType := t.TicketType
+	if ticketType == "" {
+		ticketType = "task"
+	}
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO tickets (id, title, description, labels, issue_type, priority, status,
-			mr_status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8)`,
+			mr_status, created_at, updated_at, ticket_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8, $9)`,
 		t.ID, t.Title, t.Description, string(labels), t.IssueType, t.Priority,
-		status, now)
+		status, now, ticketType)
 	if err != nil {
 		return fmt.Errorf("insert ticket: %w", err)
 	}
@@ -162,7 +166,8 @@ func (db *DB) GetTicket(ctx context.Context, id string) (*models.Ticket, error) 
 			phase_work_started_at, phase_test_started_at, phase_ship_started_at,
 			phase_listen_started_at, completed_at, merged_at,
 			lines_added, lines_removed, files_changed,
-			created_at, updated_at
+			created_at, updated_at,
+			parent_id, ticket_type, approval_status, approval_feedback, approval_required
 		FROM tickets WHERE id = $1`, id)
 
 	t := &models.Ticket{}
@@ -773,6 +778,7 @@ type TicketInput struct {
 	Labels      []string `json:"labels"`
 	IssueType   string   `json:"issue_type"`
 	Priority    string   `json:"priority"`
+	TicketType  string   `json:"ticket_type"`
 }
 
 type RepoInput struct {

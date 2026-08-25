@@ -89,7 +89,7 @@ type Ticket struct {
 	Type                  string       `json:"ticket_type,omitempty"`
 	ApprovalStatus        string       `json:"approval_status,omitempty"`
 	ApprovalFeedback      string       `json:"approval_feedback,omitempty"`
-	ApprovalRequired      bool         `json:"approval_required,omitempty"`
+	ApprovalRequired      int          `json:"approval_required,omitempty"`
 }
 
 type AgentStatus string

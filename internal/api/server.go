@@ -307,6 +307,7 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		Labels      []string `json:"labels"`
 		IssueType   string   `json:"issue_type"`
 		Priority    string   `json:"priority"`
+		TicketType  string   `json:"ticket_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -337,6 +338,7 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		Labels:      req.Labels,
 		IssueType:   req.IssueType,
 		Priority:    req.Priority,
+		TicketType:  req.TicketType,
 	}
 	if err := s.DB.CreateTicketAndEnqueue(ctx, ticket); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create ticket: "+err.Error())
