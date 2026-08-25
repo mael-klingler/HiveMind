@@ -36,6 +36,7 @@ import (
 	"github.com/maelklingler/hivemind/internal/config"
 	"github.com/maelklingler/hivemind/internal/database"
 	"github.com/maelklingler/hivemind/internal/database/redisrepo"
+	"github.com/maelklingler/hivemind/internal/database/pgxrepo"
 	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/llm"
@@ -79,6 +80,12 @@ func main() {
 	if err := runMigrations(cfg); err != nil {
 		slog.Warn("auto-migration warning", "error", err)
 	}
+
+	settingsRepo := pgxrepo.NewSettingsRepo(db.Pool())
+	cfg = config.LoadFromDB(func(key string) (string, error) {
+		return settingsRepo.GetSetting(ctx, key)
+	})
+	slog.Info("settings loaded from database")
 
 	k8sClient, err := k8s.NewClient(cfg.AgentNamespace)
 	if err != nil {

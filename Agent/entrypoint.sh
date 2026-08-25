@@ -7,7 +7,12 @@ GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN must be set}"
 GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST must be set}"
 GITLAB_HOST_NO_PROTO="${GITLAB_HOST#https://}"
 GITLAB_HOST_NO_PROTO="${GITLAB_HOST_NO_PROTO#http://}"
-GITLAB_API_URL="${GITLAB_HOST}/api/v4"
+# Ensure GITLAB_API_URL always has https://
+if [[ "$GITLAB_HOST" == https://* ]] || [[ "$GITLAB_HOST" == http://* ]]; then
+  GITLAB_API_URL="${GITLAB_HOST}/api/v4"
+else
+  GITLAB_API_URL="https://${GITLAB_HOST}/api/v4"
+fi
 GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
 CURL_OPTS="-sS -k"
 
@@ -546,7 +551,7 @@ inject_git_credentials
 
 # ── Phase 2: Commit, Push, MR — only for real Git repos ──────────────────
 
-GITLAB_API_URL="${GITLAB_HOST}/api/v4"
+# GITLAB_API_URL already set with https:// at the top of the script
 
 create_merge_request() {
   local project_path="$1"

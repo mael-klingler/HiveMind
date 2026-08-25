@@ -13,8 +13,8 @@ RUN mkdir -p /home/hivemind/.ssh /scripts /workspace /etc/agent && \
     usermod -d /home/hivemind -l hivemind node 2>/dev/null || true && \
     chown -R 1000:1000 /home/hivemind /scripts /workspace /etc/agent
 
-RUN npm install -g @gitbeaker/rest@2.5.0
-RUN npm install -g opencode-ai@0.20.0
+RUN npm install -g @gitbeaker/rest@43.8.0
+RUN npm install -g opencode-ai@1.18.23
 ENV NODE_PATH=/usr/local/lib/node_modules
 
 RUN curl -fsSL https://github.com/edouard-claude/snip/releases/download/v0.3.2/snip-linux-x64.tar.gz \
