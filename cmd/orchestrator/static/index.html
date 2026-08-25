@@ -643,11 +643,12 @@
                 <template x-if="gitlabProjects.length > 0">
                   <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
-                      <label style="font-size:.8rem;color:var(--text2)" x-text="gitlabProjects.filter(p=>!p.already_imported).length + ' projects available'"></label>
+                      <label style="font-size:.8rem;color:var(--text2)" x-text="gitlabProjects.filter(p => p._selected && !p.already_imported).length + ' of ' + gitlabProjects.filter(p => !p.already_imported).length + ' selected'"></label>
                       <div style="display:flex;gap:.4rem">
-                        <button class="btn btn-secondary btn-sm" @click="expandAllGitlabGroups(true)">Expand All</button>
-                        <button class="btn btn-secondary btn-sm" @click="expandAllGitlabGroups(false)">Collapse All</button>
-                        <button class="btn btn-secondary btn-sm" @click="toggleAllGitlab()">Toggle All</button>
+                        <button class="btn btn-secondary btn-sm" @click="selectAllGitlab(true)">Select All</button>
+                        <button class="btn btn-secondary btn-sm" @click="selectAllGitlab(false)">Deselect All</button>
+                        <button class="btn btn-secondary btn-sm" @click="expandAllGitlabGroups(true)">Expand</button>
+                        <button class="btn btn-secondary btn-sm" @click="expandAllGitlabGroups(false)">Collapse</button>
                       </div>
                     </div>
                     <div class="group-tree" style="max-height:55vh;overflow-y:auto">
@@ -657,8 +658,8 @@
                             <span class="arrow" :class="group.expanded ? 'expanded' : ''">&#9654;</span>
                             <span class="group-name" x-text="group.name"></span>
                             <span class="group-count" x-text="'(' + group.count + ')'"></span>
-                            <div class="group-check">
-                              <input type="checkbox" :checked="group.allSelected" @click.stop="toggleGroupAll(group, $event)" style="accent-color:var(--accent);width:13px;height:13px">
+                            <div class="group-check" @click.stop="toggleGroupSelect(group)">
+                              <input type="checkbox" :checked="isGroupAllSelected(group)" :indeterminate.prop="isGroupPartialSelected(group)" style="accent-color:var(--accent);width:13px;height:13px;pointer-events:none">
                             </div>
                           </div>
                           <div x-show="group.expanded" class="group-tree-children">
@@ -670,14 +671,14 @@
                                       <span class="arrow" :class="sub.expanded ? 'expanded' : ''">&#9654;</span>
                                       <span class="group-name" x-text="sub.name"></span>
                                       <span class="group-count" x-text="'(' + sub.count + ')'"></span>
-                                      <div class="group-check">
-                                        <input type="checkbox" :checked="sub.allSelected" @click.stop="toggleSubAll(sub, $event)" style="accent-color:var(--accent);width:13px;height:13px">
+                                      <div class="group-check" @click.stop="toggleSubSelect(sub)">
+                                        <input type="checkbox" :checked="isSubAllSelected(sub)" :indeterminate.prop="isSubPartialSelected(sub)" style="accent-color:var(--accent);width:13px;height:13px;pointer-events:none">
                                       </div>
                                     </div>
                                     <div x-show="sub.expanded">
                                       <template x-for="p in sub.projects" :key="p.id">
-                                        <div :class="p.already_imported ? 'group-project subgroup-project' : 'group-project subgroup-project'" :style="p.already_imported ? 'opacity:.45' : ''">
-                                          <input type="checkbox" class="gitlab-project-check" :disabled="p.already_imported" :data-name="p.name" :data-url="p.url" :data-branch="p.default_branch" :data-description="p.description || ''" :data-tags="(p.topics||[]).join(',')" :data-group="p.group_path" :checked="!p.already_imported" style="margin-top:.2rem">
+                                        <div class="group-project subgroup-project" :style="p.already_imported ? 'opacity:.45' : ''">
+                                          <input type="checkbox" :disabled="p.already_imported" x-model="p._selected" style="margin-top:.2rem;accent-color:var(--accent)">
                                           <div class="group-project-info">
                                             <div><span class="group-project-name" x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch"></span><template x-if="p.already_imported"><span style="font-size:.65rem;color:var(--green);margin-left:.3rem">imported</span></template></div>
                                             <div class="group-project-path" x-text="p.path_with_namespace"></div>
@@ -700,8 +701,8 @@
                               </div>
                             </template>
                             <template x-for="p in group.directProjects" :key="p.id">
-                              <div :class="p.already_imported ? 'group-project' : 'group-project'" :style="p.already_imported ? 'opacity:.45' : ''">
-                                <input type="checkbox" class="gitlab-project-check" :disabled="p.already_imported" :data-name="p.name" :data-url="p.url" :data-branch="p.default_branch" :data-description="p.description || ''" :data-tags="(p.topics||[]).join(',')" :data-group="p.group_path" :checked="!p.already_imported" style="margin-top:.2rem">
+                              <div class="group-project" :style="p.already_imported ? 'opacity:.45' : ''">
+                                <input type="checkbox" :disabled="p.already_imported" x-model="p._selected" style="margin-top:.2rem;accent-color:var(--accent)">
                                 <div class="group-project-info">
                                   <div><span class="group-project-name" x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch"></span><template x-if="p.already_imported"><span style="font-size:.65rem;color:var(--green);margin-left:.3rem">imported</span></template></div>
                                   <div class="group-project-path" x-text="p.path_with_namespace"></div>
@@ -1404,6 +1405,7 @@ function reposPage() {
       HM.toast('Loading GitLab projects...');
       try {
         this.gitlabProjects = await HM.api('/repos/gitlab-projects');
+        this.gitlabProjects.forEach(p => { p._selected = !p.already_imported; });
         this.gitlabTree = this.buildGitlabTree(this.gitlabProjects);
         this.showGitlabModal = true;
       } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
@@ -1414,10 +1416,10 @@ function reposPage() {
         const gp = p.group_path || 'other';
         const parts = gp.split('/');
         const topGroup = parts[0] || 'other';
-        if (!groups[topGroup]) groups[topGroup] = { path: topGroup, name: p.group_name ? (p.group_name.split('/')[0] || topGroup) : topGroup, expanded: true, children: {}, directProjects: [], repos: [], count: 0, allSelected: false };
+        if (!groups[topGroup]) groups[topGroup] = { path: topGroup, name: topGroup, expanded: true, children: {}, directProjects: [], repos: [], count: 0 };
         if (parts.length > 1) {
           const subName = parts.slice(1).join('/');
-          if (!groups[topGroup].children[subName]) groups[topGroup].children[subName] = { path: gp, name: subName, expanded: true, projects: [], count: 0, allSelected: false };
+          if (!groups[topGroup].children[subName]) groups[topGroup].children[subName] = { path: gp, name: subName, expanded: true, projects: [], count: 0 };
           groups[topGroup].children[subName].projects.push(p);
           groups[topGroup].children[subName].count++;
         } else {
@@ -1427,6 +1429,7 @@ function reposPage() {
       }
       const tree = [];
       const groupOrder = ['capture-core', 'ai', 'Infra', 'other'];
+      const groupNames = { 'capture-core': 'CaptureCore', 'ai': 'AI', 'Infra': 'Infra', 'other': 'Other' };
       const sortedKeys = Object.keys(groups).sort((a, b) => {
         const ai = groupOrder.indexOf(a);
         const bi = groupOrder.indexOf(b);
@@ -1437,10 +1440,10 @@ function reposPage() {
       });
       for (const key of sortedKeys) {
         const g = groups[key];
-        const groupNames = { 'capture-core': 'CaptureCore', 'ai': 'AI', 'Infra': 'Infra', 'other': 'Other' };
         g.name = groupNames[key] || key;
         const children = [];
         const subOrder = ['backend', 'Deploy', 'frontend', 'ml', 'platform', 'tools'];
+        const subDisplayNames = { 'backend': 'backend', 'Deploy': 'Deploy', 'frontend': 'frontend', 'ml': 'ML', 'platform': 'platform', 'tools': 'tools' };
         const subKeys = Object.keys(g.children).sort((a, b) => {
           const ai2 = subOrder.indexOf(a);
           const bi2 = subOrder.indexOf(b);
@@ -1451,36 +1454,47 @@ function reposPage() {
         });
         for (const sk of subKeys) {
           const sub = g.children[sk];
-          const subDisplayNames = { 'backend': 'backend', 'Deploy': 'Deploy', 'frontend': 'frontend', 'ml': 'ML', 'platform': 'platform', 'tools': 'tools' };
           sub.name = subDisplayNames[sk] || sk;
-          sub.allSelected = sub.projects.every(p => p.already_imported);
           children.push(sub);
         }
         g.children = children;
-        g.allSelected = g.directProjects.every(p => p.already_imported) && g.children.every(c => c.allSelected);
         tree.push(g);
       }
       return tree;
     },
-    toggleGroupAll(group, event) {
-      const checked = event.target.checked;
-      group.directProjects.forEach(p => { if (!p.already_imported) { /* checkboxes handled by DOM */ } });
-      for (const sub of group.children) {
-        const checks = document.querySelectorAll('.gitlab-project-check[data-group="' + sub.path + '"]');
-        checks.forEach(c => { if (!c.disabled) c.checked = checked; });
-      }
-      group.directProjects.forEach(p => { /* direct projects */ });
-      const directChecks = document.querySelectorAll('.gitlab-project-check');
-      directChecks.forEach(c => {
-        if (!c.disabled && c.dataset.group === group.path) c.checked = checked;
-      });
-      event.stopPropagation();
+    isGroupAllSelected(group) {
+      const all = [...group.directProjects, ...group.children.flatMap(s => s.projects)];
+      const selectable = all.filter(p => !p.already_imported);
+      return selectable.length > 0 && selectable.every(p => p._selected);
     },
-    toggleSubAll(sub, event) {
-      const checked = event.target.checked;
-      const checks = document.querySelectorAll('.gitlab-project-check[data-group="' + sub.path + '"]');
-      checks.forEach(c => { if (!c.disabled) c.checked = checked; });
-      event.stopPropagation();
+    isGroupPartialSelected(group) {
+      const all = [...group.directProjects, ...group.children.flatMap(s => s.projects)];
+      const selectable = all.filter(p => !p.already_imported);
+      const selected = selectable.filter(p => p._selected);
+      return selected.length > 0 && selected.length < selectable.length;
+    },
+    isSubAllSelected(sub) {
+      const selectable = sub.projects.filter(p => !p.already_imported);
+      return selectable.length > 0 && selectable.every(p => p._selected);
+    },
+    isSubPartialSelected(sub) {
+      const selectable = sub.projects.filter(p => !p.already_imported);
+      const selected = selectable.filter(p => p._selected);
+      return selected.length > 0 && selected.length < selectable.length;
+    },
+    toggleGroupSelect(group) {
+      const all = [...group.directProjects, ...group.children.flatMap(s => s.projects)];
+      const selectable = all.filter(p => !p.already_imported);
+      const allSel = selectable.every(p => p._selected);
+      selectable.forEach(p => { p._selected = !allSel; });
+    },
+    toggleSubSelect(sub) {
+      const selectable = sub.projects.filter(p => !p.already_imported);
+      const allSel = selectable.every(p => p._selected);
+      selectable.forEach(p => { p._selected = !allSel; });
+    },
+    selectAllGitlab(select) {
+      this.gitlabProjects.forEach(p => { if (!p.already_imported) p._selected = select; });
     },
     expandAllGitlabGroups(expand) {
       for (const g of this.gitlabTree) {
@@ -1489,9 +1503,9 @@ function reposPage() {
       }
     },
     async importSelectedGitlab() {
-      const checks = document.querySelectorAll('.gitlab-project-check:checked');
-      if (!checks.length) { HM.toast('No projects selected', 'error'); return; }
-      const repos = [...checks].map(c => ({ name: c.dataset.name, url: c.dataset.url, branch: c.dataset.branch, description: c.dataset.description, tags: c.dataset.tags ? c.dataset.tags.split(',').filter(Boolean) : [] }));
+      const selected = this.gitlabProjects.filter(p => p._selected && !p.already_imported);
+      if (!selected.length) { HM.toast('No projects selected', 'error'); return; }
+      const repos = selected.map(p => ({ name: p.name, url: p.url, branch: p.default_branch, description: p.description || '', tags: (p.topics || []) }));
       this.showGitlabModal = false; HM.toast('Importing ' + repos.length + ' repos...');
       try { const result = await HM.api('/repos/import-selected', 'POST', { repos }); HM.toast(result.imported + ' repos imported'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
