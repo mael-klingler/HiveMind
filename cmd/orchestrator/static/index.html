@@ -89,7 +89,7 @@
                     <div class="agent-dot" :class="a.status || 'idle'"></div>
                     <div class="agent-info">
                       <div class="agent-name" x-text="a.name"></div>
-                      <div class="agent-ticket" x-text="a.status === 'running' && a.current_ticket_id ? a.current_ticket_id : a.status"></div>
+                      <div class="agent-ticket" x-text="a.status === 'running' && a.current_task ? a.current_task : a.status"></div>
                       <div class="agent-progress"><div class="agent-progress-bar" :style="'width:' + (a.progress || 0) + '%'"></div></div>
                     </div>
                   </div>
@@ -235,7 +235,7 @@
                     <div class="agent-avatar" x-text="a.name ? a.name.charAt(0).toUpperCase() : '?'"></div>
                     <div class="agent-details">
                       <div class="agent-name"><span x-text="a.name"></span> <span class="tag" :class="a.status === 'running' ? 'tag-running' : 'tag-idle'" x-text="a.status"></span></div>
-                      <div class="agent-model">ID: <span x-text="a.id"></span><span x-show="a.model_name"> | Model: <span x-text="a.model_name"></span></span><span x-show="a.current_ticket_id"> | Ticket: <span x-text="a.current_ticket_id"></span></span></div>
+                      <div class="agent-model">ID: <span x-text="a.id"></span><span x-show="a.model_name"> | Model: <span x-text="a.model_name"></span></span><span x-show="a.current_task"> | Ticket: <span x-text="a.current_task"></span></span></div>
                       <div class="agent-skills">
                         <template x-for="s in (a.skills || [])" :key="s"><span class="tag tag-skill" x-text="s"></span></template>
                         <template x-for="iid in (a.instruction_ids || [])" :key="iid">
@@ -749,7 +749,7 @@
                       <tr>
                         <td><span class="pod-dot" :class="a.status || 'idle'"></span><span x-text="a.name || a.id"></span></td>
                         <td x-text="a.status || 'idle'"></td>
-                        <td x-text="a.current_ticket_id || '—'"></td>
+                        <td x-text="a.current_task || '—'"></td>
                         <td x-text="a.status === 'running' ? (a.progress || 0) + '%' : '—'"></td>
                       </tr>
                     </template>
@@ -1021,7 +1021,6 @@ function kanbanPage() {
         issue_type: this.newTicket.issue_type,
         priority: this.newTicket.priority,
         labels: this.newTicket.labelsStr.split(',').map(s => s.trim()).filter(Boolean),
-        selected_repos: this.newTicket.selectedRepos,
       };
       if (!data.title) { HM.toast('Please enter a title', 'error'); return; }
       try {
@@ -1081,8 +1080,10 @@ function agentPage() {
     getInstructionName(id) { const i = this.instructions.find(x => x.id === id); return i ? i.name : ''; },
 
     async loadModelSettings() {
-      const s = await HM.api('/settings');
-      const byKey = {}; s.forEach(item => { byKey[item.key] = item.value; });
+      try {
+        const s = await HM.api('/settings');
+        if (!s) return;
+        const byKey = {}; s.forEach(item => { byKey[item.key] = item.value; });
       this.modelSettings = {
         opencode_model: byKey.opencode_model || '',
         ollama_model: byKey.ollama_model || '',
@@ -1116,8 +1117,7 @@ function agentPage() {
       if (!this.agentForm.id) { HM.toast('Agent ID is required', 'error'); return; }
       const data = { id: this.agentForm.id, name: this.agentForm.name, model_name: this.agentForm.model_name, skills: this.agentForm.skills, instruction_ids: this.agentForm.instruction_ids, repo_affinities: this.agentForm.repo_affinities };
       try {
-        if (this.editingAgentId) { await HM.api('/agent-profiles/' + this.editingAgentId, 'PATCH', data); }
-        else { await HM.api('/agent-profiles', 'POST', data); }
+        await HM.api('/agent-profiles', 'POST', data);
         this.showAgentModal = false; await this.refreshData(); HM.toast(this.editingAgentId ? 'Updated!' : 'Created!');
       } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
@@ -1147,30 +1147,6 @@ function agentPage() {
       try {
         if (this.editingMcp) { await HM.api('/mcp-servers/' + this.editingMcp, 'PATCH', data); } else { await HM.api('/mcp-servers', 'POST', data); }
         this.showMcpModal = false; await this.refreshData(); HM.toast(this.editingMcp ? 'Updated!' : 'Added!');
-      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
-    },
-    async toggleMcp(name, val) { await HM.api('/mcp-servers/' + name, 'PATCH', { enabled: val }); await this.refreshData(); },
-    async deleteMcp(name) { if (!confirm('Really delete MCP server "' + name + '"?')) return; await HM.api('/mcp-servers/' + name, 'DELETE'); await this.refreshData(); HM.toast('Deleted!'); },
-
-    // Instructions
-    openInstrModal(id = null) {
-      this.editingInstrId = id;
-      if (id !== null) {
-        const i = this.instructions.find(x => x.id === id);
-        if (!i) return;
-        this.instrForm = { name: i.name, content: i.content, enabled: i.enabled ? 1 : 0, sort_order: i.sort_order || 0 };
-      } else {
-        this.instrForm = { name: '', content: '', enabled: 1, sort_order: 0 };
-      }
-      this.showInstrModal = true;
-    },
-    editInstr(id) { this.openInstrModal(id); },
-    async saveInstr() {
-      if (!this.instrForm.name || !this.instrForm.content) { HM.toast('Name and content are required', 'error'); return; }
-      const data = { name: this.instrForm.name, content: this.instrForm.content, enabled: this.instrForm.enabled === 1, sort_order: this.instrForm.sort_order };
-      try {
-        if (this.editingInstrId !== null) { await HM.api('/agent-instructions/' + this.editingInstrId, 'PATCH', data); } else { await HM.api('/agent-instructions', 'POST', data); }
-        this.showInstrModal = false; await this.refreshData(); HM.toast(this.editingInstrId !== null ? 'Updated!' : 'Added!');
       } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
     async toggleInstr(id, val) { await HM.api('/agent-instructions/' + id, 'PATCH', { enabled: val }); await this.refreshData(); },
@@ -1228,7 +1204,9 @@ function agentPage() {
     },
     async deleteMemoryBlock(blockId) {
       if (!confirm('Really delete this memory block?')) return;
-      await HM.api('/agent-memory/' + this.memoryAgentId + '/' + blockId, 'DELETE');
+      const block = this.memoryBlocks.find(b => b.id === blockId);
+      if (!block) return;
+      await HM.api('/agent-memory/' + this.memoryAgentId + '?label=' + encodeURIComponent(block.label), 'DELETE');
       await this.loadMemoryBlocks(); HM.toast('Deleted!');
     }
   };
@@ -1298,14 +1276,15 @@ function reposPage() {
       if (!checks.length) { HM.toast('No projects selected', 'error'); return; }
       const repos = [...checks].map(c => ({ name: c.dataset.name, url: c.dataset.url, branch: c.dataset.branch, description: c.dataset.description, tags: c.dataset.tags ? c.dataset.tags.split(',').filter(Boolean) : [] }));
       this.showGitlabModal = false; HM.toast('Importing ' + repos.length + ' repos...');
-      try { const result = await HM.api('/repos/import-selected', 'POST', { repos }); HM.toast(result.added.length + ' repos imported' + (result.skipped.length ? ', ' + result.skipped.length + ' skipped' : '')); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+      try { const result = await HM.api('/repos/import-selected', 'POST', { repos }); HM.toast(result.imported + ' repos imported'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
     async bulkSwitchBranch() {
       const branch = this.bulkBranch.trim();
       if (!branch) { HM.toast('Branch name required', 'error'); return; }
       if (!confirm('Switch all ' + this.repos.length + ' repos to branch "' + branch + '"?')) return;
       this.showBulkBranchModal = false;
-      try { const result = await HM.api('/repos', 'PATCH', { branch }); HM.toast(result.count + ' repos switched to "' + branch + '"'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+      const updates = this.repos.map(r => ({ name: r.name, url: r.url, branch: branch, description: r.description || '', tags: r.tags || [], active: r.active }));
+      try { const result = await HM.api('/repos', 'PATCH', updates); HM.toast(result.updated + ' repos switched to "' + branch + '"'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     }
   };
 }
@@ -1326,6 +1305,7 @@ function settingsPage() {
     async loadSettings() {
       try {
         const s = await HM.api('/settings');
+        if (!s) return;
         s.forEach(item => { if (this.settings.hasOwnProperty(item.key)) this.settings[item.key] = item.value; });
       } catch(e) { console.error(e); }
     },
@@ -1337,8 +1317,7 @@ function settingsPage() {
     },
 
     async restartOrchestrator() {
-      if (!confirm('Really restart the orchestrator? Running agents will be terminated.')) return;
-      try { await HM.api('/restart', 'POST'); HM.toast('Restart initiated...'); } catch(e) { HM.toast('Restart request sent (connection will be interrupted)', 'error'); }
+      HM.toast('Use kubectl rollout restart deployment/orchestrator -n hivemind to restart', 'error');
     }
   };
 }
