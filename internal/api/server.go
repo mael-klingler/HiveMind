@@ -310,13 +310,14 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req struct {
-		ID          string   `json:"id"`
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Labels      []string `json:"labels"`
-		IssueType   string   `json:"issue_type"`
-		Priority    string   `json:"priority"`
-		TicketType  string   `json:"ticket_type"`
+		ID            string   `json:"id"`
+		Title         string   `json:"title"`
+		Description   string   `json:"description"`
+		Labels        []string `json:"labels"`
+		IssueType     string   `json:"issue_type"`
+		Priority      string   `json:"priority"`
+		TicketType    string   `json:"ticket_type"`
+		SelectedRepos []string `json:"selected_repos"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -341,13 +342,14 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket := &database.TicketInput{
-		ID:          req.ID,
-		Title:       req.Title,
-		Description: req.Description,
-		Labels:      req.Labels,
-		IssueType:   req.IssueType,
-		Priority:    req.Priority,
-		TicketType:  req.TicketType,
+		ID:            req.ID,
+		Title:         req.Title,
+		Description:   req.Description,
+		Labels:        req.Labels,
+		IssueType:     req.IssueType,
+		Priority:      req.Priority,
+		TicketType:    req.TicketType,
+		SelectedRepos: req.SelectedRepos,
 	}
 	if err := s.DB.CreateTicketAndEnqueue(ctx, ticket); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create ticket: "+err.Error())

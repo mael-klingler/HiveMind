@@ -166,8 +166,36 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		})
 	}
 
+	// If the user manually selected repos, use only those — skip LLM analysis.
 	var analysis *workspace.AnalysisOutput
-	if qp.WS != nil {
+	if len(ticket.SelectedRepos) > 0 {
+		selectedSet := make(map[string]bool, len(ticket.SelectedRepos))
+		for _, name := range ticket.SelectedRepos {
+			selectedSet[name] = true
+		}
+		selectedRepoRefs := make([]workspace.RepoRef, 0, len(ticket.SelectedRepos))
+		for _, r := range availableRepos {
+			if selectedSet[r.Name] {
+				selectedRepoRefs = append(selectedRepoRefs, r)
+			}
+		}
+		if len(selectedRepoRefs) == 0 && len(availableRepos) > 0 {
+			selectedRepoRefs = []workspace.RepoRef{availableRepos[0]}
+		}
+		primary := selectedRepoRefs[0].Name
+		selectedNames := make([]string, 0, len(selectedRepoRefs))
+		for _, r := range selectedRepoRefs {
+			selectedNames = append(selectedNames, r.Name)
+		}
+		analysis = &workspace.AnalysisOutput{
+			SelectedRepos: selectedRepoRefs,
+			PrimaryRepo:   primary,
+			Complexity:    "Medium",
+			AssignmentMD:  workspace.GenerateAssignmentPrompt(ticket, selectedNames, primary, ""),
+			AIPlanning:    "",
+		}
+		slog.Info("using manually selected repos", "ticket_id", ticket.ID, "repos", selectedNames, "primary", primary)
+	} else if qp.WS != nil {
 		analysis, err = qp.WS.Analyze(ctx, workspace.AnalysisRequest{
 			Ticket:        ticket,
 			AvailableRepo: availableRepos,

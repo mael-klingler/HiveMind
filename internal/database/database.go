@@ -128,17 +128,22 @@ func (db *DB) CreateTicketAndEnqueue(ctx context.Context, t *TicketInput) error 
 	now := time.Now().UTC()
 	status := "queued"
 	labels, _ := json.Marshal(t.Labels)
+	selectedRepos, _ := json.Marshal(t.SelectedRepos)
 	ticketType := t.TicketType
 	if ticketType == "" {
 		ticketType = "task"
 	}
+	primaryRepo := ""
+	if len(t.SelectedRepos) > 0 {
+		primaryRepo = t.SelectedRepos[0]
+	}
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO tickets (id, title, description, labels, issue_type, priority, status,
-			mr_status, created_at, updated_at, ticket_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8, $9)`,
+			mr_status, created_at, updated_at, ticket_type, selected_repos, primary_repo)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8, $9, $10, $11)`,
 		t.ID, t.Title, t.Description, string(labels), t.IssueType, t.Priority,
-		status, now, ticketType)
+		status, now, ticketType, string(selectedRepos), primaryRepo)
 	if err != nil {
 		return fmt.Errorf("insert ticket: %w", err)
 	}
@@ -824,13 +829,14 @@ func (db *DB) ImportReposFromConfig(ctx context.Context, configPath string, repo
 // --- Input types for API layer ---
 
 type TicketInput struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Labels      []string `json:"labels"`
-	IssueType   string   `json:"issue_type"`
-	Priority    string   `json:"priority"`
-	TicketType  string   `json:"ticket_type"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Description   string   `json:"description"`
+	Labels        []string `json:"labels"`
+	IssueType     string   `json:"issue_type"`
+	Priority      string   `json:"priority"`
+	TicketType    string   `json:"ticket_type"`
+	SelectedRepos []string `json:"selected_repos"`
 }
 
 type RepoInput struct {
