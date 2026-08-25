@@ -98,6 +98,7 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Post("/tickets/preview", s.previewTicket)
 		r.Get("/tickets/{id}", s.getTicket)
 		r.Patch("/tickets/{id}", s.updateTicket)
+		r.Delete("/tickets/{id}", s.deleteTicket)
 		r.Post("/tickets/{id}/reopen", s.reopenTicket)
 		r.Post("/tickets/{id}/stop", s.stopTicket)
 		r.Post("/tickets/{id}/review", s.submitReview)
@@ -293,6 +294,9 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list tickets: "+err.Error())
 		return
 	}
+	if tickets == nil {
+		tickets = []*models.Ticket{}
+	}
 	if offset > len(tickets) {
 		offset = len(tickets)
 	}
@@ -390,6 +394,17 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = ticket
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+}
+
+func (s *Server) deleteTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeleteTicket(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete ticket: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("ticket_requeued", map[string]string{"ticket_id": id, "reason": "deleted"})
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
 func (s *Server) reopenTicket(w http.ResponseWriter, r *http.Request) {

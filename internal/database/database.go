@@ -262,6 +262,23 @@ func (db *DB) UpdateTicketStatus(ctx context.Context, id string, status string) 
 	return err
 }
 
+func (db *DB) DeleteTicket(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM ticket_comments WHERE ticket_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `DELETE FROM pipeline_steps WHERE ticket_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `DELETE FROM queue WHERE ticket_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `DELETE FROM tickets WHERE id = $1`, id)
+	return err
+}
+
 func (db *DB) UpdateTicket(ctx context.Context, t *models.Ticket) error {
 	labels, _ := json.Marshal(t.Labels)
 	selectedRepos, _ := json.Marshal(t.SelectedRepos)
@@ -278,11 +295,6 @@ func (db *DB) UpdateTicket(ctx context.Context, t *models.Ticket) error {
 		string(t.ReviewStatus), t.ReviewNotes, t.RetryCount, t.WorkspacePath,
 		t.AgentID, string(selectedRepos), t.PrimaryRepo, t.AIPlanning,
 		t.Branch, t.ModelUsed)
-	return err
-}
-
-func (db *DB) DeleteTicket(ctx context.Context, id string) error {
-	_, err := db.pool.Exec(ctx, `DELETE FROM tickets WHERE id = $1`, id)
 	return err
 }
 
