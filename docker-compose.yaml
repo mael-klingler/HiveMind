@@ -2,7 +2,7 @@ services:
   orchestrator-serve:
     build:
       context: .
-      dockerfile: Dockerfile.go
+      dockerfile: Dockerfile
     image: hivemind/orchestrator-go:latest
     container_name: orchestrator-serve
     command: ["-serve"]
