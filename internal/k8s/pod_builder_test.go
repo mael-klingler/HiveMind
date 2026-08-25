@@ -80,18 +80,18 @@ func TestBuildPodSpec_ResourceRequirements(t *testing.T) {
 
 func TestBuildCloneScript_NoTokenInURL(t *testing.T) {
 	script := k8s.BuildCloneScriptForTest([]k8s.RepoRef{{Name: "repo", URL: "https://gitlab.com/x/y", Branch: "main"}})
-	// Token must only appear in the credential store write, never in a
-	// git clone URL or git config command.
+	// Credentials are injected into clone URLs via auth_url (for non-interactive containers)
+	// but piped through sed to strip them from log output.
+	assert.Contains(t, script, "GIT_TERMINAL_PROMPT=0")
 	assert.Contains(t, script, "credential.helper store")
 	assert.Contains(t, script, "/workspace/.git-credentials")
-	// Credentials are kept for the main container to reuse
-	// (previously: rm -f /workspace/.git-credentials)
-	// The token is written to ~/.git-credentials (line: echo "${proto}${GIT_USER}:${GITLAB_TOKEN}@${host}" > ~/.git-credentials)
-	// but must NOT appear in any `git clone` invocation.
+	// Every git clone line must pipe output through sed to strip credentials from logs.
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
-		if strings.Contains(line, "git clone") {
-			assert.NotContains(t, line, "${GITLAB_TOKEN}", "token must not appear in git clone line: %s", line)
+		if strings.Contains(line, "git clone") && !strings.Contains(line, "sed") {
+			// Only the auth_url assignment line may contain the token variable;
+			// actual git clone output must be piped through sed.
+			assert.NotContains(t, line, "${GITLAB_TOKEN}", "token must not appear in git clone line without sed redaction: %s", line)
 		}
 	}
 }

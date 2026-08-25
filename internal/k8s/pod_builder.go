@@ -381,45 +381,19 @@ func buildCloneScript(repos []RepoRef) string {
 	script := `set -uo pipefail
 FALLBACK_BRANCHES="development qa main master"
 
-# HOME must be set BEFORE git config so .gitconfig lands in /workspace
-# (shared with the main container via the workspace volume).
+# Prevent git from prompting for credentials interactively (causes "No such device or address").
+export GIT_TERMINAL_PROMPT=0
 export HOME=/workspace
-
-# Configure git credential helper so tokens never appear in URLs / logs.
-git config --global credential.helper store
-git config --global credential.interactive false
 
 cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
 REPOSEOF
 
-# Write git credentials for all known GitLab/GitHub hosts upfront
-# so they are available before any clone attempt.
-if [ -n "$GITLAB_TOKEN" ] && [ -n "$GITLAB_HOST" ]; then
-  PROTO="https"
-  if echo "$GITLAB_HOST" | grep -qE '^https?://'; then
-    PROTO=$(echo "$GITLAB_HOST" | sed -E 's|^(https?://).*|\1|')
-  fi
-  HOST=$(echo "$GITLAB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
-  echo "${PROTO}${GIT_USER}:${GITLAB_TOKEN}@${HOST}" >> /workspace/.git-credentials
-  chmod 600 /workspace/.git-credentials
-fi
-if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_HOST" ]; then
-  PROTO="https"
-  if echo "$GITHUB_HOST" | grep -qE '^https?://'; then
-    PROTO=$(echo "$GITHUB_HOST" | sed -E 's|^(https?://).*|\1|')
-  fi
-  HOST=$(echo "$GITHUB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
-  echo "${PROTO}${GIT_USER}:${GITHUB_TOKEN}@${HOST}" >> /workspace/.git-credentials
-  chmod 600 /workspace/.git-credentials
-fi
-
 for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   url=$(jq -r --arg r "$repo" '.[$r].url' /workspace/repos.json)
   branch=$(jq -r --arg r "$repo" '.[$r].branch' /workspace/repos.json)
 
-  # Strip any existing credentials from the URL.
-  # Credentials are already in /workspace/.git-credentials (set before the loop).
+  # Strip any existing credentials from the URL first.
   proto=""
   host=""
   if echo "$url" | grep -qE "^https?://"; then
@@ -428,8 +402,16 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
     url="${proto}${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
   fi
 
+  # Inject credentials into the URL for private repos.
+  auth_url="$url"
+  if echo "$url" | grep -qi "$GITLAB_HOST" && [ -n "$GITLAB_TOKEN" ]; then
+    auth_url="${proto}${GIT_USER}:${GITLAB_TOKEN}@${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
+  elif echo "$url" | grep -qi "$GITHUB_HOST" && [ -n "$GITHUB_TOKEN" ]; then
+    auth_url="${proto}${GIT_USER}:${GITHUB_TOKEN}@${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
+  fi
+
   echo "Cloning $repo (branch: $branch) ..."
-  if git clone -b "$branch" --single-branch "$url" "/workspace/$repo" 2>&1; then
+  if git clone -b "$branch" --single-branch "$auth_url" "/workspace/$repo" 2>&1 | sed -E "s|${GIT_USER}:[^@]+@||g"; then
     echo "Cloned $repo on branch $branch"
   else
     echo "Branch $branch not found for $repo, trying fallback branches..."
@@ -437,7 +419,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
     for fb in $branch $FALLBACK_BRANCHES; do
       if [ "$fb" = "$branch" ]; then continue; fi
       rm -rf "/workspace/$repo" 2>/dev/null || true
-      if git clone -b "$fb" --single-branch "$url" "/workspace/$repo" 2>&1; then
+      if git clone -b "$fb" --single-branch "$auth_url" "/workspace/$repo" 2>&1 | sed -E "s|${GIT_USER}:[^@]+@||g"; then
         echo "Cloned $repo on fallback branch $fb"
         CLONED=true
         break
@@ -446,7 +428,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
     if [ "$CLONED" = "false" ]; then
       rm -rf "/workspace/$repo" 2>/dev/null || true
       echo "No fallback branch worked for $repo, cloning default branch..."
-      if git clone "$url" "/workspace/$repo" 2>&1; then
+      if git clone "$auth_url" "/workspace/$repo" 2>&1 | sed -E "s|${GIT_USER}:[^@]+@||g"; then
         echo "Cloned $repo on default branch"
       else
         echo "Failed to clone $repo - skipping"
@@ -454,6 +436,8 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
       fi
     fi
   fi
+  # Configure credential helper in the cloned repo for future pushes.
+  git -C "/workspace/$repo" config credential.helper store
   echo "Init leankg $repo ..."
   cd "/workspace/$repo"
   command -v leankg >/dev/null 2>&1 && { leankg init || echo "leankg init failed for $repo"; } || echo "leankg not installed, skipping init for $repo"
@@ -461,8 +445,29 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   command -v leankg >/dev/null 2>&1 && { leankg index . || echo "leankg index failed for $repo"; } || echo "leankg not installed, skipping index for $repo"
 done
 
-# Clean up credentials after clone to minimize exposure window.
-# Keep /workspace/.git-credentials for the main container to use.
+# Write .git-credentials for future git operations (push, etc.) in the main container.
+if [ -n "$GITLAB_TOKEN" ] && [ -n "$GITLAB_HOST" ]; then
+  GL_PROTO="https"
+  GL_HOST="$GITLAB_HOST"
+  if echo "$GITLAB_HOST" | grep -qE '^https?://'; then
+    GL_PROTO=$(echo "$GITLAB_HOST" | sed -E 's|^(https?://).*|\1|')
+    GL_HOST=$(echo "$GITLAB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
+  fi
+  echo "${GL_PROTO}${GIT_USER}:${GITLAB_TOKEN}@${GL_HOST}" >> /workspace/.git-credentials
+  chmod 600 /workspace/.git-credentials
+fi
+if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_HOST" ]; then
+  GH_PROTO="https"
+  GH_HOST="$GITHUB_HOST"
+  if echo "$GITHUB_HOST" | grep -qE '^https?://'; then
+    GH_PROTO=$(echo "$GITHUB_HOST" | sed -E 's|^(https?://).*|\1|')
+    GH_HOST=$(echo "$GITHUB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
+  fi
+  echo "${GH_PROTO}${GIT_USER}:${GITHUB_TOKEN}@${GH_HOST}" >> /workspace/.git-credentials
+  chmod 600 /workspace/.git-credentials
+fi
+git config --global credential.helper store
+
 echo "All repos processed"
 `
 	return script
