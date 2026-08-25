@@ -235,7 +235,7 @@ func (g *GitLabProvider) ListBranches(ctx context.Context, projectPath string) (
 }
 
 func (g *GitLabProvider) ListProjects(ctx context.Context, opts ...vcs.ListProjectsOption) ([]map[string]interface{}, error) {
-	url := fmt.Sprintf("https://%s/api/v4/projects?membership=true&min_access_level=20&order_by=name", g.Host)
+	url := fmt.Sprintf("https://%s/api/v4/projects?membership=true&order_by=name&per_page=100", g.Host)
 	return g.doGetList(ctx, url)
 }
 
@@ -274,30 +274,51 @@ func (g *GitLabProvider) doGet(ctx context.Context, url string) (map[string]inte
 	return result, nil
 }
 
-func (g *GitLabProvider) doGetList(ctx context.Context, url string) ([]map[string]interface{}, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+func (g *GitLabProvider) doGetList(ctx context.Context, initialURL string) ([]map[string]interface{}, error) {
+	var all []map[string]interface{}
+	pageURL := initialURL
+	for pageURL != "" {
+		req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range g.AuthHeaders("") {
+			req.Header.Set(k, v)
+		}
+		resp, err := g.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == 404 {
+			resp.Body.Close()
+			return nil, nil
+		}
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("gitlab API error: %d", resp.StatusCode)
+		}
+		var page []map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+		resp.Body.Close()
+		all = append(all, page...)
+		nextPage := resp.Header.Get("X-Next-Page")
+		if nextPage != "" {
+			u, err := url.Parse(pageURL)
+			if err != nil {
+				break
+			}
+			q := u.Query()
+			q.Set("page", nextPage)
+			u.RawQuery = q.Encode()
+			pageURL = u.String()
+		} else {
+			pageURL = ""
+		}
 	}
-	for k, v := range g.AuthHeaders("") {
-		req.Header.Set(k, v)
-	}
-	resp, err := g.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 404 {
-		return nil, nil
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("gitlab API error: %d", resp.StatusCode)
-	}
-	var result []map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return all, nil
 }
 
 func (g *GitLabProvider) doPost(ctx context.Context, url string, body map[string]interface{}) (map[string]interface{}, error) {
