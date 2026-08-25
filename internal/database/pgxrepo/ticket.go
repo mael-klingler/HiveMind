@@ -251,6 +251,17 @@ func (r *TicketRepo) SetTicketMRURL(ctx context.Context, id, mrURL string) error
 	return err
 }
 
+func (r *TicketRepo) SetTicketBranchAndMR(ctx context.Context, id, branch, mrURL, mrProjectPath string) error {
+	mrStatus := "none"
+	if mrURL != "" {
+		mrStatus = "open"
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tickets SET branch = $1, mr_url = $2, mr_project_path = $3, mr_status = $4, updated_at = NOW() WHERE id = $5`,
+		branch, mrURL, mrProjectPath, mrStatus, id)
+	return err
+}
+
 func (r *TicketRepo) SetTicketReviewStatus(ctx context.Context, id, status, notes string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE tickets SET review_status = $1, review_notes = $2, updated_at = NOW() WHERE id = $3`,

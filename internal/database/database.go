@@ -310,6 +310,17 @@ func (db *DB) SetTicketMRURL(ctx context.Context, id, mrURL string) error {
 	return err
 }
 
+func (db *DB) SetTicketBranchAndMR(ctx context.Context, id, branch, mrURL, mrProjectPath string) error {
+	mrStatus := "none"
+	if mrURL != "" {
+		mrStatus = "open"
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET branch = $1, mr_url = $2, mr_project_path = $3, mr_status = $4, updated_at = NOW() WHERE id = $5`,
+		branch, mrURL, mrProjectPath, mrStatus, id)
+	return err
+}
+
 func (db *DB) RequeueTicket(ctx context.Context, id string, maxRetries int) error {
 	tx, err := db.pool.Begin(ctx)
 	if err != nil {

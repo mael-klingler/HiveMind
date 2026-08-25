@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,6 +111,7 @@ func (am *AgentMonitor) handlePodEvent(ctx context.Context, pod *corev1.Pod) {
 	switch phase {
 	case string(corev1.PodSucceeded):
 		slog.Info("agent pod completed", "pod", pod.Name, "ticket_id", ticketID)
+		am.extractAndSetBranchAndMR(ctx, pod, ticketID)
 		if err := am.DB.UpdateTicketStatus(ctx, ticketID, "completed"); err != nil {
 			slog.Error("failed to update ticket status to completed", "ticket_id", ticketID, "error", err)
 		}
@@ -120,6 +122,7 @@ func (am *AgentMonitor) handlePodEvent(ctx context.Context, pod *corev1.Pod) {
 		am.checkParentCompletion(ctx, ticketID)
 	case string(corev1.PodFailed):
 		slog.Warn("agent pod failed", "pod", pod.Name, "ticket_id", ticketID)
+		am.extractAndSetBranchAndMR(ctx, pod, ticketID)
 		ticket, err := am.DB.GetTicket(ctx, ticketID)
 		if err == nil && ticket.RetryCount < am.Config.AgentMaxRetries {
 			if err := am.DB.RequeueTicket(ctx, ticketID, am.Config.AgentMaxRetries); err != nil {
@@ -133,6 +136,7 @@ func (am *AgentMonitor) handlePodEvent(ctx context.Context, pod *corev1.Pod) {
 	case string(corev1.PodRunning):
 		if am.isStale(*pod, am.Config.AgentStaleTimeout) {
 			slog.Warn("stale agent pod detected", "pod", pod.Name, "ticket_id", ticketID)
+			am.extractAndSetBranchAndMR(ctx, pod, ticketID)
 			if err := am.DB.UpdateTicketStatus(ctx, ticketID, "completed"); err != nil {
 				slog.Error("failed to update stale ticket status", "ticket_id", ticketID, "error", err)
 			}
@@ -141,6 +145,53 @@ func (am *AgentMonitor) handlePodEvent(ctx context.Context, pod *corev1.Pod) {
 			}
 			am.K8s.CleanupAgentResources(ctx, ticketID)
 		}
+	}
+}
+
+func (am *AgentMonitor) extractAndSetBranchAndMR(ctx context.Context, pod *corev1.Pod, ticketID string) {
+	logs, err := am.K8s.GetPodLogs(ctx, pod.Name, 500)
+	if err != nil {
+		slog.Warn("failed to get pod logs for MR extraction", "pod", pod.Name, "error", err)
+		return
+	}
+
+	var branch, mrURL, mrProjectPath string
+
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.HasPrefix(line, "🌿 Branch:") || strings.Contains(line, "Branch:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				branch = strings.TrimSpace(parts[1])
+			}
+		}
+		if strings.Contains(line, "https://") && strings.Contains(line, "/merge_requests/") {
+			start := strings.Index(line, "https://")
+			if start == -1 {
+				continue
+			}
+			url := line[start:]
+			url = strings.TrimSpace(strings.Split(url, "'")[0])
+			url = strings.TrimSpace(strings.Split(url, "\"")[0])
+			url = strings.TrimSpace(strings.Split(url, " ")[0])
+			mrURL = url
+			if idx := strings.Index(mrURL, "/-/merge_requests/"); idx > 0 {
+				mrProjectPath = mrURL[:idx]
+				if strings.HasPrefix(mrProjectPath, "https://") {
+					mrProjectPath = strings.TrimPrefix(mrProjectPath, "https://")
+				} else if strings.HasPrefix(mrProjectPath, "http://") {
+					mrProjectPath = strings.TrimPrefix(mrProjectPath, "http://")
+				}
+			}
+		}
+	}
+
+	if branch == "" && mrURL == "" {
+		return
+	}
+
+	slog.Info("extracted branch/MR from pod logs", "ticket_id", ticketID, "branch", branch, "mr_url", mrURL, "mr_project_path", mrProjectPath)
+	if err := am.DB.SetTicketBranchAndMR(ctx, ticketID, branch, mrURL, mrProjectPath); err != nil {
+		slog.Error("failed to set ticket branch and MR", "ticket_id", ticketID, "error", err)
 	}
 }
 
