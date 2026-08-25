@@ -43,7 +43,7 @@ func TestBuilder_AnalyzeFallback(t *testing.T) {
 
 	out := b.AnalyzeFallback(ticket, repos)
 	require.NoError(t, nil)
-	assert.Len(t, out.SelectedRepos, 2)
+	assert.Len(t, out.SelectedRepos, 1)
 	assert.Equal(t, "r1", out.PrimaryRepo)
 	assert.Equal(t, "Medium", out.Complexity)
 	assert.Contains(t, out.AssignmentMD, "T-2")

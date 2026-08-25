@@ -121,24 +121,26 @@ func (b *Builder) fallbackAnalysis(req AnalysisRequest) *AnalysisOutput {
 	return b.AnalyzeFallback(req.Ticket, req.AvailableRepo)
 }
 
-// AnalyzeFallback returns a non-LLM analysis (first repo as primary, all
-// repos selected, Medium complexity).
+// AnalyzeFallback returns a non-LLM analysis. It selects only the first
+// (most relevant) repo as primary and selected, keeping the agent focused.
 func (b *Builder) AnalyzeFallback(ticket *models.Ticket, availableRepo []RepoRef) *AnalysisOutput {
-	repos := availableRepo
-	primary := ""
-	if len(repos) > 0 {
-		primary = repos[0].Name
+	if len(availableRepo) == 0 {
+		return &AnalysisOutput{
+			SelectedRepos: []RepoRef{},
+			PrimaryRepo:   "",
+			Complexity:    "Medium",
+			AssignmentMD:  GenerateAssignmentPrompt(ticket, []string{}, "", ""),
+			AIPlanning:    "",
+		}
 	}
-	selectedNames := make([]string, 0, len(repos))
-	for _, r := range repos {
-		selectedNames = append(selectedNames, r.Name)
-	}
-	assignment := GenerateAssignmentPrompt(ticket, selectedNames, primary, "")
+	primary := availableRepo[0].Name
+	selectedRepos := []RepoRef{availableRepo[0]}
+	selectedNames := []string{primary}
 	return &AnalysisOutput{
-		SelectedRepos: repos,
+		SelectedRepos: selectedRepos,
 		PrimaryRepo:   primary,
 		Complexity:    "Medium",
-		AssignmentMD:  assignment,
+		AssignmentMD:  GenerateAssignmentPrompt(ticket, selectedNames, primary, ""),
 		AIPlanning:    "",
 	}
 }
