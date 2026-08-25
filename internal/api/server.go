@@ -826,6 +826,9 @@ func (s *Server) getQueue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get queue: "+err.Error())
 		return
 	}
+	if queue == nil {
+		queue = []*models.QueueItem{}
+	}
 	writeJSON(w, http.StatusOK, queue)
 }
 
