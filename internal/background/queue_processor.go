@@ -41,6 +41,15 @@ func NewQueueProcessor(cfg *config.Config, db *database.DB, k8sClient *k8s.Clien
 	return &QueueProcessor{Config: cfg, DB: db, K8s: k8sClient, LLM: llmClient, WS: wsBuilder}
 }
 
+func (qp *QueueProcessor) liveConfig() *config.Config {
+	if qp.DB == nil {
+		return qp.Config
+	}
+	return config.LoadFromDB(func(key string) (string, error) {
+		return qp.DB.GetSetting(context.Background(), key)
+	})
+}
+
 func (qp *QueueProcessor) Run(ctx context.Context) error {
 	slog.Info("queue processor started")
 	ticker := time.NewTicker(time.Duration(qp.Config.QueuePollInterval) * time.Second)
@@ -142,6 +151,7 @@ func (qp *QueueProcessor) processQueue(ctx context.Context) error {
 }
 
 func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *models.Ticket, agent *models.Agent) error {
+	lc := qp.liveConfig()
 	repos, err := qp.DB.ListRepos(ctx, true)
 	if err != nil {
 		return fmt.Errorf("list repos: %w", err)
@@ -213,14 +223,14 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 		AssignmentMD:       analysis.AssignmentMD,
 		Analysis:           map[string]interface{}{"primary_repo": analysis.PrimaryRepo, "selected_repos": selectedRepos, "complexity": analysis.Complexity},
 		AgentID:            agent.ID,
-		GitLabHost:         qp.Config.GitLabHost,
-		GitUser:            qp.Config.GitUser,
-		GitLabToken:        qp.Config.GitLabToken,
-		GitHubToken:        qp.Config.GitHubToken,
-		GitHubHost:         qp.Config.GitHubHost,
-		OllamaBaseURL:      qp.Config.OllamaBaseURL,
-		OpencodeModel:      qp.Config.OpencodeModel,
-		OllamaCloudAPIKey:  qp.Config.OllamaCloudAPIKey,
+		GitLabHost:         lc.GitLabHost,
+		GitUser:            lc.GitUser,
+		GitLabToken:        lc.GitLabToken,
+		GitHubToken:        lc.GitHubToken,
+		GitHubHost:         lc.GitHubHost,
+		OllamaBaseURL:      lc.OllamaBaseURL,
+		OpencodeModel:      lc.OpencodeModel,
+		OllamaCloudAPIKey:  lc.OllamaCloudAPIKey,
 		MCPServers:         mcpRefs,
 		Branch:             branch,
 		GitSSLNoVerify:     qp.Config.GitSSLNoVerify,

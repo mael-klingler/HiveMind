@@ -384,6 +384,7 @@ FALLBACK_BRANCHES="development qa main master"
 # Configure git credential helper so tokens never appear in URLs / logs.
 git config --global credential.helper store
 git config --global credential.interactive false
+export HOME=/workspace
 
 cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
@@ -397,8 +398,8 @@ if [ -n "$GITLAB_TOKEN" ] && [ -n "$GITLAB_HOST" ]; then
     PROTO=$(echo "$GITLAB_HOST" | sed -E 's|^(https?://).*|\1|')
   fi
   HOST=$(echo "$GITLAB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
-  echo "${PROTO}${GIT_USER}:${GITLAB_TOKEN}@${HOST}" >> ~/.git-credentials
-  chmod 600 ~/.git-credentials
+  echo "${PROTO}${GIT_USER}:${GITLAB_TOKEN}@${HOST}" >> /workspace/.git-credentials
+  chmod 600 /workspace/.git-credentials
 fi
 if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_HOST" ]; then
   PROTO="https"
@@ -406,8 +407,8 @@ if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_HOST" ]; then
     PROTO=$(echo "$GITHUB_HOST" | sed -E 's|^(https?://).*|\1|')
   fi
   HOST=$(echo "$GITHUB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
-  echo "${PROTO}${GIT_USER}:${GITHUB_TOKEN}@${HOST}" >> ~/.git-credentials
-  chmod 600 ~/.git-credentials
+  echo "${PROTO}${GIT_USER}:${GITHUB_TOKEN}@${HOST}" >> /workspace/.git-credentials
+  chmod 600 /workspace/.git-credentials
 fi
 
 for repo in $(jq -r 'keys[]' /workspace/repos.json); do
@@ -458,7 +459,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
 done
 
 # Clean up credentials after clone to minimize exposure window.
-rm -f ~/.git-credentials
+rm -f /workspace/.git-credentials
 echo "All repos processed"
 `
 	return script
