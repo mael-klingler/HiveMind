@@ -149,25 +149,17 @@ func main() {
 	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient)
 	reviewMonitor := background.NewReviewMonitor(cfg, db, k8sClient, broadcaster)
 	pipelineEngine := background.NewPipelineEngine(cfg, db, broadcaster)
+	planner := background.NewPlanner(cfg, db, llmProvider, broadcaster)
+	learningWorker := background.NewLearningWorker(cfg, db, db.Pool())
 
 	var wg sync.WaitGroup
-	wg.Add(4)
-	go func() {
-		defer wg.Done()
-		queueProcessor.Run(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		agentMonitor.Run(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		reviewMonitor.Run(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		pipelineEngine.Run(ctx)
-	}()
+	wg.Add(6)
+	go func() { defer wg.Done(); queueProcessor.Run(ctx) }()
+	go func() { defer wg.Done(); agentMonitor.Run(ctx) }()
+	go func() { defer wg.Done(); reviewMonitor.Run(ctx) }()
+	go func() { defer wg.Done(); pipelineEngine.Run(ctx) }()
+	go func() { defer wg.Done(); planner.Run(ctx) }()
+	go func() { defer wg.Done(); learningWorker.Run(ctx) }()
 
 	server := api.NewServer(cfg, db, k8sClient, broadcaster, redisClient, redisClient, pipelineEngine, getStaticFS())
 
@@ -202,6 +194,8 @@ func main() {
 	agentMonitor.Stop()
 	reviewMonitor.Stop()
 	pipelineEngine.Stop()
+	planner.Stop()
+	learningWorker.Stop()
 	wg.Wait()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

@@ -85,6 +85,11 @@ type Ticket struct {
 	MergedAt              *time.Time   `json:"merged_at,omitempty"`
 	CreatedAt             time.Time    `json:"created_at"`
 	UpdatedAt             time.Time    `json:"updated_at"`
+	ParentID              string       `json:"parent_id,omitempty"`
+	Type                  string       `json:"ticket_type,omitempty"`
+	ApprovalStatus        string       `json:"approval_status,omitempty"`
+	ApprovalFeedback      string       `json:"approval_feedback,omitempty"`
+	ApprovalRequired      bool         `json:"approval_required,omitempty"`
 }
 
 type AgentStatus string

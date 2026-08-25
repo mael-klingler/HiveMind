@@ -97,6 +97,12 @@ func (db *DB) Close() {
 	db.pool.Close()
 }
 
+// Pool returns the underlying pgxpool for use by components that need direct pool access
+// (e.g. mnesis.ProceduralMemory).
+func (db *DB) Pool() *pgxpool.Pool {
+	return db.pool
+}
+
 // --- Ticket operations ---
 
 func (db *DB) CreateTicket(ctx context.Context, t *TicketInput) error {
@@ -174,7 +180,8 @@ func (db *DB) GetTicket(ctx context.Context, id string) (*models.Ticket, error) 
 		&t.MRConflictStatus, &t.MRLastNoteID,
 		&phaseWork, &phaseTest, &phaseShip, &phaseListen, &completedAt, &mergedAt,
 		&t.LinesAdded, &t.LinesRemoved, &t.FilesChanged,
-		&t.CreatedAt, &t.UpdatedAt)
+		&t.CreatedAt, &t.UpdatedAt,
+		&t.ParentID, &t.Type, &t.ApprovalStatus, &t.ApprovalFeedback, &t.ApprovalRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -1213,4 +1220,123 @@ func (db *DB) SetTicketLineStatsDB(ctx context.Context, id string, added, remove
 		UPDATE tickets SET lines_added = $1, lines_removed = $2, files_changed = $3, updated_at = NOW() WHERE id = $4`,
 		added, removed, filesChanged, id)
 	return err
+}
+
+// --- Ticket hierarchy helpers ---
+
+func (db *DB) CreateTicketAndEnqueueWithParent(ctx context.Context, t *TicketInput, parentID string) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now().UTC()
+	status := "queued"
+	labels, _ := json.Marshal(t.Labels)
+	ticketType := "task"
+	_, err = tx.Exec(ctx, `
+		INSERT INTO tickets (id, title, description, labels, issue_type, priority, status,
+			mr_status, created_at, updated_at, parent_id, ticket_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8, $9, $10)`,
+		t.ID, t.Title, t.Description, string(labels), t.IssueType, t.Priority, status, now, parentID, ticketType)
+	if err != nil {
+		return fmt.Errorf("insert child ticket: %w", err)
+	}
+	queueID := fmt.Sprintf("q-%s", t.ID)
+	_, err = tx.Exec(ctx, `INSERT INTO queue (id, ticket_id, priority, created_at) VALUES ($1, $2, 0, NOW())`, queueID, t.ID)
+	if err != nil {
+		return fmt.Errorf("enqueue child ticket: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (db *DB) ListChildren(ctx context.Context, parentID string) ([]*models.Ticket, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, title, description, labels, status, mr_status, mr_url, agent_id,
+			retry_count, parent_id, ticket_type, approval_status, created_at, updated_at
+		FROM tickets WHERE parent_id = $1 ORDER BY created_at ASC`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tickets []*models.Ticket
+	for rows.Next() {
+		t := &models.Ticket{}
+		var labels, status, mrStatus string
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description, &labels, &status, &mrStatus,
+			&t.MRURL, &t.AgentID, &t.RetryCount, &t.ParentID, &t.Type, &t.ApprovalStatus,
+			&t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		t.Status = models.TicketStatus(status)
+		t.MRStatus = models.MRStatus(mrStatus)
+		_ = json.Unmarshal([]byte(labels), &t.Labels)
+		tickets = append(tickets, t)
+	}
+	return tickets, rows.Err()
+}
+
+func (db *DB) ApproveTicket(ctx context.Context, id, feedback string) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET approval_status = 'approved', approval_feedback = $2, status = 'queued', updated_at = NOW() WHERE id = $1`,
+		id, feedback)
+	return err
+}
+
+func (db *DB) RejectTicket(ctx context.Context, id, feedback string) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET approval_status = 'rejected', approval_feedback = $2, status = 'failed', updated_at = NOW() WHERE id = $1`,
+		id, feedback)
+	return err
+}
+
+func (db *DB) SetApprovalRequired(ctx context.Context, id string, required bool) error {
+	v := 0
+	if required {
+		v = 1
+	}
+	_, err := db.pool.Exec(ctx, `UPDATE tickets SET approval_required = $1, approval_status = 'pending', updated_at = NOW() WHERE id = $2`, v, id)
+	return err
+}
+
+func (db *DB) ListPendingApprovals(ctx context.Context) ([]*models.Ticket, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, title, description, status, approval_status, approval_feedback, parent_id, ticket_type, created_at, updated_at
+		FROM tickets WHERE approval_status = 'pending' ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tickets []*models.Ticket
+	for rows.Next() {
+		t := &models.Ticket{}
+		var status string
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description, &status, &t.ApprovalStatus,
+			&t.ApprovalFeedback, &t.ParentID, &t.Type, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		t.Status = models.TicketStatus(status)
+		tickets = append(tickets, t)
+	}
+	return tickets, rows.Err()
+}
+
+func (db *DB) AreAllChildrenCompleted(ctx context.Context, parentID string) (bool, error) {
+	var count int
+	err := db.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tickets WHERE parent_id = $1 AND status NOT IN ('completed', 'merged', 'failed')`, parentID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+func (db *DB) HasChildren(ctx context.Context, parentID string) (bool, error) {
+	var count int
+	err := db.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tickets WHERE parent_id = $1`, parentID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 } 

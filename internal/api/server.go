@@ -183,6 +183,13 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Post("/agents/{id}/phase_complete", s.phaseComplete)
 		r.Post("/agents/{id}/phase_fail", s.phaseFail)
 
+		// Ticket hierarchy + approval
+		r.Post("/tickets/{id}/decompose", s.decomposeTicket)
+		r.Post("/tickets/{id}/approve", s.approveTicket)
+		r.Post("/tickets/{id}/reject", s.rejectTicket)
+		r.Get("/tickets/{id}/children", s.listChildren)
+		r.Get("/approvals/pending", s.listPendingApprovals)
+
 		// Groups (team channel)
 		r.Get("/groups/{id}/messages", s.listGroupMessages)
 		r.Post("/groups/{id}/messages", s.addGroupMessage)
@@ -1491,3 +1498,78 @@ func WriteJSONForTest(w http.ResponseWriter, status int, v interface{}) { writeJ
 
 // WriteErrorForTest exports writeError for testing.
 func WriteErrorForTest(w http.ResponseWriter, status int, msg string) { writeError(w, status, msg) }
+
+// --- Ticket hierarchy + approval handlers ---
+
+func (s *Server) decomposeTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	ticket, err := s.DB.GetTicket(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "ticket not found")
+		return
+	}
+	if ticket.Type != "idea" {
+		writeError(w, http.StatusBadRequest, "only idea tickets can be decomposed")
+		return
+	}
+	s.Broadcaster.Broadcast("decompose_requested", map[string]string{"ticket_id": id})
+	writeJSON(w, http.StatusAccepted, map[string]string{"ticket_id": id, "status": "decompose_requested"})
+}
+
+func (s *Server) approveTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if err := s.DB.ApproveTicket(ctx, id, req.Feedback); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to approve: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("ticket_approved", map[string]string{"ticket_id": id, "feedback": req.Feedback})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket_id": id, "status": "approved"})
+}
+
+func (s *Server) rejectTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if err := s.DB.RejectTicket(ctx, id, req.Feedback); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reject: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("ticket_rejected", map[string]string{"ticket_id": id, "feedback": req.Feedback})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket_id": id, "status": "rejected"})
+}
+
+func (s *Server) listChildren(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	children, err := s.DB.ListChildren(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list children: "+err.Error())
+		return
+	}
+	if children == nil {
+		children = []*models.Ticket{}
+	}
+	writeJSON(w, http.StatusOK, children)
+}
+
+func (s *Server) listPendingApprovals(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	tickets, err := s.DB.ListPendingApprovals(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list pending approvals: "+err.Error())
+		return
+	}
+	if tickets == nil {
+		tickets = []*models.Ticket{}
+	}
+	writeJSON(w, http.StatusOK, tickets)
+}

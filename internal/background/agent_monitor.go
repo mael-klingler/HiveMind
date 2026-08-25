@@ -98,6 +98,7 @@ func (am *AgentMonitor) checkAgentPods(ctx context.Context) error {
 				slog.Error("failed to delete completed pod", "pod", pod.Name, "error", err)
 			}
 			am.K8s.CleanupAgentResources(ctx, ticketID)
+			am.checkParentCompletion(ctx, ticketID)
 
 		case string(corev1.PodFailed):
 			slog.Warn("agent pod failed", "pod", pod.Name, "ticket_id", ticketID)
@@ -152,4 +153,32 @@ func (am *AgentMonitor) isStale(pod corev1.Pod, staleTimeoutSeconds int) bool {
 	}
 	elapsed := time.Since(pod.Status.StartTime.Time)
 	return elapsed > time.Duration(staleTimeoutSeconds)*time.Second
+}
+
+func (am *AgentMonitor) checkParentCompletion(ctx context.Context, childID string) {
+	child, err := am.DB.GetTicket(ctx, childID)
+	if err != nil || child == nil || child.ParentID == "" {
+		return
+	}
+	allDone, err := am.DB.AreAllChildrenCompleted(ctx, child.ParentID)
+	if err != nil {
+		slog.Error("failed to check parent children", "parent", child.ParentID, "error", err)
+		return
+	}
+	if !allDone {
+		return
+	}
+	parent, err := am.DB.GetTicket(ctx, child.ParentID)
+	if err != nil || parent == nil {
+		return
+	}
+	if parent.Status == "planned" {
+		slog.Info("all children completed, promoting parent to approval", "parent", child.ParentID)
+		if err := am.DB.SetApprovalRequired(ctx, child.ParentID, true); err != nil {
+			slog.Error("failed to set approval required", "ticket_id", child.ParentID, "error", err)
+		}
+		if err := am.DB.UpdateTicketStatus(ctx, child.ParentID, "approval"); err != nil {
+			slog.Error("failed to set parent to approval", "ticket_id", child.ParentID, "error", err)
+		}
+	}
 }
