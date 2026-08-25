@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
 COMMENT_POLL_INTERVAL="${COMMENT_POLL_INTERVAL:-30}"
@@ -701,7 +701,14 @@ done)"
 for dir in /workspace/*/; do
   repo="${dir%/}"
   [ -d "$repo/.git" ] || continue
-  cd "$repo" || { echo "❌ Cannot change to $repo"; exit 1; }
+
+  # Only push the primary repo (where opencode worked) — skip others
+  if [ -n "$PRIMARY_REPO" ] && [ "$repo" != "$PRIMARY_REPO" ]; then
+    echo "📦 $(basename "$repo"): Skipping (not primary repo)"
+    continue
+  fi
+
+  cd "$repo" || { echo "❌ Cannot change to $repo"; continue; }
 
   echo "📦 $(basename "$repo"): Checking branch/MR status..."
 
