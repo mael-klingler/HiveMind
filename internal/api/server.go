@@ -1057,10 +1057,31 @@ func (s *Server) initFromGitLab(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildVCSProvider() vcs.VCSProvider {
-	if s.Config.VCSProvider == "github" {
-		return github.New(s.Config.GitHubHost, s.Config.GitHubToken)
+	vcsProvider := s.Config.VCSProvider
+	gitlabHost := s.Config.GitLabHost
+	gitlabToken := s.Config.GitLabToken
+	githubToken := s.Config.GitHubToken
+	githubHost := s.Config.GitHubHost
+
+	if s.DB != nil {
+		if v, err := s.DB.GetSetting(context.Background(), "vcs_provider"); err == nil && v != "" {
+			vcsProvider = v
+		}
+		if v, err := s.DB.GetSetting(context.Background(), "gitlab_host"); err == nil && v != "" {
+			gitlabHost = v
+		}
+		if v, err := s.DB.GetSetting(context.Background(), "gitlab_token"); err == nil && v != "" {
+			gitlabToken = v
+		}
+		if v, err := s.DB.GetSetting(context.Background(), "git_token"); err == nil && v != "" {
+			githubToken = v
+		}
 	}
-	return gitlab.New(s.Config.GitLabHost, s.Config.GitLabToken)
+
+	if vcsProvider == "github" {
+		return github.New(githubHost, githubToken)
+	}
+	return gitlab.New(gitlabHost, gitlabToken)
 }
 
 func extractProjectPath(repoURL string, provider vcs.VCSProvider) string {

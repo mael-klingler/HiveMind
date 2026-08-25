@@ -139,15 +139,47 @@ func LoadFromDB(getSetting func(key string) (string, error)) *Config {
 		if v, err := getSetting("vcs_provider"); err == nil && v != "" {
 			c.VCSProvider = v
 		}
+		if v, err := getSetting("gitlab_host"); err == nil && v != "" {
+			c.GitLabHost = v
+		}
+		if v, err := getSetting("gitlab_token"); err == nil && v != "" {
+			c.GitLabToken = v
+		}
+		if v, err := getSetting("git_token"); err == nil && v != "" {
+			c.GitHubToken = v
+		}
+		if v, err := getSetting("git_user"); err == nil && v != "" {
+			c.GitUser = v
+		}
 		if v, err := getSetting("ollama_model"); err == nil && v != "" {
 			c.OllamaModel = v
 		}
 		if v, err := getSetting("opencode_model"); err == nil && v != "" {
 			c.OpencodeModel = v
 		}
+		if v, err := getSetting("ollama_cloud_api_key"); err == nil && v != "" {
+			c.OllamaCloudAPIKey = v
+		}
+		if v, err := getSetting("ollama_host"); err == nil && v != "" {
+			c.OllamaHost = v
+		}
+		if v, err := getSetting("ollama_base_url"); err == nil && v != "" {
+			c.OllamaBaseURL = v
+		}
+		if v, err := getSetting("agent_image"); err == nil && v != "" {
+			c.AgentImage = v
+		}
+		if v, err := getSetting("agent_namespace"); err == nil && v != "" {
+			c.AgentNamespace = v
+		}
 		if v, err := getSetting("agent_max_retries"); err == nil && v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				c.AgentMaxRetries = n
+			}
+		}
+		if v, err := getSetting("agent_retry_delay"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.AgentRetryDelay = n
 			}
 		}
 		if v, err := getSetting("dry_run"); err == nil && v != "" {
