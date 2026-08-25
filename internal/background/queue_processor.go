@@ -35,18 +35,10 @@ type QueueProcessor struct {
 	K8s    *k8s.Client
 	LLM    *llm.LLMClient
 	WS     *workspace.Builder
-	stopCh chan struct{}
 }
 
 func NewQueueProcessor(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, llmClient *llm.LLMClient, wsBuilder *workspace.Builder) *QueueProcessor {
-	return &QueueProcessor{
-		Config: cfg,
-		DB:     db,
-		K8s:    k8sClient,
-		LLM:    llmClient,
-		WS:     wsBuilder,
-		stopCh: make(chan struct{}),
-	}
+	return &QueueProcessor{Config: cfg, DB: db, K8s: k8sClient, LLM: llmClient, WS: wsBuilder}
 }
 
 func (qp *QueueProcessor) Run(ctx context.Context) error {
@@ -59,9 +51,6 @@ func (qp *QueueProcessor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			slog.Info("queue processor stopping")
 			return nil
-		case <-qp.stopCh:
-			slog.Info("queue processor stopped")
-			return nil
 		case <-ticker.C:
 			if err := qp.processQueue(ctx); err != nil {
 				slog.Error("queue processing error", "error", err)
@@ -70,9 +59,7 @@ func (qp *QueueProcessor) Run(ctx context.Context) error {
 	}
 }
 
-func (qp *QueueProcessor) Stop() {
-	close(qp.stopCh)
-}
+func (qp *QueueProcessor) Stop() {}
 
 func (qp *QueueProcessor) processQueue(ctx context.Context) error {
 	queue, err := qp.DB.GetQueue(ctx)

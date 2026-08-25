@@ -31,42 +31,27 @@ type PipelineEngine struct {
 	Config      *config.Config
 	DB          *database.DB
 	Broadcaster *sse.Broadcaster
-	stopCh      chan struct{}
 }
 
 func NewPipelineEngine(cfg *config.Config, db *database.DB, b *sse.Broadcaster) *PipelineEngine {
-	return &PipelineEngine{
-		Config:      cfg,
-		DB:          db,
-		Broadcaster: b,
-		stopCh:      make(chan struct{}),
-	}
+	return &PipelineEngine{Config: cfg, DB: db, Broadcaster: b}
 }
 
 func (pe *PipelineEngine) Run(ctx context.Context) error {
 	slog.Info("pipeline engine started")
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Info("pipeline engine stopping")
 			return nil
-		case <-pe.stopCh:
-			slog.Info("pipeline engine stopped")
-			return nil
 		case <-ticker.C:
-			// The pipeline engine is currently a passive observer; phase
-			// transitions are driven by agent calls to /phase_complete and
-			// /phase_fail. Future work: auto-advance stale phases.
 		}
 	}
 }
 
-func (pe *PipelineEngine) Stop() {
-	close(pe.stopCh)
-}
+func (pe *PipelineEngine) Stop() {}
 
 // CompletePhase marks the current phase step as completed and advances to the
 // next phase, updating the ticket's phase timestamp.

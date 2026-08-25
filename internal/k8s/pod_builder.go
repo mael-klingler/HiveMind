@@ -82,8 +82,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 
 	initContainer := corev1.Container{
 		Name:            "clone-repos",
-		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:latest"),
-		ImagePullPolicy: corev1.PullAlways,
+		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:v0.1.0"),
+		ImagePullPolicy: corev1.PullIfNotPresent,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace"},
 			{Name: "repos-config", MountPath: "/config"},
@@ -223,8 +223,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 
 	mainContainer := corev1.Container{
 		Name:            "opencode-agent",
-		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:latest"),
-		ImagePullPolicy: corev1.PullAlways,
+		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:v0.1.0"),
+		ImagePullPolicy: corev1.PullIfNotPresent,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace"},
 			{Name: "task-prompt", MountPath: "/etc/task"},
@@ -276,6 +276,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 			Hostname:    podName,
 			Subdomain:   "agent-session",
 			RestartPolicy: corev1.RestartPolicyNever,
+			ServiceAccountName: "agent-runner",
+			AutomountServiceAccountToken: ptr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: ptr(true),
 				RunAsUser:    ptr(int64(1000)),
@@ -579,6 +581,11 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
+
+// envOr returns os.Getenv(key) or fallback if empty. Same as getEnv but
+// without duplicating the config.getEnv helper — kept here only for
+// backward compatibility with pod_builder tests.
+var _ = getEnv
 
 func defaultIfEmpty(val, fallback string) string {
 	if val == "" {

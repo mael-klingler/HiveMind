@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/maelklingler/hivemind/internal/database/repository"
 )
@@ -67,19 +68,31 @@ func (b *Broadcaster) Close() {
 }
 
 func (b *Broadcaster) runSubscriber(ctx context.Context) {
+	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		ch, unsub, err := b.pubsub.Subscribe(ctx, pubsubChannel)
 		if err != nil {
-			slog.Warn("SSE pubsub subscribe failed, retrying", "error", err)
-			return
+			slog.Warn("SSE pubsub subscribe failed, retrying", "error", err, "backoff", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return
+			}
+			backoff = backoff * 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			continue
 		}
+		backoff = time.Second
 		for {
 			select {
 			case payload, ok := <-ch:
 				if !ok {
+					unsub()
 					goto resubscribe
 				}
 				var event Event

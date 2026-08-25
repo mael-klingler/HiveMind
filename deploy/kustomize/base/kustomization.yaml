@@ -9,6 +9,7 @@ resources:
   - deployment.yaml
   - pdb.yaml
   - networkpolicy.yaml
+  - agent-rbac.yaml
 
 configMapGenerator:
   - name: orchestrator-config

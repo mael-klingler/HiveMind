@@ -33,7 +33,6 @@ import (
 	"github.com/maelklingler/hivemind/internal/config"
 	"github.com/maelklingler/hivemind/internal/database"
 	"github.com/maelklingler/hivemind/internal/database/repository"
-	"github.com/maelklingler/hivemind/internal/background"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/middleware"
 	"github.com/maelklingler/hivemind/internal/models"
@@ -51,7 +50,7 @@ type Server struct {
 	Broadcaster    *sse.Broadcaster
 	Dedup          repository.DedupRepository
 	RateLimiter    repository.RateLimitRepository
-	PipelineEngine *background.PipelineEngine
+	PipelineEngine PipelineEngineInterface
 	Shutdown       context.CancelFunc
 	staticFS       fs.FS
 }
@@ -64,7 +63,7 @@ func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
 	return s.K8s
 }
 
-func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, dedup repository.DedupRepository, rateLimiter repository.RateLimitRepository, pipelineEngine *background.PipelineEngine, staticFS fs.FS) *Server {
+func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, dedup repository.DedupRepository, rateLimiter repository.RateLimitRepository, pipelineEngine PipelineEngineInterface, staticFS fs.FS) *Server {
 	s := &Server{
 		Config:         cfg,
 		DB:             db,
@@ -172,8 +171,8 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		// Agent error reporting
 		r.Post("/agents/{id}/error", s.reportAgentError)
 
-		// Stream
-		r.Get("/stream", s.streamEvents)
+		// Stream (delegates to Broadcaster.ServeHTTP)
+		r.Get("/stream", s.Broadcaster.ServeHTTP)
 
 		// Pipeline
 		r.Get("/phases", s.listPhases)
@@ -591,25 +590,18 @@ func (s *Server) completeAgentTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.TicketID != "" {
-		if req.LLMPromptTokens > 0 || req.LLMCompletionTokens > 0 {
-			if err := s.DB.SetTicketLLMUsageDB(ctx, req.TicketID, req.LLMPromptTokens, req.LLMCompletionTokens, req.LLMTotalCostUSD); err != nil {
-				slog.Warn("failed to persist LLM usage", "ticket_id", req.TicketID, "error", err)
-			}
-		}
-		if req.LinesAdded > 0 || req.LinesRemoved > 0 || req.FilesChanged > 0 {
-			if err := s.DB.SetTicketLineStatsDB(ctx, req.TicketID, req.LinesAdded, req.LinesRemoved, req.FilesChanged); err != nil {
-				slog.Warn("failed to persist line stats", "ticket_id", req.TicketID, "error", err)
-			}
-		}
-		if err := s.DB.UpdateTicketStatus(ctx, req.TicketID, "completed"); err != nil {
-			slog.Warn("failed to complete ticket", "ticket_id", req.TicketID, "error", err)
+		if err := s.DB.CompleteAgentTaskTx(ctx, id, req.TicketID, newStatus,
+			req.LLMPromptTokens, req.LLMCompletionTokens, req.LLMTotalCostUSD,
+			req.LinesAdded, req.LinesRemoved, req.FilesChanged); err != nil {
+			slog.Error("failed to complete agent task transactionally", "ticket_id", req.TicketID, "error", err)
 		} else {
 			s.Broadcaster.Broadcast("ticket_completed", map[string]string{"ticket_id": req.TicketID})
 		}
-	}
-	if err := s.DB.SetAgentStatus(ctx, id, newStatus); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to set agent status: "+err.Error())
-		return
+	} else {
+		if err := s.DB.SetAgentStatus(ctx, id, newStatus); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to set agent status: "+err.Error())
+			return
+		}
 	}
 	kc := s.k8sOrError(w)
 	if kc != nil && req.TicketID != "" {
@@ -1246,35 +1238,7 @@ func (s *Server) deletePlugin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
-func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
-	ch := s.Broadcaster.AddClient()
-	defer s.Broadcaster.RemoveClient(ch)
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming not supported")
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(http.StatusOK)
-
-	for {
-		select {
-		case event, ok := <-ch:
-			if !ok {
-				return
-			}
-			data, _ := json.Marshal(event.Data)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, string(data))
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		}
-	}
-}
 
 func (s *Server) agentSessionProxy(w http.ResponseWriter, r *http.Request) {
 	kc := s.k8sOrError(w)

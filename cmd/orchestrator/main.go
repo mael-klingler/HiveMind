@@ -101,6 +101,12 @@ func main() {
 
 	llmClient := llm.NewLLMClient(cfg)
 
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = fmt.Sprintf("orchestrator-%d", os.Getpid())
+	}
+	leaderElector := background.NewLeaderElector(db.Pool(), "agent-monitor", hostname, 60*time.Second)
+
 	llmProvider, err := llmprovider.NewFromConfig(cfg)
 	if err != nil {
 		slog.Warn("failed to create LLM provider", "error", err)
@@ -129,29 +135,36 @@ func main() {
 	// Startup orphan recovery: reset running tickets whose agent pod no
 	// longer exists back to queued, so they get reprocessed.
 	if k8sClient != nil {
-		running, err := db.ListTicketsPaged(ctx, "running", 500, 0)
-		if err == nil {
-			for _, t := range running {
-				podName := "agent-worker-" + strings.ToLower(t.ID)
-				pod, err := k8sClient.GetPod(ctx, podName)
-				if err == nil && pod == nil {
-					slog.Info("orphan ticket detected at startup, requeueing", "ticket_id", t.ID)
-					if err := db.UpdateTicketStatus(ctx, t.ID, "queued"); err != nil {
-						slog.Error("failed to requeue orphan ticket", "ticket_id", t.ID, "error", err)
+		acq, err := leaderElector.TryAcquire(ctx)
+		if err == nil && acq {
+			slog.Info("acquired leader lock for startup orphan recovery")
+			running, err := db.ListTicketsPaged(ctx, "running", 500, 0)
+			if err == nil {
+				for _, t := range running {
+					podName := "agent-worker-" + strings.ToLower(t.ID)
+					pod, err := k8sClient.GetPod(ctx, podName)
+					if err == nil && pod == nil {
+						slog.Info("orphan ticket detected at startup, requeueing", "ticket_id", t.ID)
+						if err := db.UpdateTicketStatus(ctx, t.ID, "queued"); err != nil {
+							slog.Error("failed to requeue orphan ticket", "ticket_id", t.ID, "error", err)
+						}
 					}
 				}
 			}
+			_ = leaderElector.Release(ctx)
+		} else {
+			slog.Info("not leader, skipping startup orphan recovery")
 		}
 	}
 
 	broadcaster := sse.NewBroadcaster(pubsubRepo)
 
 	queueProcessor := background.NewQueueProcessor(cfg, db, k8sClient, llmClient, wsBuilder)
-	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient)
+	agentMonitor := background.NewAgentMonitor(cfg, db, k8sClient, leaderElector)
 	reviewMonitor := background.NewReviewMonitor(cfg, db, k8sClient, broadcaster)
 	pipelineEngine := background.NewPipelineEngine(cfg, db, broadcaster)
 	planner := background.NewPlanner(cfg, db, llmProvider, broadcaster)
-	learningWorker := background.NewLearningWorker(cfg, db, db.Pool())
+	learningWorker := background.NewLearningWorker(cfg, db)
 
 	var wg sync.WaitGroup
 	wg.Add(6)
@@ -192,12 +205,22 @@ func main() {
 	defer shutdownCancel()
 
 	queueProcessor.Stop()
-	agentMonitor.Stop()
+	agentMonitor.Stop()  // no-op in informer mode
 	reviewMonitor.Stop()
 	pipelineEngine.Stop()
 	planner.Stop()
 	learningWorker.Stop()
-	wg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		slog.Warn("worker shutdown timed out after 30s, proceeding")
+	}
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server shutdown error", "error", err)

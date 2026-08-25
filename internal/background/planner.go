@@ -20,11 +20,10 @@ type Planner struct {
 	DB          *database.DB
 	LLM         provider.Provider
 	Broadcaster *sse.Broadcaster
-	stopCh      chan struct{}
 }
 
 func NewPlanner(cfg *config.Config, db *database.DB, llm provider.Provider, b *sse.Broadcaster) *Planner {
-	return &Planner{Config: cfg, DB: db, LLM: llm, Broadcaster: b, stopCh: make(chan struct{})}
+	return &Planner{Config: cfg, DB: db, LLM: llm, Broadcaster: b}
 }
 
 func (p *Planner) Run(ctx context.Context) error {
@@ -35,8 +34,6 @@ func (p *Planner) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-p.stopCh:
-			return nil
 		case <-ticker.C:
 			if err := p.processIdeas(ctx); err != nil {
 				slog.Error("planner error", "error", err)
@@ -45,7 +42,7 @@ func (p *Planner) Run(ctx context.Context) error {
 	}
 }
 
-func (p *Planner) Stop() { close(p.stopCh) }
+func (p *Planner) Stop() {}
 
 func (p *Planner) processIdeas(ctx context.Context) error {
 	tickets, err := p.DB.ListTicketsPaged(ctx, "queued", 100, 0)

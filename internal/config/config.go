@@ -77,10 +77,14 @@ type Config struct {
 }
 
 func Load() *Config {
-	return &Config{
+	return LoadFromDB(nil)
+}
+
+func LoadFromDB(getSetting func(key string) (string, error)) *Config {
+	c := &Config{
 		Port:                getEnv("ORCHESTRATOR_PORT", "8080"),
 		AgentNamespace:      getEnv("AGENT_NAMESPACE", "hivemind"),
-		AgentImage:          getEnv("AGENT_IMAGE", "hivemind-opencode:latest"),
+		AgentImage:          getEnv("AGENT_IMAGE", "hivemind-opencode:v0.1.0"),
 		AgentMaxRetries:     getEnvInt("AGENT_MAX_RETRIES", 3),
 		AgentRetryDelay:     getEnvInt("AGENT_RETRY_DELAY", 120),
 		AgentStaleTimeout:   getEnvInt("AGENT_STALE_TIMEOUT", 3600),
@@ -131,6 +135,31 @@ func Load() *Config {
 		AgentPermExtDir:     getEnv("AGENT_PERM_EXT_DIR", "allow"),
 		AgentPermDoomLoop:   getEnv("AGENT_PERM_DOOM_LOOP", "deny"),
 	}
+	if getSetting != nil {
+		if v, err := getSetting("vcs_provider"); err == nil && v != "" {
+			c.VCSProvider = v
+		}
+		if v, err := getSetting("ollama_model"); err == nil && v != "" {
+			c.OllamaModel = v
+		}
+		if v, err := getSetting("opencode_model"); err == nil && v != "" {
+			c.OpencodeModel = v
+		}
+		if v, err := getSetting("agent_max_retries"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.AgentMaxRetries = n
+			}
+		}
+		if v, err := getSetting("dry_run"); err == nil && v != "" {
+			c.DryRun = v == "true" || v == "1"
+		}
+		if v, err := getSetting("agent_stale_timeout"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.AgentStaleTimeout = n
+			}
+		}
+	}
+	return c
 }
 
 func (c *Config) OrchestrationURL() string {

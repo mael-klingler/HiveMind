@@ -30,7 +30,7 @@ import (
 )
 
 type Client struct {
-	ClientSet *kubernetes.Clientset
+	ClientSet kubernetes.Interface
 	Namespace string
 }
 
@@ -147,6 +147,7 @@ func (c *Client) CreateConfigMap(ctx context.Context, name string, data map[stri
 }
 
 func (c *Client) ReplaceConfigMap(ctx context.Context, name string, data map[string]string, labels map[string]string) (*corev1.ConfigMap, error) {
+	existing, err := c.GetConfigMap(ctx, name)
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -154,6 +155,9 @@ func (c *Client) ReplaceConfigMap(ctx context.Context, name string, data map[str
 			Labels:    labels,
 		},
 		Data: data,
+	}
+	if existing != nil {
+		cm.ResourceVersion = existing.ResourceVersion
 	}
 	updated, err := c.ClientSet.CoreV1().ConfigMaps(c.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
@@ -261,10 +265,36 @@ func (c *Client) EnsureSecret(ctx context.Context, name string, stringData map[s
 		return fmt.Errorf("check secret %s: %w", name, err)
 	}
 	if existing != nil {
+		needUpdate := false
+		for key, expected := range stringData {
+			actual, ok := existing.Data[key]
+			if !ok || string(actual) != expected {
+				needUpdate = true
+				break
+			}
+		}
+		if needUpdate {
+			slog.Warn("secret drift detected, updating", "secret", name)
+			_, err := c.UpdateSecret(ctx, name, stringData, secretType)
+			return err
+		}
 		return nil
 	}
 	_, err = c.CreateSecret(ctx, name, stringData, secretType)
 	return err
+}
+
+func (c *Client) UpdateSecret(ctx context.Context, name string, stringData map[string]string, secretType corev1.SecretType) (*corev1.Secret, error) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Namespace},
+		Type:       secretType,
+		StringData: stringData,
+	}
+	updated, err := c.ClientSet.CoreV1().Secrets(c.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 // EnsureSecrets idempotently creates the set of secrets required by agent pods.

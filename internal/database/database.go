@@ -647,7 +647,10 @@ func (db *DB) GetSetting(ctx context.Context, key string) (string, error) {
 	var value string
 	err := db.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, key).Scan(&value)
 	if err != nil {
-		return "", nil
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
 	}
 	return value, nil
 }
@@ -1236,6 +1239,17 @@ func (db *DB) DeleteInstructionDB(ctx context.Context, id string) error {
 	return err
 }
 
+// --- Procedural pattern helpers ---
+
+func (db *DB) RecordProceduralPattern(ctx context.Context, patternType, description, context string, metadata map[string]interface{}) error {
+	metaJSON, _ := json.Marshal(metadata)
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO procedural_patterns (pattern_type, description, context, metadata, created_at)
+		VALUES ($1, $2, $3, $4, NOW())`,
+		patternType, description, context, string(metaJSON))
+	return err
+}
+
 // --- Telemetry helpers ---
 
 func (db *DB) SetTicketLLMUsageDB(ctx context.Context, id string, promptTokens, completionTokens int, totalCostUSD float64) error {
@@ -1247,11 +1261,35 @@ func (db *DB) SetTicketLLMUsageDB(ctx context.Context, id string, promptTokens, 
 	return err
 }
 
-func (db *DB) SetTicketLineStatsDB(ctx context.Context, id string, added, removed, filesChanged int) error {
-	_, err := db.pool.Exec(ctx, `
-		UPDATE tickets SET lines_added = $1, lines_removed = $2, files_changed = $3, updated_at = NOW() WHERE id = $4`,
-		added, removed, filesChanged, id)
-	return err
+func (db *DB) CompleteAgentTaskTx(ctx context.Context, agentID, ticketID, newStatus string, llmPrompt, llmCompletion int, llmCost float64, linesAdded, linesRemoved, filesChanged int) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if ticketID != "" {
+		if llmPrompt > 0 || llmCompletion > 0 {
+			_, err = tx.Exec(ctx, `UPDATE tickets SET llm_prompt_tokens = llm_prompt_tokens + $1, llm_completion_tokens = llm_completion_tokens + $2, llm_total_cost_usd = llm_total_cost_usd + $3, updated_at = NOW() WHERE id = $4`, llmPrompt, llmCompletion, llmCost, ticketID)
+			if err != nil {
+				return err
+			}
+		}
+		if linesAdded > 0 || linesRemoved > 0 || filesChanged > 0 {
+			_, err = tx.Exec(ctx, `UPDATE tickets SET lines_added = $1, lines_removed = $2, files_changed = $3, updated_at = NOW() WHERE id = $4`, linesAdded, linesRemoved, filesChanged, ticketID)
+			if err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec(ctx, `UPDATE tickets SET status = 'completed', updated_at = NOW() WHERE id = $1`, ticketID)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `UPDATE agents SET status = $1, updated_at = NOW() WHERE id = $2`, newStatus, agentID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // --- Ticket hierarchy helpers ---
