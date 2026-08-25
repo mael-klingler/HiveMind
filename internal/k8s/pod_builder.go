@@ -459,7 +459,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
 done
 
 # Clean up credentials after clone to minimize exposure window.
-rm -f /workspace/.git-credentials
+# Keep /workspace/.git-credentials for the main container to use.
 echo "All repos processed"
 `
 	return script

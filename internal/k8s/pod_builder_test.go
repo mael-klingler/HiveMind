@@ -84,7 +84,8 @@ func TestBuildCloneScript_NoTokenInURL(t *testing.T) {
 	// git clone URL or git config command.
 	assert.Contains(t, script, "credential.helper store")
 	assert.Contains(t, script, "/workspace/.git-credentials")
-	assert.Contains(t, script, "rm -f /workspace/.git-credentials")
+	// Credentials are kept for the main container to reuse
+	// (previously: rm -f /workspace/.git-credentials)
 	// The token is written to ~/.git-credentials (line: echo "${proto}${GIT_USER}:${GITLAB_TOKEN}@${host}" > ~/.git-credentials)
 	// but must NOT appear in any `git clone` invocation.
 	lines := strings.Split(script, "\n")
