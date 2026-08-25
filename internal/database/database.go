@@ -214,7 +214,7 @@ func (db *DB) ListTickets(ctx context.Context, status string) ([]*models.Ticket,
 // limit <= 0 means no limit.
 func (db *DB) ListTicketsPaged(ctx context.Context, status string, limit, offset int) ([]*models.Ticket, error) {
 	query := `SELECT id, title, description, labels, status, mr_status, mr_url, agent_id,
-		retry_count, created_at, updated_at FROM tickets`
+		retry_count, ticket_type, parent_id, created_at, updated_at FROM tickets`
 	args := []interface{}{}
 	if status != "" {
 		query += ` WHERE status = $1`
@@ -241,7 +241,7 @@ func (db *DB) ListTicketsPaged(ctx context.Context, status string, limit, offset
 		var labels string
 		var s, ms string
 		err := rows.Scan(&t.ID, &t.Title, &t.Description, &labels, &s, &ms, &t.MRURL,
-			&t.AgentID, &t.RetryCount, &t.CreatedAt, &t.UpdatedAt)
+			&t.AgentID, &t.RetryCount, &t.Type, &t.ParentID, &t.CreatedAt, &t.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -571,6 +571,11 @@ func (db *DB) GetQueue(ctx context.Context) ([]*models.QueueItem, error) {
 
 func (db *DB) DequeueItem(ctx context.Context, id string) error {
 	_, err := db.pool.Exec(ctx, `DELETE FROM queue WHERE id = $1`, id)
+	return err
+}
+
+func (db *DB) DequeueByTicketID(ctx context.Context, ticketID string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM queue WHERE ticket_id = $1`, ticketID)
 	return err
 }
 

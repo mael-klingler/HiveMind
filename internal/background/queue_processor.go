@@ -115,6 +115,12 @@ func (qp *QueueProcessor) processQueue(ctx context.Context) error {
 			continue
 		}
 
+		// Idea tickets are handled by the Planner, not the QueueProcessor.
+		// Skip them here so the Planner can decompose them into sub-tasks.
+		if ticket.Type == "idea" {
+			continue
+		}
+
 		if len(idleAgents) == 0 {
 			break
 		}

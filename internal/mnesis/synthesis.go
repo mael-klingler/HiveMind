@@ -76,7 +76,10 @@ OUTPUT-FORMAT (strikt, JSON-Block):
 func ParseSynthesis(content string) (*SynthesisResult, error) {
 	data := extractJSON(content)
 	if data == nil {
-		return &SynthesisResult{RawResponse: content}, fmt.Errorf("no JSON in synthesis response")
+		data = extractJSONLoose(content)
+	}
+	if data == nil {
+		return &SynthesisResult{RawResponse: content, ExecutiveSummary: content}, fmt.Errorf("no JSON in synthesis response")
 	}
 	result := &SynthesisResult{RawResponse: content}
 	if v, ok := data["executive_summary"].(string); ok {

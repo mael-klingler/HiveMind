@@ -189,11 +189,29 @@ func extractJSON(content string) map[string]interface{} {
 		return nil
 	}
 	depth := 0
+	inString := false
+	escape := false
 	for i := start; i < len(content); i++ {
-		if content[i] == '{' {
+		c := content[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if c == '\\' && inString {
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if c == '{' {
 			depth++
 		}
-		if content[i] == '}' {
+		if c == '}' {
 			depth--
 			if depth == 0 {
 				var data map[string]interface{}
@@ -203,6 +221,20 @@ func extractJSON(content string) map[string]interface{} {
 				return nil
 			}
 		}
+	}
+	return nil
+}
+
+func extractJSONLoose(content string) map[string]interface{} {
+	jsonStart := strings.Index(content, "{")
+	jsonEnd := strings.LastIndex(content, "}")
+	if jsonStart < 0 || jsonEnd < 0 || jsonEnd <= jsonStart {
+		return nil
+	}
+	segment := content[jsonStart : jsonEnd+1]
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(segment), &data); err == nil {
+		return data
 	}
 	return nil
 }

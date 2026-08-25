@@ -77,8 +77,23 @@ func (p *Planner) decompose(ctx context.Context, ticket *database.TicketFull) er
 	if err != nil {
 		return fmt.Errorf("agent society run: %w", err)
 	}
+	slog.Info("planner synthesis result", "ticket_id", ticket.ID,
+		"executive_summary_len", len(result.Synthesis.ExecutiveSummary),
+		"next_steps_count", len(result.Synthesis.NextSteps),
+		"raw_response_len", len(result.Synthesis.RawResponse),
+		"raw_response_preview", truncate(result.Synthesis.RawResponse, 500),
+		"converged", result.Converged,
+		"turns", result.Turns,
+		"agents_activated", result.AgentsActivated)
 	if len(result.Synthesis.NextSteps) == 0 {
-		slog.Warn("planner: no next_steps in synthesis", "ticket_id", ticket.ID)
+		slog.Warn("planner: no next_steps in synthesis", "ticket_id", ticket.ID,
+			"raw_preview", truncate(result.Synthesis.RawResponse, 300))
+		if err := p.DB.UpdateTicketStatus(ctx, ticket.ID, "planned"); err != nil {
+			slog.Error("failed to mark idea as planned (no steps)", "ticket_id", ticket.ID, "error", err)
+		}
+		if err := p.DB.DequeueByTicketID(ctx, ticket.ID); err != nil {
+			slog.Warn("failed to dequeue idea ticket (no steps)", "ticket_id", ticket.ID, "error", err)
+		}
 		return nil
 	}
 	planning, _ := json.Marshal(map[string]interface{}{
@@ -116,6 +131,9 @@ func (p *Planner) decompose(ctx context.Context, ticket *database.TicketFull) er
 	if err := p.DB.UpdateTicketStatus(ctx, ticket.ID, "planned"); err != nil {
 		slog.Error("failed to mark idea as planned", "ticket_id", ticket.ID, "error", err)
 	}
+	if err := p.DB.DequeueByTicketID(ctx, ticket.ID); err != nil {
+		slog.Warn("failed to dequeue idea ticket", "ticket_id", ticket.ID, "error", err)
+	}
 	p.Broadcaster.Broadcast("ticket_decomposed", map[string]interface{}{
 		"ticket_id": ticket.ID, "children": len(result.Synthesis.NextSteps),
 	})
@@ -123,3 +141,10 @@ func (p *Planner) decompose(ctx context.Context, ticket *database.TicketFull) er
 }
 
 var _ = strings.Join
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
