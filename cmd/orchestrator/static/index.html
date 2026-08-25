@@ -1085,16 +1085,17 @@ function agentPage() {
         const s = await HM.api('/settings');
         if (!s) return;
         const byKey = {}; s.forEach(item => { byKey[item.key] = item.value; });
-      this.modelSettings = {
-        opencode_model: byKey.opencode_model || '',
-        ollama_model: byKey.ollama_model || '',
-        ollama_base_url: byKey.ollama_base_url || '',
-        ollama_timeout: byKey.ollama_timeout || '',
-        agent_retry_delay: byKey.agent_retry_delay || '',
-        agent_max_retries: byKey.agent_max_retries || '',
-        agent_image: byKey.agent_image || '',
-        dry_run: byKey.dry_run || 'false'
-      };
+        this.modelSettings = {
+          opencode_model: byKey.opencode_model || '',
+          ollama_model: byKey.ollama_model || '',
+          ollama_base_url: byKey.ollama_base_url || '',
+          ollama_timeout: byKey.ollama_timeout || '',
+          agent_retry_delay: byKey.agent_retry_delay || '',
+          agent_max_retries: byKey.agent_max_retries || '',
+          agent_image: byKey.agent_image || '',
+          dry_run: byKey.dry_run || 'false'
+        };
+      } catch(e) { console.error('loadModelSettings error:', e); }
     },
 
     async saveModelSettings() {
