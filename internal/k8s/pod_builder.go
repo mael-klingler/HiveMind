@@ -388,23 +388,40 @@ git config --global credential.interactive false
 cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
 REPOSEOF
+
+# Write git credentials for all known GitLab/GitHub hosts upfront
+# so they are available before any clone attempt.
+if [ -n "$GITLAB_TOKEN" ] && [ -n "$GITLAB_HOST" ]; then
+  PROTO="https"
+  if echo "$GITLAB_HOST" | grep -qE '^https?://'; then
+    PROTO=$(echo "$GITLAB_HOST" | sed -E 's|^(https?://).*|\1|')
+  fi
+  HOST=$(echo "$GITLAB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
+  echo "${PROTO}${GIT_USER}:${GITLAB_TOKEN}@${HOST}" >> ~/.git-credentials
+  chmod 600 ~/.git-credentials
+fi
+if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_HOST" ]; then
+  PROTO="https"
+  if echo "$GITHUB_HOST" | grep -qE '^https?://'; then
+    PROTO=$(echo "$GITHUB_HOST" | sed -E 's|^(https?://).*|\1|')
+  fi
+  HOST=$(echo "$GITHUB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
+  echo "${PROTO}${GIT_USER}:${GITHUB_TOKEN}@${HOST}" >> ~/.git-credentials
+  chmod 600 ~/.git-credentials
+fi
+
 for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   url=$(jq -r --arg r "$repo" '.[$r].url' /workspace/repos.json)
   branch=$(jq -r --arg r "$repo" '.[$r].branch' /workspace/repos.json)
 
-  # Strip any existing credentials from the URL and write them to the
-  # credential store instead. This keeps tokens out of ` + "`git log`" + `,
-  # ` + "`kubectl describe pod`" + `, and shell history.
+  # Strip any existing credentials from the URL.
+  # Credentials are already in ~/.git-credentials (set before the loop).
   proto=""
   host=""
   if echo "$url" | grep -qE "^https?://"; then
     proto=$(echo "$url" | sed -E "s|^(https?://).*|\1|")
     host=$(echo "$url" | sed -E "s|^https?://([^/@]+).*|\1|")
     url="${proto}${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
-    if [ -n "$GITLAB_TOKEN" ]; then
-      echo "${proto}${GIT_USER}:${GITLAB_TOKEN}@${host}" > ~/.git-credentials
-      chmod 600 ~/.git-credentials
-    fi
   fi
 
   echo "Cloning $repo (branch: $branch) ..."
