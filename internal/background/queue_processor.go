@@ -16,7 +16,6 @@ package background
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -138,6 +137,14 @@ func (qp *QueueProcessor) processQueue(ctx context.Context) error {
 
 		if err := qp.spawnAgentForTicket(ctx, ticket, agent); err != nil {
 			slog.Error("failed to spawn agent, requeueing ticket", "ticket_id", ticket.ID, "error", err)
+			if qp.Config.AgentRetryDelay > 0 {
+				slog.Info("applying retry backoff", "ticket_id", ticket.ID, "delay_seconds", qp.Config.AgentRetryDelay)
+				select {
+				case <-time.After(time.Duration(qp.Config.AgentRetryDelay) * time.Second):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 			if err := qp.DB.RequeueTicket(ctx, ticket.ID, qp.Config.AgentMaxRetries); err != nil {
 				slog.Error("failed to requeue ticket after spawn failure", "ticket_id", ticket.ID, "error", err)
 			}
@@ -245,15 +252,3 @@ func (qp *QueueProcessor) spawnAgentForTicket(ctx context.Context, ticket *model
 	return nil
 }
 
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
-func jsonUnmarshal(data string, v interface{}) error {
-	return json.Unmarshal([]byte(data), v)
-}

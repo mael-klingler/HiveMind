@@ -276,6 +276,11 @@ func (c *Client) EnsureSecrets(ctx context.Context, params SecretParams) error {
 			return fmt.Errorf("ensure gitlab-token secret: %w", err)
 		}
 	}
+	if params.GitHubToken != "" {
+		if err := c.EnsureSecret(ctx, "github-token", map[string]string{"token": params.GitHubToken}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure github-token secret: %w", err)
+		}
+	}
 	if params.OllamaCloudAPIKey != "" {
 		if err := c.EnsureSecret(ctx, "ollama-cloud-api-key", map[string]string{"api-key": params.OllamaCloudAPIKey}, corev1.SecretTypeOpaque); err != nil {
 			return fmt.Errorf("ensure ollama-cloud secret: %w", err)
@@ -302,6 +307,7 @@ func (c *Client) EnsureSecrets(ctx context.Context, params SecretParams) error {
 // SecretParams holds the secret values to ensure at startup.
 type SecretParams struct {
 	GitLabToken       string
+	GitHubToken       string
 	OllamaCloudAPIKey string
 	OpenAIAPIKey      string
 	AnthropicAPIKey   string

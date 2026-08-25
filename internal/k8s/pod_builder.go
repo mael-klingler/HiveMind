@@ -96,7 +96,12 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 					Key:                  "token",
 				},
 			}},
-			{Name: "GITHUB_TOKEN", Value: params.GitHubToken},
+			{Name: "GITHUB_TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "github-token"},
+					Key:                  "token",
+				},
+			}},
 			{Name: "GITHUB_HOST", Value: params.GitHubHost},
 			{Name: "GIT_USER", Value: params.GitUser},
 			{Name: "GIT_SSL_NO_VERIFY", Value: func() string {
@@ -130,7 +135,12 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 		{Name: "GITLAB_HOST", Value: params.GitLabHost},
 		{Name: "GIT_USER", Value: params.GitUser},
 		{Name: "GITLAB_USER", Value: params.GitUser},
-		{Name: "GITHUB_TOKEN", Value: params.GitHubToken},
+		{Name: "GITHUB_TOKEN", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "github-token"},
+				Key:                  "token",
+			},
+		}},
 		{Name: "GITHUB_HOST", Value: params.GitHubHost},
 		{Name: "OLLAMA_BASE_URL", Value: params.OllamaBaseURL},
 		{Name: "OPENCODE_MODEL", Value: params.OpencodeModel},
@@ -337,7 +347,7 @@ func SpawnAgentPod(ctx context.Context, client *Client, params PodSpecParams) (*
 		if err := client.DeletePod(ctx, podName); err != nil {
 			return nil, fmt.Errorf("delete existing pod: %w", err)
 		}
-		if err := client.WaitForPodDeletion(ctx, podName, 30*time.Second); err != nil {
+		if err := client.WaitForPodDeletion(ctx, podName, 60*time.Second); err != nil {
 			return nil, fmt.Errorf("wait for pod deletion: %w", err)
 		}
 	}
@@ -508,7 +518,7 @@ func buildOpencodeConfig(params PodSpecParams) opencodeConfig {
 
 	providerOpts := map[string]interface{}{"baseURL": providerURL}
 	if providerKey == "ollama_cloud" && params.OllamaCloudAPIKey != "" {
-		providerOpts["headers"] = map[string]string{"Authorization": fmt.Sprintf("Bearer %s", params.OllamaCloudAPIKey)}
+		providerOpts["headers"] = map[string]string{"Authorization": "Bearer ${OLLAMA_CLOUD_API_KEY}"}
 	}
 
 	return opencodeConfig{

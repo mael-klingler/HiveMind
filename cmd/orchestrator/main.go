@@ -89,6 +89,7 @@ func main() {
 		}
 		if err := k8sClient.EnsureSecrets(ctx, k8s.SecretParams{
 			GitLabToken:       cfg.GitLabToken,
+			GitHubToken:       cfg.GitHubToken,
 			OllamaCloudAPIKey: cfg.OllamaCloudAPIKey,
 			OpenAIAPIKey:      cfg.OpenAIAPIKey,
 			AnthropicAPIKey:   cfg.AnthropicAPIKey,
@@ -179,8 +180,8 @@ func main() {
 		slog.Info("orchestrator starting", "addr", addr, "vcs_provider", cfg.VCSProvider,
 			"api_key", boolToStr(cfg.HivemindAPIKey != ""), "k8s_namespace", cfg.AgentNamespace)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server error", "error", err)
-			os.Exit(1)
+			slog.Error("server error, initiating graceful shutdown", "error", err)
+			cancel()
 		}
 	}()
 

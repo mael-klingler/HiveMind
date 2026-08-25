@@ -299,19 +299,40 @@ func (db *DB) SetTicketMRURL(ctx context.Context, id, mrURL string) error {
 }
 
 func (db *DB) RequeueTicket(ctx context.Context, id string, maxRetries int) error {
-	t, err := db.GetTicket(ctx, id)
+	tx, err := db.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transaction: %w", err)
 	}
-	if t.RetryCount >= maxRetries {
-		_, err = db.pool.Exec(ctx, `UPDATE tickets SET status = 'failed', updated_at = NOW() WHERE id = $1`, id)
-		return err
+	defer tx.Rollback(ctx)
+
+	var retryCount int
+	err = tx.QueryRow(ctx, `SELECT retry_count FROM tickets WHERE id = $1 FOR UPDATE`, id).Scan(&retryCount)
+	if err != nil {
+		return fmt.Errorf("select ticket for requeue: %w", err)
 	}
-	_, err = db.pool.Exec(ctx, `
+	if retryCount >= maxRetries {
+		_, err = tx.Exec(ctx, `UPDATE tickets SET status = 'failed', updated_at = NOW() WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET status = 'queued', retry_count = retry_count + 1,
 			mr_status = 'none', review_status = 'pending', agent_id = '', updated_at = NOW()
 		WHERE id = $1`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	queueID := fmt.Sprintf("q-%s-retry-%d", id, retryCount+1)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO queue (id, ticket_id, priority, created_at)
+		VALUES ($1, $2, 0, NOW())
+		ON CONFLICT (id) DO NOTHING`, queueID, id)
+	if err != nil {
+		return fmt.Errorf("re-enqueue ticket: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // --- Agent operations ---
