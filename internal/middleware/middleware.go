@@ -70,7 +70,7 @@ func APIKeyAuth(apiKey string) func(http.Handler) http.Handler {
 				return
 			}
 			path := r.URL.Path
-			if path == "/healthz" || path == "/readyz" || path == "/metrics" || path == "/" {
+			if path == "/healthz" || path == "/readyz" || path == "/metrics" || path == "/" || path == "/api/stream" {
 				next.ServeHTTP(w, r)
 				return
 			}

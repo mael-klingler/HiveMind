@@ -1066,9 +1066,13 @@ function agentPage() {
 
     async refreshData() {
       try {
-        [this.agentProfiles, this.mcpServers, this.instructions, this.plugins] = await Promise.all([
+        const [profiles, mcps, instrs, plugins] = await Promise.all([
           HM.api('/agent-profiles'), HM.api('/mcp-servers'), HM.api('/agent-instructions'), HM.api('/plugins')
         ]);
+        this.agentProfiles = profiles || [];
+        this.mcpServers = mcps || [];
+        this.instructions = instrs || [];
+        this.plugins = plugins || [];
         this.repoNames = await HM.api('/repo-names').catch(() => []);
       } catch(e) { console.error(e); }
       try { this.loadModelSettings(); } catch(e) {}

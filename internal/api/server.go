@@ -204,6 +204,12 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 	// Static assets (CSS, JS)
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
 
+	// Favicon (empty to prevent 404)
+	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// SPA fallback — serves index.html for all non-API, non-static routes
 	r.Get("/*", s.serveSPA)
 
@@ -1133,6 +1139,9 @@ func (s *Server) listMCPServers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list MCP servers: "+err.Error())
 		return
+	}
+	if servers == nil {
+		servers = []*models.MCPServer{}
 	}
 	writeJSON(w, http.StatusOK, servers)
 }
