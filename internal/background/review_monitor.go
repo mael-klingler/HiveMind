@@ -34,17 +34,10 @@ type ReviewMonitor struct {
 	DB         *database.DB
 	K8s        *k8s.Client
 	Broadcaster *sse.Broadcaster
-	stopCh     chan struct{}
 }
 
 func NewReviewMonitor(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, b *sse.Broadcaster) *ReviewMonitor {
-	return &ReviewMonitor{
-		Config:      cfg,
-		DB:         db,
-		K8s:        k8sClient,
-		Broadcaster: b,
-		stopCh:     make(chan struct{}),
-	}
+	return &ReviewMonitor{Config: cfg, DB: db, K8s: k8sClient, Broadcaster: b}
 }
 
 func (rm *ReviewMonitor) Run(ctx context.Context) error {
@@ -59,9 +52,6 @@ func (rm *ReviewMonitor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			slog.Info("review lifecycle monitor stopping")
 			return nil
-		case <-rm.stopCh:
-			slog.Info("review lifecycle monitor stopped")
-			return nil
 		case <-ticker.C:
 			if err := rm.checkOpenMRs(ctx); err != nil {
 				slog.Error("review monitor error", "error", err)
@@ -70,9 +60,7 @@ func (rm *ReviewMonitor) Run(ctx context.Context) error {
 	}
 }
 
-func (rm *ReviewMonitor) Stop() {
-	close(rm.stopCh)
-}
+func (rm *ReviewMonitor) Stop() {}
 
 func (rm *ReviewMonitor) checkOpenMRs(ctx context.Context) error {
 	tickets, err := rm.DB.ListOpenMRTickets(ctx)

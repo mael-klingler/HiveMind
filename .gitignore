@@ -8,16 +8,8 @@
 *.db
 *.sqlite3
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-*.egg-info/
-dist/
-build/
-*.egg
+# Go binary
+/orchestrator
 
 # Node
 node_modules/
@@ -29,10 +21,6 @@ node_modules/
 *.swo
 *.iml
 
-# LeanKG
-.leankg/
-leankg.yaml
-
 # Workspace / Runtime
 workspace_*/
 
@@ -43,10 +31,12 @@ Thumbs.db
 # Logs
 *.log
 
-# Go binary
-/orchestrator
-
 # Temp / Build
 *.tmp
 *.bak
-*.orig.opencode/
+*.orig
+.opencode/
+
+# Nix
+result
+result-*

@@ -82,8 +82,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 
 	initContainer := corev1.Container{
 		Name:            "clone-repos",
-		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:latest"),
-		ImagePullPolicy: corev1.PullAlways,
+		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:v0.1.0"),
+		ImagePullPolicy: corev1.PullIfNotPresent,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace"},
 			{Name: "repos-config", MountPath: "/config"},
@@ -96,7 +96,12 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 					Key:                  "token",
 				},
 			}},
-			{Name: "GITHUB_TOKEN", Value: params.GitHubToken},
+			{Name: "GITHUB_TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "github-token"},
+					Key:                  "token",
+				},
+			}},
 			{Name: "GITHUB_HOST", Value: params.GitHubHost},
 			{Name: "GIT_USER", Value: params.GitUser},
 			{Name: "GIT_SSL_NO_VERIFY", Value: func() string {
@@ -130,7 +135,12 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 		{Name: "GITLAB_HOST", Value: params.GitLabHost},
 		{Name: "GIT_USER", Value: params.GitUser},
 		{Name: "GITLAB_USER", Value: params.GitUser},
-		{Name: "GITHUB_TOKEN", Value: params.GitHubToken},
+		{Name: "GITHUB_TOKEN", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "github-token"},
+				Key:                  "token",
+			},
+		}},
 		{Name: "GITHUB_HOST", Value: params.GitHubHost},
 		{Name: "OLLAMA_BASE_URL", Value: params.OllamaBaseURL},
 		{Name: "OPENCODE_MODEL", Value: params.OpencodeModel},
@@ -213,8 +223,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 
 	mainContainer := corev1.Container{
 		Name:            "opencode-agent",
-		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:latest"),
-		ImagePullPolicy: corev1.PullAlways,
+		Image:           getEnv("AGENT_IMAGE", "hivemind-opencode:v0.1.0"),
+		ImagePullPolicy: corev1.PullIfNotPresent,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace"},
 			{Name: "task-prompt", MountPath: "/etc/task"},
@@ -266,6 +276,8 @@ func BuildPodSpec(params PodSpecParams) *corev1.Pod {
 			Hostname:    podName,
 			Subdomain:   "agent-session",
 			RestartPolicy: corev1.RestartPolicyNever,
+			ServiceAccountName: "agent-runner",
+			AutomountServiceAccountToken: ptr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: ptr(true),
 				RunAsUser:    ptr(int64(1000)),
@@ -323,17 +335,9 @@ func SpawnAgentPod(ctx context.Context, client *Client, params PodSpecParams) (*
 	}
 	slog.Info("configmap created", "name", fmt.Sprintf("%s-memory", podName))
 
-	if params.OllamaCloudAPIKey != "" {
-		if _, err := client.CreateSecret(ctx, "ollama-cloud-api-key", map[string]string{"api-key": params.OllamaCloudAPIKey}, corev1.SecretTypeOpaque); err != nil {
-			return nil, fmt.Errorf("create ollama cloud secret: %w", err)
-		}
-	}
-
-	if params.GitLabToken != "" {
-		if _, err := client.CreateSecret(ctx, "gitlab-token", map[string]string{"token": params.GitLabToken}, corev1.SecretTypeOpaque); err != nil {
-			return nil, fmt.Errorf("create gitlab token secret: %w", err)
-		}
-	}
+	// Secrets (gitlab-token, ollama-cloud-api-key, openai-api-key,
+	// anthropic-api-key, orchestrator-env) are ensured once at orchestrator
+	// startup via Client.EnsureSecrets to avoid concurrent-spawn races.
 
 	pod := BuildPodSpec(params)
 
@@ -345,16 +349,8 @@ func SpawnAgentPod(ctx context.Context, client *Client, params PodSpecParams) (*
 		if err := client.DeletePod(ctx, podName); err != nil {
 			return nil, fmt.Errorf("delete existing pod: %w", err)
 		}
-		// Poll until pod is deleted
-		for i := 0; i < 30; i++ {
-			time.Sleep(500 * time.Millisecond)
-			pod, err := client.GetPod(ctx, podName)
-			if err != nil {
-				return nil, fmt.Errorf("check pod deletion: %w", err)
-			}
-			if pod == nil {
-				break
-			}
+		if err := client.WaitForPodDeletion(ctx, podName, 60*time.Second); err != nil {
+			return nil, fmt.Errorf("wait for pod deletion: %w", err)
 		}
 	}
 
@@ -384,17 +380,38 @@ func buildCloneScript(repos []RepoRef) string {
 	reposJSON := buildReposJSON(repos)
 	script := `set -uo pipefail
 FALLBACK_BRANCHES="development qa main master"
+
+# Prevent git from prompting for credentials interactively (causes "No such device or address").
+export GIT_TERMINAL_PROMPT=0
+export HOME=/workspace
+
 cat > /workspace/repos.json << 'REPOSEOF'
 ` + reposJSON + `
 REPOSEOF
+
 for repo in $(jq -r 'keys[]' /workspace/repos.json); do
   url=$(jq -r --arg r "$repo" '.[$r].url' /workspace/repos.json)
   branch=$(jq -r --arg r "$repo" '.[$r].branch' /workspace/repos.json)
+
+  # Strip any existing credentials from the URL first.
+  proto=""
+  host=""
   if echo "$url" | grep -qE "^https?://"; then
-    url=$(echo "$url" | sed -E "s|^(https?://)|\\1${GIT_USER}:${GITLAB_TOKEN}@|")
+    proto=$(echo "$url" | sed -E "s|^(https?://).*|\1|")
+    host=$(echo "$url" | sed -E "s|^https?://([^/@]+).*|\1|")
+    url="${proto}${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
   fi
+
+  # Inject credentials into the URL for private repos.
+  auth_url="$url"
+  if echo "$url" | grep -qi "$GITLAB_HOST" && [ -n "$GITLAB_TOKEN" ]; then
+    auth_url="${proto}${GIT_USER}:${GITLAB_TOKEN}@${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
+  elif echo "$url" | grep -qi "$GITHUB_HOST" && [ -n "$GITHUB_TOKEN" ]; then
+    auth_url="${proto}${GIT_USER}:${GITHUB_TOKEN}@${host}$(echo "$url" | sed -E "s|^https?://[^/@]+||")"
+  fi
+
   echo "Cloning $repo (branch: $branch) ..."
-  if git clone -b "$branch" --single-branch "$url" "/workspace/$repo" 2>&1; then
+  if git clone -b "$branch" --single-branch "$auth_url" "/workspace/$repo" 2>&1 | sed -E "s|${GIT_USER}:[^@]+@||g"; then
     echo "Cloned $repo on branch $branch"
   else
     echo "Branch $branch not found for $repo, trying fallback branches..."
@@ -402,7 +419,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
     for fb in $branch $FALLBACK_BRANCHES; do
       if [ "$fb" = "$branch" ]; then continue; fi
       rm -rf "/workspace/$repo" 2>/dev/null || true
-      if git clone -b "$fb" --single-branch "$url" "/workspace/$repo" 2>&1; then
+      if git clone -b "$fb" --single-branch "$auth_url" "/workspace/$repo" 2>&1 | sed -E "s|${GIT_USER}:[^@]+@||g"; then
         echo "Cloned $repo on fallback branch $fb"
         CLONED=true
         break
@@ -411,7 +428,7 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
     if [ "$CLONED" = "false" ]; then
       rm -rf "/workspace/$repo" 2>/dev/null || true
       echo "No fallback branch worked for $repo, cloning default branch..."
-      if git clone "$url" "/workspace/$repo" 2>&1; then
+      if git clone "$auth_url" "/workspace/$repo" 2>&1 | sed -E "s|${GIT_USER}:[^@]+@||g"; then
         echo "Cloned $repo on default branch"
       else
         echo "Failed to clone $repo - skipping"
@@ -419,12 +436,38 @@ for repo in $(jq -r 'keys[]' /workspace/repos.json); do
       fi
     fi
   fi
+  # Configure credential helper in the cloned repo for future pushes.
+  git -C "/workspace/$repo" config credential.helper store
   echo "Init leankg $repo ..."
   cd "/workspace/$repo"
   command -v leankg >/dev/null 2>&1 && { leankg init || echo "leankg init failed for $repo"; } || echo "leankg not installed, skipping init for $repo"
   echo "Index leankg $repo ..."
   command -v leankg >/dev/null 2>&1 && { leankg index . || echo "leankg index failed for $repo"; } || echo "leankg not installed, skipping index for $repo"
 done
+
+# Write .git-credentials for future git operations (push, etc.) in the main container.
+if [ -n "$GITLAB_TOKEN" ] && [ -n "$GITLAB_HOST" ]; then
+  GL_PROTO="https"
+  GL_HOST="$GITLAB_HOST"
+  if echo "$GITLAB_HOST" | grep -qE '^https?://'; then
+    GL_PROTO=$(echo "$GITLAB_HOST" | sed -E 's|^(https?://).*|\1|')
+    GL_HOST=$(echo "$GITLAB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
+  fi
+  echo "${GL_PROTO}${GIT_USER}:${GITLAB_TOKEN}@${GL_HOST}" >> /workspace/.git-credentials
+  chmod 600 /workspace/.git-credentials
+fi
+if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_HOST" ]; then
+  GH_PROTO="https"
+  GH_HOST="$GITHUB_HOST"
+  if echo "$GITHUB_HOST" | grep -qE '^https?://'; then
+    GH_PROTO=$(echo "$GITHUB_HOST" | sed -E 's|^(https?://).*|\1|')
+    GH_HOST=$(echo "$GITHUB_HOST" | sed -E 's|^https?://([^/@]+).*|\1|')
+  fi
+  echo "${GH_PROTO}${GIT_USER}:${GITHUB_TOKEN}@${GH_HOST}" >> /workspace/.git-credentials
+  chmod 600 /workspace/.git-credentials
+fi
+git config --global credential.helper store
+
 echo "All repos processed"
 `
 	return script
@@ -503,7 +546,7 @@ func buildOpencodeConfig(params PodSpecParams) opencodeConfig {
 
 	providerOpts := map[string]interface{}{"baseURL": providerURL}
 	if providerKey == "ollama_cloud" && params.OllamaCloudAPIKey != "" {
-		providerOpts["headers"] = map[string]string{"Authorization": fmt.Sprintf("Bearer %s", params.OllamaCloudAPIKey)}
+		providerOpts["headers"] = map[string]string{"Authorization": "Bearer ${OLLAMA_CLOUD_API_KEY}"}
 	}
 
 	return opencodeConfig{
@@ -565,6 +608,11 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// envOr returns os.Getenv(key) or fallback if empty. Same as getEnv but
+// without duplicating the config.getEnv helper — kept here only for
+// backward compatibility with pod_builder tests.
+var _ = getEnv
+
 func defaultIfEmpty(val, fallback string) string {
 	if val == "" {
 		return fallback
@@ -576,3 +624,9 @@ func toJSONString(v interface{}) string {
 	data, _ := json.Marshal(v)
 	return string(data)
 }
+
+// BuildCloneScriptForTest exports buildCloneScript for testing.
+func BuildCloneScriptForTest(repos []RepoRef) string { return buildCloneScript(repos) }
+
+// BuildReposJSONForTest exports buildReposJSON for testing.
+func BuildReposJSONForTest(repos []RepoRef) string { return buildReposJSON(repos) }

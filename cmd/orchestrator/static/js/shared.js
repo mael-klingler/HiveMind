@@ -51,7 +51,7 @@ const HM = {
           throw new Error(err.error || err.detail || res.statusText);
         });
       }
-      return res.json();
+      return res.json().then(data => data === null ? [] : data);
     });
   },
 

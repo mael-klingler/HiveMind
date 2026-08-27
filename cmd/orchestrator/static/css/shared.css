@@ -260,6 +260,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:none;opacity:
 .section-block h4{font-size:.65rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.35rem}
 .section-block.accent{border-left:2px solid var(--accent)}
 .section-block.green{border-left:2px solid var(--green)}
+.section-block.blue{border-left:2px solid var(--accent)}
 .notes-box{background:rgba(255,255,255,.02);padding:.45rem .55rem;border-radius:var(--radius-sm);margin-top:.2rem;font-size:.75rem;font-style:italic;color:var(--muted2);border:1px solid var(--border)}
 
 .log-box{background:#050508;padding:.55rem .7rem;border-radius:var(--radius-sm);margin-top:.25rem;font-family:"SF Mono","Fira Code",monospace;font-size:.68rem;color:var(--text2);border:1px solid var(--border);max-height:280px;overflow-y:auto;line-height:1.4;white-space:pre}
@@ -302,3 +303,24 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:none;opacity:
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
 @media(max-width:500px){.form-grid{grid-template-columns:1fr}}
 .actions{display:flex;gap:.4rem;justify-content:flex-end;margin-top:.4rem}
+
+.group-tree{border:1px solid var(--border-light);border-radius:var(--radius-sm);overflow:hidden}
+.group-tree-header{display:flex;align-items:center;gap:.4rem;padding:.45rem .65rem;background:var(--bg2);border-bottom:1px solid var(--border);cursor:pointer;user-select:none;transition:background var(--transition)}
+.group-tree-header:hover{background:var(--border)}
+.group-tree-header .arrow{font-size:.6rem;color:var(--muted);transition:transform .15s ease;width:12px;text-align:center}
+.group-tree-header .arrow.expanded{transform:rotate(90deg)}
+.group-tree-header .group-name{font-size:.78rem;font-weight:600;color:var(--text)}
+.group-tree-header .group-count{font-size:.62rem;color:var(--muted);margin-left:.2rem}
+.group-tree-header .group-check{margin-left:auto}
+.group-tree-children{border-top:none}
+.group-subgroup .group-tree-header{padding-left:1.8rem;background:var(--card)}
+.group-subgroup .group-tree-children .group-tree-header{padding-left:2.9rem;background:var(--card)}
+.group-project{display:flex;align-items:flex-start;gap:.4rem;padding:.3rem .65rem .3rem 1.8rem;border-bottom:1px solid rgba(255,255,255,.02);transition:background var(--transition)}
+.group-project:hover{background:var(--card-hover)}
+.group-project.subgroup-project{padding-left:2.9rem}
+.group-project input{accent-color:var(--accent);margin-top:.2rem;flex-shrink:0}
+.group-project-info{flex:1;min-width:0}
+.group-project-name{font-size:.8rem;font-weight:500;color:var(--text)}
+.group-project-path{font-size:.66rem;color:var(--muted);font-family:"SF Mono","Fira Code",monospace}
+.group-project-desc{font-size:.7rem;color:var(--text2);margin-top:.1rem}
+.group-project-tags{display:flex;gap:.1rem;flex-wrap:wrap;margin-top:.15rem}

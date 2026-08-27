@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/models"
 )
 
@@ -35,35 +36,35 @@ var migrationFS embed.FS
 // MigrationsDir returns the path to SQL migration files.
 // In development it uses the local source tree; in production containers
 // it writes the embedded files to a temp directory and returns that path.
-func MigrationsDir() string {
+func MigrationsDir() (string, error) {
 	local := filepath.Join("internal", "database", "migrations")
 	if _, err := os.Stat(local); err == nil {
-		return local
+		return local, nil
 	}
 
 	container := "/app/migrations"
 	if _, err := os.Stat(container); err == nil {
-		return container
+		return container, nil
 	}
 
 	tmpDir, err := os.MkdirTemp("", "hivemind-migrations")
 	if err != nil {
-		panic("cannot create temp migrations dir: " + err.Error())
+		return "", fmt.Errorf("cannot create temp migrations dir: %w", err)
 	}
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {
-		panic("cannot read embedded migrations: " + err.Error())
+		return "", fmt.Errorf("cannot read embedded migrations: %w", err)
 	}
 	for _, entry := range entries {
 		data, err := migrationFS.ReadFile(filepath.Join("migrations", entry.Name()))
 		if err != nil {
-			panic("cannot read embedded migration " + entry.Name() + ": " + err.Error())
+			return "", fmt.Errorf("cannot read embedded migration %s: %w", entry.Name(), err)
 		}
 		if err := os.WriteFile(filepath.Join(tmpDir, entry.Name()), data, 0644); err != nil {
-			panic("cannot write migration " + entry.Name() + ": " + err.Error())
+			return "", fmt.Errorf("cannot write migration %s: %w", entry.Name(), err)
 		}
 	}
-	return tmpDir
+	return tmpDir, nil
 }
 
 type DB struct {
@@ -96,6 +97,12 @@ func (db *DB) Close() {
 	db.pool.Close()
 }
 
+// Pool returns the underlying pgxpool for use by components that need direct pool access
+// (e.g. mnesis.ProceduralMemory).
+func (db *DB) Pool() *pgxpool.Pool {
+	return db.pool
+}
+
 // --- Ticket operations ---
 
 func (db *DB) CreateTicket(ctx context.Context, t *TicketInput) error {
@@ -121,13 +128,22 @@ func (db *DB) CreateTicketAndEnqueue(ctx context.Context, t *TicketInput) error 
 	now := time.Now().UTC()
 	status := "queued"
 	labels, _ := json.Marshal(t.Labels)
+	selectedRepos, _ := json.Marshal(t.SelectedRepos)
+	ticketType := t.TicketType
+	if ticketType == "" {
+		ticketType = "task"
+	}
+	primaryRepo := ""
+	if len(t.SelectedRepos) > 0 {
+		primaryRepo = t.SelectedRepos[0]
+	}
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO tickets (id, title, description, labels, issue_type, priority, status,
-			mr_status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8)`,
+			mr_status, created_at, updated_at, ticket_type, selected_repos, primary_repo)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8, $9, $10, $11)`,
 		t.ID, t.Title, t.Description, string(labels), t.IssueType, t.Priority,
-		status, now)
+		status, now, ticketType, string(selectedRepos), primaryRepo)
 	if err != nil {
 		return fmt.Errorf("insert ticket: %w", err)
 	}
@@ -155,7 +171,8 @@ func (db *DB) GetTicket(ctx context.Context, id string) (*models.Ticket, error) 
 			phase_work_started_at, phase_test_started_at, phase_ship_started_at,
 			phase_listen_started_at, completed_at, merged_at,
 			lines_added, lines_removed, files_changed,
-			created_at, updated_at
+			created_at, updated_at,
+			parent_id, ticket_type, approval_status, approval_feedback, approval_required
 		FROM tickets WHERE id = $1`, id)
 
 	t := &models.Ticket{}
@@ -173,7 +190,8 @@ func (db *DB) GetTicket(ctx context.Context, id string) (*models.Ticket, error) 
 		&t.MRConflictStatus, &t.MRLastNoteID,
 		&phaseWork, &phaseTest, &phaseShip, &phaseListen, &completedAt, &mergedAt,
 		&t.LinesAdded, &t.LinesRemoved, &t.FilesChanged,
-		&t.CreatedAt, &t.UpdatedAt)
+		&t.CreatedAt, &t.UpdatedAt,
+		&t.ParentID, &t.Type, &t.ApprovalStatus, &t.ApprovalFeedback, &t.ApprovalRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -194,14 +212,27 @@ func (db *DB) GetTicket(ctx context.Context, id string) (*models.Ticket, error) 
 }
 
 func (db *DB) ListTickets(ctx context.Context, status string) ([]*models.Ticket, error) {
+	return db.ListTicketsPaged(ctx, status, 0, 0)
+}
+
+// ListTicketsPaged returns tickets filtered by status with optional limit/offset.
+// limit <= 0 means no limit.
+func (db *DB) ListTicketsPaged(ctx context.Context, status string, limit, offset int) ([]*models.Ticket, error) {
 	query := `SELECT id, title, description, labels, status, mr_status, mr_url, agent_id,
-		retry_count, created_at, updated_at FROM tickets`
+		retry_count, ticket_type, parent_id, created_at, updated_at FROM tickets`
 	args := []interface{}{}
 	if status != "" {
 		query += ` WHERE status = $1`
 		args = append(args, status)
 	}
 	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		if len(args) == 0 {
+			query += fmt.Sprintf(` LIMIT %d OFFSET %d`, limit, offset)
+		} else {
+			query += fmt.Sprintf(` LIMIT %d OFFSET %d`, limit, offset)
+		}
+	}
 
 	rows, err := db.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -215,7 +246,7 @@ func (db *DB) ListTickets(ctx context.Context, status string) ([]*models.Ticket,
 		var labels string
 		var s, ms string
 		err := rows.Scan(&t.ID, &t.Title, &t.Description, &labels, &s, &ms, &t.MRURL,
-			&t.AgentID, &t.RetryCount, &t.CreatedAt, &t.UpdatedAt)
+			&t.AgentID, &t.RetryCount, &t.Type, &t.ParentID, &t.CreatedAt, &t.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -233,6 +264,23 @@ func (db *DB) ListTickets(ctx context.Context, status string) ([]*models.Ticket,
 func (db *DB) UpdateTicketStatus(ctx context.Context, id string, status string) error {
 	_, err := db.pool.Exec(ctx, `UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2`,
 		string(status), id)
+	return err
+}
+
+func (db *DB) DeleteTicket(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM ticket_comments WHERE ticket_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `DELETE FROM pipeline_steps WHERE ticket_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `DELETE FROM queue WHERE ticket_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `DELETE FROM tickets WHERE id = $1`, id)
 	return err
 }
 
@@ -255,11 +303,6 @@ func (db *DB) UpdateTicket(ctx context.Context, t *models.Ticket) error {
 	return err
 }
 
-func (db *DB) DeleteTicket(ctx context.Context, id string) error {
-	_, err := db.pool.Exec(ctx, `DELETE FROM tickets WHERE id = $1`, id)
-	return err
-}
-
 func (db *DB) SetTicketAIPlanning(ctx context.Context, id string, planning string) error {
 	_, err := db.pool.Exec(ctx, `UPDATE tickets SET ai_planning = $1, updated_at = NOW() WHERE id = $2`,
 		planning, id)
@@ -272,20 +315,52 @@ func (db *DB) SetTicketMRURL(ctx context.Context, id, mrURL string) error {
 	return err
 }
 
+func (db *DB) SetTicketBranchAndMR(ctx context.Context, id, branch, mrURL, mrProjectPath string) error {
+	mrStatus := "none"
+	if mrURL != "" {
+		mrStatus = "open"
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET branch = $1, mr_url = $2, mr_project_path = $3, mr_status = $4, updated_at = NOW() WHERE id = $5`,
+		branch, mrURL, mrProjectPath, mrStatus, id)
+	return err
+}
+
 func (db *DB) RequeueTicket(ctx context.Context, id string, maxRetries int) error {
-	t, err := db.GetTicket(ctx, id)
+	tx, err := db.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transaction: %w", err)
 	}
-	if t.RetryCount >= maxRetries {
-		_, err = db.pool.Exec(ctx, `UPDATE tickets SET status = 'failed', updated_at = NOW() WHERE id = $1`, id)
-		return err
+	defer tx.Rollback(ctx)
+
+	var retryCount int
+	err = tx.QueryRow(ctx, `SELECT retry_count FROM tickets WHERE id = $1 FOR UPDATE`, id).Scan(&retryCount)
+	if err != nil {
+		return fmt.Errorf("select ticket for requeue: %w", err)
 	}
-	_, err = db.pool.Exec(ctx, `
+	if retryCount >= maxRetries {
+		_, err = tx.Exec(ctx, `UPDATE tickets SET status = 'failed', updated_at = NOW() WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET status = 'queued', retry_count = retry_count + 1,
 			mr_status = 'none', review_status = 'pending', agent_id = '', updated_at = NOW()
 		WHERE id = $1`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	queueID := fmt.Sprintf("q-%s-retry-%d", id, retryCount+1)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO queue (id, ticket_id, priority, created_at)
+		VALUES ($1, $2, 0, NOW())
+		ON CONFLICT (id) DO NOTHING`, queueID, id)
+	if err != nil {
+		return fmt.Errorf("re-enqueue ticket: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // --- Agent operations ---
@@ -467,6 +542,48 @@ func (db *DB) DeleteRepo(ctx context.Context, name string) error {
 	return err
 }
 
+func (db *DB) UpdateRepoDB(ctx context.Context, r *RepoInput) error {
+	tags, _ := json.Marshal(r.Tags)
+	active := 0
+	if r.Active {
+		active = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE repos SET url = $2, branch = $3, description = $4, tags = $5, active = $6
+		WHERE name = $1`,
+		r.Name, r.URL, r.Branch, r.Description, string(tags), active)
+	return err
+}
+
+func (db *DB) PatchRepoDB(ctx context.Context, name string, patch map[string]interface{}) error {
+	if len(patch) == 0 {
+		return nil
+	}
+	setClauses := ""
+	args := []interface{}{name}
+	argIdx := 2
+	for k, v := range patch {
+		if setClauses != "" {
+			setClauses += ", "
+		}
+		setClauses += fmt.Sprintf("%s = $%d", k, argIdx)
+		args = append(args, v)
+		argIdx++
+	}
+	query := fmt.Sprintf(`UPDATE repos SET %s WHERE name = $1`, setClauses)
+	_, err := db.pool.Exec(ctx, query, args...)
+	return err
+}
+
+func (db *DB) SetRepoActiveDB(ctx context.Context, name string, active bool) error {
+	v := 0
+	if active {
+		v = 1
+	}
+	_, err := db.pool.Exec(ctx, `UPDATE repos SET active = $1 WHERE name = $2`, v, name)
+	return err
+}
+
 // --- Queue operations ---
 
 func (db *DB) EnqueueTicket(ctx context.Context, ticketID string, priority int) error {
@@ -503,6 +620,11 @@ func (db *DB) GetQueue(ctx context.Context) ([]*models.QueueItem, error) {
 
 func (db *DB) DequeueItem(ctx context.Context, id string) error {
 	_, err := db.pool.Exec(ctx, `DELETE FROM queue WHERE id = $1`, id)
+	return err
+}
+
+func (db *DB) DequeueByTicketID(ctx context.Context, ticketID string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM queue WHERE ticket_id = $1`, ticketID)
 	return err
 }
 
@@ -553,7 +675,10 @@ func (db *DB) GetSetting(ctx context.Context, key string) (string, error) {
 	var value string
 	err := db.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, key).Scan(&value)
 	if err != nil {
-		return "", nil
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
 	}
 	return value, nil
 }
@@ -704,12 +829,14 @@ func (db *DB) ImportReposFromConfig(ctx context.Context, configPath string, repo
 // --- Input types for API layer ---
 
 type TicketInput struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Labels      []string `json:"labels"`
-	IssueType   string   `json:"issue_type"`
-	Priority    string   `json:"priority"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Description   string   `json:"description"`
+	Labels        []string `json:"labels"`
+	IssueType     string   `json:"issue_type"`
+	Priority      string   `json:"priority"`
+	TicketType    string   `json:"ticket_type"`
+	SelectedRepos []string `json:"selected_repos"`
 }
 
 type RepoInput struct {
@@ -831,4 +958,484 @@ const (
 	ReviewPending           = "pending"
 	ReviewApproved          = "approved"
 	ReviewChangesRequested = "changes_requested"
-) 
+)
+
+// --- Pipeline step helpers (delegate to pgxpool) ---
+
+func (db *DB) CreatePipelineStep(ctx context.Context, step *repository.PipelineStep) error {
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO pipeline_steps (id, ticket_id, phase, status, role, agent_id, started_at, completed_at, retry_count, context, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+		step.ID, step.TicketID, string(step.Phase), step.Status, step.Role, step.AgentID,
+		step.StartedAt, step.CompletedAt, step.RetryCount, step.Context)
+	return err
+}
+
+func (db *DB) ListPipelineSteps(ctx context.Context, ticketID string) ([]*repository.PipelineStep, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, ticket_id, phase, status, role, agent_id, started_at, completed_at, retry_count, context, created_at
+		FROM pipeline_steps WHERE ticket_id = $1 ORDER BY created_at ASC`, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var steps []*repository.PipelineStep
+	for rows.Next() {
+		s := &repository.PipelineStep{}
+		var phase string
+		var startedAt, completedAt *time.Time
+		if err := rows.Scan(&s.ID, &s.TicketID, &phase, &s.Status, &s.Role, &s.AgentID,
+			&startedAt, &completedAt, &s.RetryCount, &s.Context, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		s.Phase = repository.Phase(phase)
+		s.StartedAt = startedAt
+		s.CompletedAt = completedAt
+		steps = append(steps, s)
+	}
+	return steps, rows.Err()
+}
+
+func (db *DB) UpdateTicketPhaseTimestamp(ctx context.Context, id, phase string) error {
+	col := ""
+	switch phase {
+	case "work":
+		col = "phase_work_started_at"
+	case "test":
+		col = "phase_test_started_at"
+	case "ship":
+		col = "phase_ship_started_at"
+	case "listen":
+		col = "phase_listen_started_at"
+	default:
+		return fmt.Errorf("unknown phase: %s", phase)
+	}
+	_, err := db.pool.Exec(ctx, fmt.Sprintf(`UPDATE tickets SET %s = NOW(), updated_at = NOW() WHERE id = $1`, col), id)
+	return err
+}
+
+// --- Group / team channel helpers ---
+
+func (db *DB) AddGroupMessage(ctx context.Context, groupID, agentID, messageType, content string) error {
+	id := fmt.Sprintf("msg-%s-%d", groupID, time.Now().UnixNano())
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO team_channel_messages (id, group_id, agent_id, content, message_type, created_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())`,
+		id, groupID, agentID, content, messageType)
+	return err
+}
+
+func (db *DB) ListGroupMessages(ctx context.Context, groupID string) ([]*repository.GroupMessage, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, group_id, agent_id, content, message_type, created_at
+		FROM team_channel_messages WHERE group_id = $1 ORDER BY created_at ASC`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var msgs []*repository.GroupMessage
+	for rows.Next() {
+		m := &repository.GroupMessage{}
+		if err := rows.Scan(&m.ID, &m.GroupID, &m.AgentID, &m.Content, &m.MessageType, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
+// --- Agent profile helpers ---
+
+func (db *DB) ListAgentProfilesDB(ctx context.Context) ([]*models.AgentProfile, error) {
+	rows, err := db.pool.Query(ctx, `SELECT id, name, description, skills, instructions, memory_summary FROM agent_profiles ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var profiles []*models.AgentProfile
+	for rows.Next() {
+		p := &models.AgentProfile{}
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Skills, &p.Instructions, &p.MemorySummary); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, rows.Err()
+}
+
+func (db *DB) CreateAgentProfileDB(ctx context.Context, p *models.AgentProfile) error {
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO agent_profiles (id, name, description, skills, instructions, memory_summary)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description,
+			skills = EXCLUDED.skills, instructions = EXCLUDED.instructions, memory_summary = EXCLUDED.memory_summary`,
+		p.ID, p.Name, p.Description, p.Skills, p.Instructions, p.MemorySummary)
+	return err
+}
+
+// --- Memory block helpers ---
+
+func (db *DB) ListMemoryBlocksDB(ctx context.Context, agentID string) ([]*repository.MemoryBlock, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, agent_id, label, content, description, read_only, block_limit, repo_name, created_at, updated_at
+		FROM agent_memory_blocks WHERE agent_id = $1 ORDER BY label ASC`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var blocks []*repository.MemoryBlock
+	for rows.Next() {
+		b := &repository.MemoryBlock{}
+		var readOnly int
+		if err := rows.Scan(&b.ID, &b.AgentID, &b.Label, &b.Content, &b.Description, &readOnly, &b.BlockLimit, &b.RepoName, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		b.ReadOnly = readOnly == 1
+		blocks = append(blocks, b)
+	}
+	return blocks, rows.Err()
+}
+
+func (db *DB) SetMemoryBlockDB(ctx context.Context, agentID string, in *repository.MemoryBlockInput) error {
+	id := fmt.Sprintf("mem-%s-%s-%d", agentID, in.Label, time.Now().UnixNano())
+	readOnly := 0
+	if in.ReadOnly {
+		readOnly = 1
+	}
+	limit := in.BlockLimit
+	if limit == 0 {
+		limit = 5000
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO agent_memory_blocks (id, agent_id, label, content, description, read_only, block_limit, repo_name, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		ON CONFLICT (agent_id, label) DO UPDATE SET
+			content = EXCLUDED.content, description = EXCLUDED.description, read_only = EXCLUDED.read_only,
+			block_limit = EXCLUDED.block_limit, repo_name = EXCLUDED.repo_name, updated_at = NOW()`,
+		id, agentID, in.Label, in.Content, in.Description, readOnly, limit, in.RepoName)
+	return err
+}
+
+func (db *DB) DeleteMemoryBlockDB(ctx context.Context, agentID, label string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM agent_memory_blocks WHERE agent_id = $1 AND label = $2`, agentID, label)
+	return err
+}
+
+// --- MCP server CRUD helpers ---
+
+func (db *DB) CreateMCPServerDB(ctx context.Context, in *repository.MCPServerInput) (string, error) {
+	id := fmt.Sprintf("mcp-%d", time.Now().UnixNano())
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO mcp_servers (id, name, command, args, env, server_type, enabled, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, in.Name, in.Command, in.Args, in.Env, in.ServerType, enabled, in.Description)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) UpdateMCPServerDB(ctx context.Context, id string, in *repository.MCPServerInput) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE mcp_servers SET name = $2, command = $3, args = $4, env = $5, server_type = $6, enabled = $7, description = $8
+		WHERE id = $1`,
+		id, in.Name, in.Command, in.Args, in.Env, in.ServerType, enabled, in.Description)
+	return err
+}
+
+func (db *DB) DeleteMCPServerDB(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM mcp_servers WHERE id = $1`, id)
+	return err
+}
+
+// --- Plugin CRUD helpers ---
+
+func (db *DB) ListPluginsDB(ctx context.Context) ([]*repository.Plugin, error) {
+	rows, err := db.pool.Query(ctx, `SELECT id, name, package, enabled, description, config FROM opencode_plugins ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var plugins []*repository.Plugin
+	for rows.Next() {
+		p := &repository.Plugin{}
+		var enabled int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Package, &enabled, &p.Description, &p.Config); err != nil {
+			return nil, err
+		}
+		p.Enabled = enabled == 1
+		plugins = append(plugins, p)
+	}
+	return plugins, rows.Err()
+}
+
+func (db *DB) CreatePluginDB(ctx context.Context, in *repository.PluginInput) (string, error) {
+	id := fmt.Sprintf("plg-%d", time.Now().UnixNano())
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	config := in.Config
+	if config == "" {
+		config = "{}"
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO opencode_plugins (id, name, package, enabled, description, config, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+		id, in.Name, in.Package, enabled, in.Description, config)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) UpdatePluginDB(ctx context.Context, id string, in *repository.PluginInput) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE opencode_plugins SET name = $2, package = $3, enabled = $4, description = $5, config = $6, updated_at = NOW()
+		WHERE id = $1`,
+		id, in.Name, in.Package, enabled, in.Description, in.Config)
+	return err
+}
+
+func (db *DB) DeletePluginDB(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM opencode_plugins WHERE id = $1`, id)
+	return err
+}
+
+// --- Instruction CRUD helpers ---
+
+func (db *DB) ListInstructionsDB(ctx context.Context) ([]*repository.Instruction, error) {
+	rows, err := db.pool.Query(ctx, `SELECT id, name, content, description, enabled FROM agent_instructions ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var instructions []*repository.Instruction
+	for rows.Next() {
+		i := &repository.Instruction{}
+		var enabled int
+		if err := rows.Scan(&i.ID, &i.Name, &i.Content, &i.Description, &enabled); err != nil {
+			return nil, err
+		}
+		i.Enabled = enabled == 1
+		instructions = append(instructions, i)
+	}
+	return instructions, rows.Err()
+}
+
+func (db *DB) CreateInstructionDB(ctx context.Context, in *repository.InstructionInput) (string, error) {
+	id := fmt.Sprintf("ins-%d", time.Now().UnixNano())
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO agent_instructions (id, name, content, description, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+		id, in.Name, in.Content, in.Description, enabled)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) UpdateInstructionDB(ctx context.Context, id string, in *repository.InstructionInput) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE agent_instructions SET name = $2, content = $3, description = $4, enabled = $5, updated_at = NOW()
+		WHERE id = $1`,
+		id, in.Name, in.Content, in.Description, enabled)
+	return err
+}
+
+func (db *DB) DeleteInstructionDB(ctx context.Context, id string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM agent_instructions WHERE id = $1`, id)
+	return err
+}
+
+// --- Procedural pattern helpers ---
+
+func (db *DB) RecordProceduralPattern(ctx context.Context, patternType, description, context string, metadata map[string]interface{}) error {
+	metaJSON, _ := json.Marshal(metadata)
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO procedural_patterns (pattern_type, description, context, metadata, created_at)
+		VALUES ($1, $2, $3, $4, NOW())`,
+		patternType, description, context, string(metaJSON))
+	return err
+}
+
+// --- Telemetry helpers ---
+
+func (db *DB) SetTicketLLMUsageDB(ctx context.Context, id string, promptTokens, completionTokens int, totalCostUSD float64) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET llm_prompt_tokens = llm_prompt_tokens + $1,
+			llm_completion_tokens = llm_completion_tokens + $2,
+			llm_total_cost_usd = llm_total_cost_usd + $3, updated_at = NOW() WHERE id = $4`,
+		promptTokens, completionTokens, totalCostUSD, id)
+	return err
+}
+
+func (db *DB) CompleteAgentTaskTx(ctx context.Context, agentID, ticketID, newStatus string, llmPrompt, llmCompletion int, llmCost float64, linesAdded, linesRemoved, filesChanged int) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if ticketID != "" {
+		if llmPrompt > 0 || llmCompletion > 0 {
+			_, err = tx.Exec(ctx, `UPDATE tickets SET llm_prompt_tokens = llm_prompt_tokens + $1, llm_completion_tokens = llm_completion_tokens + $2, llm_total_cost_usd = llm_total_cost_usd + $3, updated_at = NOW() WHERE id = $4`, llmPrompt, llmCompletion, llmCost, ticketID)
+			if err != nil {
+				return err
+			}
+		}
+		if linesAdded > 0 || linesRemoved > 0 || filesChanged > 0 {
+			_, err = tx.Exec(ctx, `UPDATE tickets SET lines_added = $1, lines_removed = $2, files_changed = $3, updated_at = NOW() WHERE id = $4`, linesAdded, linesRemoved, filesChanged, ticketID)
+			if err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec(ctx, `UPDATE tickets SET status = 'completed', updated_at = NOW() WHERE id = $1`, ticketID)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `UPDATE agents SET status = $1, updated_at = NOW() WHERE id = $2`, newStatus, agentID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// --- Ticket hierarchy helpers ---
+
+func (db *DB) CreateTicketAndEnqueueWithParent(ctx context.Context, t *TicketInput, parentID string) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now().UTC()
+	status := "queued"
+	labels, _ := json.Marshal(t.Labels)
+	ticketType := "task"
+	_, err = tx.Exec(ctx, `
+		INSERT INTO tickets (id, title, description, labels, issue_type, priority, status,
+			mr_status, created_at, updated_at, parent_id, ticket_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'none', $8, $8, $9, $10)`,
+		t.ID, t.Title, t.Description, string(labels), t.IssueType, t.Priority, status, now, parentID, ticketType)
+	if err != nil {
+		return fmt.Errorf("insert child ticket: %w", err)
+	}
+	queueID := fmt.Sprintf("q-%s", t.ID)
+	_, err = tx.Exec(ctx, `INSERT INTO queue (id, ticket_id, priority, created_at) VALUES ($1, $2, 0, NOW())`, queueID, t.ID)
+	if err != nil {
+		return fmt.Errorf("enqueue child ticket: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (db *DB) ListChildren(ctx context.Context, parentID string) ([]*models.Ticket, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, title, description, labels, status, mr_status, mr_url, agent_id,
+			retry_count, parent_id, ticket_type, approval_status, created_at, updated_at
+		FROM tickets WHERE parent_id = $1 ORDER BY created_at ASC`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tickets []*models.Ticket
+	for rows.Next() {
+		t := &models.Ticket{}
+		var labels, status, mrStatus string
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description, &labels, &status, &mrStatus,
+			&t.MRURL, &t.AgentID, &t.RetryCount, &t.ParentID, &t.Type, &t.ApprovalStatus,
+			&t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		t.Status = models.TicketStatus(status)
+		t.MRStatus = models.MRStatus(mrStatus)
+		_ = json.Unmarshal([]byte(labels), &t.Labels)
+		tickets = append(tickets, t)
+	}
+	return tickets, rows.Err()
+}
+
+func (db *DB) ApproveTicket(ctx context.Context, id, feedback string) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET approval_status = 'approved', approval_feedback = $2, status = 'queued', updated_at = NOW() WHERE id = $1`,
+		id, feedback)
+	return err
+}
+
+func (db *DB) RejectTicket(ctx context.Context, id, feedback string) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE tickets SET approval_status = 'rejected', approval_feedback = $2, status = 'failed', updated_at = NOW() WHERE id = $1`,
+		id, feedback)
+	return err
+}
+
+func (db *DB) SetApprovalRequired(ctx context.Context, id string, required bool) error {
+	v := 0
+	if required {
+		v = 1
+	}
+	_, err := db.pool.Exec(ctx, `UPDATE tickets SET approval_required = $1, approval_status = 'pending', updated_at = NOW() WHERE id = $2`, v, id)
+	return err
+}
+
+func (db *DB) ListPendingApprovals(ctx context.Context) ([]*models.Ticket, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, title, description, status, approval_status, approval_feedback, parent_id, ticket_type, created_at, updated_at
+		FROM tickets WHERE approval_status = 'pending' ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tickets []*models.Ticket
+	for rows.Next() {
+		t := &models.Ticket{}
+		var status string
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description, &status, &t.ApprovalStatus,
+			&t.ApprovalFeedback, &t.ParentID, &t.Type, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		t.Status = models.TicketStatus(status)
+		tickets = append(tickets, t)
+	}
+	return tickets, rows.Err()
+}
+
+func (db *DB) AreAllChildrenCompleted(ctx context.Context, parentID string) (bool, error) {
+	var count int
+	err := db.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tickets WHERE parent_id = $1 AND status NOT IN ('completed', 'merged', 'failed')`, parentID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+func (db *DB) HasChildren(ctx context.Context, parentID string) (bool, error) {
+	var count int
+	err := db.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tickets WHERE parent_id = $1`, parentID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+} 

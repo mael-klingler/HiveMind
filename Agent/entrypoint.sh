@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
 COMMENT_POLL_INTERVAL="${COMMENT_POLL_INTERVAL:-30}"
@@ -7,7 +7,12 @@ GITLAB_TOKEN="${GITLAB_TOKEN:?GITLAB_TOKEN must be set}"
 GITLAB_HOST="${GITLAB_HOST:?GITLAB_HOST must be set}"
 GITLAB_HOST_NO_PROTO="${GITLAB_HOST#https://}"
 GITLAB_HOST_NO_PROTO="${GITLAB_HOST_NO_PROTO#http://}"
-GITLAB_API_URL="${GITLAB_HOST}/api/v4"
+# Ensure GITLAB_API_URL always has https://
+if [[ "$GITLAB_HOST" == https://* ]] || [[ "$GITLAB_HOST" == http://* ]]; then
+  GITLAB_API_URL="${GITLAB_HOST}/api/v4"
+else
+  GITLAB_API_URL="https://${GITLAB_HOST}/api/v4"
+fi
 GITLAB_USER="${GITLAB_USER:-gitlab-ci-token}"
 CURL_OPTS="-sS -k"
 
@@ -546,7 +551,7 @@ inject_git_credentials
 
 # ── Phase 2: Commit, Push, MR — only for real Git repos ──────────────────
 
-GITLAB_API_URL="${GITLAB_HOST}/api/v4"
+# GITLAB_API_URL already set with https:// at the top of the script
 
 create_merge_request() {
   local project_path="$1"
@@ -614,6 +619,56 @@ create_merge_request() {
   fi
 }
 
+create_pull_request() {
+  local project_path="$1"
+  local source_branch="$2"
+  local target_branch="$3"
+  local title="$4"
+  local body="$5"
+
+  local github_host="${GITHUB_HOST:-github.com}"
+  local encoded_path
+  encoded_path=$(echo -n "$project_path" | sed 's/\.git$//')
+
+  echo "🔍 Searching for existing PR for ${encoded_path} (${source_branch} → ${target_branch})..."
+  local existing
+  existing=$(curl $CURL_OPTS \
+    -H "Authorization: token ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "https://api.${github_host}/repos/${encoded_path}/pulls?state=opened&head=${source_branch}&base=${target_branch}" 2>&1)
+
+  if echo "$existing" | jq -e '.[0].html_url' >/dev/null 2>&1; then
+    echo "✅ Existing PR found"
+    echo "$existing" | jq -r '.[0].html_url'
+    return 0
+  fi
+
+  local pr_body
+  pr_body=$(printf '%s' "$body" | jq -sRr @json)
+
+  local result
+  result=$(curl $CURL_OPTS -s -w "\n%{http_code}" \
+    -X POST \
+    -H "Authorization: token ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github.v3+json" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":${pr_body},\"head\":\"${source_branch}\",\"base\":\"${target_branch}\",\"body\":${pr_body}}" \
+    "https://api.${github_host}/repos/${encoded_path}/pulls" 2>&1)
+
+  local http_code
+  http_code=$(echo "$result" | tail -1 | tr -d '[:space:]')
+  local body_json
+  body_json=$(echo "$result" | sed '$d')
+
+  if [ "$http_code" = "201" ] && echo "$body_json" | jq -e '.html_url' >/dev/null 2>&1; then
+    echo "$body_json" | jq -r '.html_url'
+    return 0
+  else
+    echo "❌ PR API error (HTTP $http_code): $(echo "$body_json" | head -200)" >&2
+    return 1
+  fi
+}
+
 MR_DESCRIPTION="## Summary
 
 This MR was created automatically by the HiveMind agent.
@@ -646,7 +701,14 @@ done)"
 for dir in /workspace/*/; do
   repo="${dir%/}"
   [ -d "$repo/.git" ] || continue
-  cd "$repo" || { echo "❌ Cannot change to $repo"; exit 1; }
+
+  # Only push the primary repo (where opencode worked) — skip others
+  if [ -n "$PRIMARY_REPO" ] && [ "$repo" != "$PRIMARY_REPO" ]; then
+    echo "📦 $(basename "$repo"): Skipping (not primary repo)"
+    continue
+  fi
+
+  cd "$repo" || { echo "❌ Cannot change to $repo"; continue; }
 
   echo "📦 $(basename "$repo"): Checking branch/MR status..."
 
@@ -726,12 +788,21 @@ for dir in /workspace/*/; do
   PROJECT_HOST="${GITLAB_HOST_NO_PROTO}"
   PROJECT_PATH=$(echo "$PROJECT_PATH" | sed "s|^${PROJECT_HOST}/||")
 
-  MR_URL=$(create_merge_request \
-    "$PROJECT_PATH" \
-    "$BRANCH" \
-    "${MR_TARGET_BRANCH:-main}" \
-    "[${TICKET_ID}] ${TICKET_TITLE}" \
-    "$MR_DESCRIPTION" 2>&1) || true
+  if [ "${VCS_PROVIDER:-gitlab}" = "github" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+    MR_URL=$(create_pull_request \
+      "$PROJECT_PATH" \
+      "$BRANCH" \
+      "${MR_TARGET_BRANCH:-main}" \
+      "[${TICKET_ID}] ${TICKET_TITLE}" \
+      "$MR_DESCRIPTION" 2>&1) || true
+  else
+    MR_URL=$(create_merge_request \
+      "$PROJECT_PATH" \
+      "$BRANCH" \
+      "${MR_TARGET_BRANCH:-main}" \
+      "[${TICKET_ID}] ${TICKET_TITLE}" \
+      "$MR_DESCRIPTION" 2>&1) || true
+  fi
 
   if echo "$MR_URL" | grep -q "^http"; then
     echo "🔗 MR created for $(basename "$repo"): $MR_URL"

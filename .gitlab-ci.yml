@@ -1,6 +1,7 @@
 stages:
   - test
   - build
+  - release
   - deploy
 
 variables:
@@ -8,9 +9,8 @@ variables:
   IMAGE_PREFIX: hivemind
   ORCHESTRATOR_IMAGE: ${REGISTRY}/${IMAGE_PREFIX}/hivemind-orchestrator
   AGENT_IMAGE: ${REGISTRY}/${IMAGE_PREFIX}/hivemind-opencode
-  DOCKER_TLS_CERTDIR: ""
-  DOCKER_HOST: tcp://docker:2375
-  DOCKER_DRIVER: overlay2
+
+# ─── Test ───────────────────────────────────────────────────────
 
 test:orchestrator:
   stage: test
@@ -26,98 +26,108 @@ test:orchestrator:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "development"'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
 
-test:python:
-  stage: test
-  image: python:3.11-slim
+# ─── Build (Kaniko — no privileged Docker daemon) ───────────────
+
+.build:template: &build_template
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
   before_script:
-    - apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-    - curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
-    - just --version
-    - pip install -r Orchestrator/requirements.txt pytest
-  script:
-    - just ci-python
+    - mkdir -p /kaniko/.docker
+    - |
+      cat > /kaniko/.docker/config.json << EOF
+      {
+        "auths": {
+          "${REGISTRY}": {
+            "username": "${HARBOR_ROBOT_USER}",
+            "password": "${HARBOR_ROBOT_TOKEN}"
+          }
+        }
+      }
+      EOF
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "development"'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
 
 build:orchestrator:
-  stage: build
-  image: docker:27-dind
-  services:
-    - name: docker:27-dind
-      command: ["--tls=false", "--insecure-registry=reg.capturecore.org"]
-      alias: docker
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
-  before_script:
-    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
+  <<: *build_template
   script:
-    - ORCHESTRATOR_TAG="${CI_COMMIT_SHORT_SHA}"
     - |
-      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        ORCHESTRATOR_TAG="latest"
+      DESTINATION="--destination ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      if [ "$CI_COMMIT_TAG" != "" ]; then
+        DESTINATION="$DESTINATION --destination ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_TAG}"
       fi
-    - docker build -f Dockerfile.go
-        -t ${ORCHESTRATOR_IMAGE}:${ORCHESTRATOR_TAG}
-        -t ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
-        .
-    - docker push ${ORCHESTRATOR_IMAGE}:${ORCHESTRATOR_TAG}
-    - docker push ${ORCHESTRATOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_BRANCH == "development"'
+      if [ "$CI_COMMIT_BRANCH" = "development" ]; then
+        DESTINATION="$DESTINATION --destination ${ORCHESTRATOR_IMAGE}:dev"
+      fi
+      /kaniko/executor \
+        --context "${CI_PROJECT_DIR}" \
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
+        $DESTINATION \
+        --cache=true \
+        --cache-repo "${REGISTRY}/${IMAGE_PREFIX}/cache" \
+        --insecure-registry=false
 
 build:agent:
-  stage: build
-  image: docker:27-dind
-  services:
-    - name: docker:27-dind
-      command: ["--tls=false", "--insecure-registry=reg.capturecore.org"]
-      alias: docker
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
-  before_script:
-    - echo "${HARBOR_ROBOT_TOKEN}" | docker login ${REGISTRY} -u 'robot$hivemind+hivemind-ci' --password-stdin
+  <<: *build_template
   script:
-    - AGENT_TAG="${CI_COMMIT_SHORT_SHA}"
     - |
-      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        AGENT_TAG="latest"
+      DESTINATION="--destination ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      if [ "$CI_COMMIT_TAG" != "" ]; then
+        DESTINATION="$DESTINATION --destination ${AGENT_IMAGE}:${CI_COMMIT_TAG}"
       fi
-    - docker build
-        -t ${AGENT_IMAGE}:${AGENT_TAG}
-        -t ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}
-        -f Agent/Dockerfile Agent/
-    - docker push ${AGENT_IMAGE}:${AGENT_TAG}
-    - docker push ${AGENT_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_BRANCH == "development"'
+      if [ "$CI_COMMIT_BRANCH" = "development" ]; then
+        DESTINATION="$DESTINATION --destination ${AGENT_IMAGE}:dev"
+      fi
+      /kaniko/executor \
+        --context "${CI_PROJECT_DIR}/Agent" \
+        --dockerfile "${CI_PROJECT_DIR}/Agent/Dockerfile" \
+        $DESTINATION \
+        --cache=true \
+        --cache-repo "${REGISTRY}/${IMAGE_PREFIX}/cache" \
+        --insecure-registry=false
 
-deploy:update-manifests:
-  stage: deploy
+# ─── Release: update deploy repo via MR (GitOps) ────────────────
+
+release:deploy-pr:
+  stage: release
   image: alpine/git:latest
   variables:
-    GIT_SSL_NO_VERIFY: "1"
+    GIT_STRATEGY: none
+  before_script:
+    - apk add --no-cache curl jq
+    - curl -sL https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -o /usr/bin/yq
+    - chmod +x /usr/bin/yq
   script:
     - CLONE_URL="https://argocd-deploy:${DEPLOY_REPO_TOKEN}@gitlab.capturecore.org/ai/hivemind-deploy.git"
     - git clone "$CLONE_URL" /tmp/hivemind-deploy
-    - "sed -i 's/newTag:.*/newTag: latest/' /tmp/hivemind-deploy/orchestrator/base/kustomization.yaml"
     - cd /tmp/hivemind-deploy
     - git config user.name "GitLab CI"
     - git config user.email "ci@gitlab.capturecore.org"
+    - BRANCH="release/${CI_COMMIT_TAG}"
+    - git checkout -b "$BRANCH"
+    - |
+      yq -i ".images[] |= select(.name | test(\"orchestrator\")).newTag = \"${CI_COMMIT_TAG}\"" \
+        orchestrator/base/kustomization.yaml
+      yq -i ".images[] |= select(.name | test(\"opencode\")).newTag = \"${CI_COMMIT_TAG}\"" \
+        orchestrator/base/kustomization.yaml
     - git add -A
-    - COMMIT_MSG="auto-update image tags to latest"
-    - git diff --cached --quiet || git commit -m "$COMMIT_MSG"
-    - git push origin HEAD:main
+    - |
+      git commit -m "release: update image tags to ${CI_COMMIT_TAG}" || exit 0
+    - git push origin "$BRANCH"
+    - |
+      curl --request POST --header "PRIVATE-TOKEN: ${DEPLOY_REPO_TOKEN}" \
+        --data "source_branch=${BRANCH}" \
+        --data "target_branch=main" \
+        --data "title=Release ${CI_COMMIT_TAG}" \
+        "https://gitlab.capturecore.org/api/v4/projects/ai%2Fhivemind-deploy/merge_requests"
   environment:
     name: production
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
       when: manual
+  allow_failure: true

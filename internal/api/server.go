@@ -21,6 +21,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -30,20 +32,27 @@ import (
 
 	"github.com/maelklingler/hivemind/internal/config"
 	"github.com/maelklingler/hivemind/internal/database"
+	"github.com/maelklingler/hivemind/internal/database/repository"
 	"github.com/maelklingler/hivemind/internal/k8s"
 	"github.com/maelklingler/hivemind/internal/middleware"
 	"github.com/maelklingler/hivemind/internal/models"
 	"github.com/maelklingler/hivemind/internal/sse"
+	"github.com/maelklingler/hivemind/internal/vcs"
+	"github.com/maelklingler/hivemind/internal/vcs/github"
+	"github.com/maelklingler/hivemind/internal/vcs/gitlab"
 )
 
 type Server struct {
-	Config      *config.Config
-	DB          *database.DB
-	K8s         *k8s.Client
-	Router      *chi.Mux
-	Broadcaster *sse.Broadcaster
-	Shutdown    context.CancelFunc
-	staticFS    fs.FS
+	Config         *config.Config
+	DB             *database.DB
+	K8s            *k8s.Client
+	Router         *chi.Mux
+	Broadcaster    *sse.Broadcaster
+	Dedup          repository.DedupRepository
+	RateLimiter    repository.RateLimitRepository
+	PipelineEngine PipelineEngineInterface
+	Shutdown       context.CancelFunc
+	staticFS       fs.FS
 }
 
 func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
@@ -54,13 +63,16 @@ func (s *Server) k8sOrError(w http.ResponseWriter) *k8s.Client {
 	return s.K8s
 }
 
-func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, staticFS fs.FS) *Server {
+func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broadcaster *sse.Broadcaster, dedup repository.DedupRepository, rateLimiter repository.RateLimitRepository, pipelineEngine PipelineEngineInterface, staticFS fs.FS) *Server {
 	s := &Server{
-		Config:      cfg,
-		DB:          db,
-		K8s:         k8sClient,
-		Broadcaster: broadcaster,
-		staticFS:    staticFS,
+		Config:         cfg,
+		DB:             db,
+		K8s:            k8sClient,
+		Broadcaster:    broadcaster,
+		Dedup:          dedup,
+		RateLimiter:    rateLimiter,
+		PipelineEngine: pipelineEngine,
+		staticFS:       staticFS,
 	}
 
 	r := chi.NewRouter()
@@ -71,7 +83,7 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 	r.Use(chiMiddleware.Timeout(60 * time.Second))
 	r.Use(middleware.CORS(cfg.CORSOrigins))
 	r.Use(middleware.APIKeyAuth(cfg.HivemindAPIKey))
-	r.Use(middleware.RateLimit(cfg.RateLimitPerMinute))
+	r.Use(middleware.RateLimitWithRedis(cfg.RateLimitPerMinute, s.RateLimiter))
 	r.Use(middleware.MaxBodySize(10 * 1024 * 1024))
 
 	r.Get("/healthz", s.healthz)
@@ -86,6 +98,7 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Post("/tickets/preview", s.previewTicket)
 		r.Get("/tickets/{id}", s.getTicket)
 		r.Patch("/tickets/{id}", s.updateTicket)
+		r.Delete("/tickets/{id}", s.deleteTicket)
 		r.Post("/tickets/{id}/reopen", s.reopenTicket)
 		r.Post("/tickets/{id}/stop", s.stopTicket)
 		r.Post("/tickets/{id}/review", s.submitReview)
@@ -115,11 +128,16 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Get("/repos", s.listRepos)
 		r.Post("/repos", s.addRepo)
 		r.Patch("/repos", s.bulkUpdateRepos)
+		r.Get("/repos/gitlab-projects", s.listGitLabProjects)
+		r.Post("/repos/import-selected", s.importSelectedRepos)
+		r.Post("/repos/init-from-gitlab", s.initFromGitLab)
 		r.Get("/repos/{name}", s.getRepo)
 		r.Put("/repos/{name}", s.updateRepo)
 		r.Patch("/repos/{name}", s.patchRepo)
 		r.Delete("/repos/{name}", s.deleteRepo)
 		r.Get("/repos/{name}/branches", s.listRepoBranches)
+		r.Post("/repos/{name}/activate", s.activateRepo)
+		r.Post("/repos/{name}/deactivate", s.deactivateRepo)
 
 		r.Get("/settings", s.getSettings)
 		r.Post("/settings", s.updateSettings)
@@ -151,19 +169,47 @@ func NewServer(cfg *config.Config, db *database.DB, k8sClient *k8s.Client, broad
 		r.Patch("/plugins/{id}", s.updatePlugin)
 		r.Delete("/plugins/{id}", s.deletePlugin)
 
-		// Stream
-		r.Get("/stream", s.streamEvents)
+		// Agent error reporting
+		r.Post("/agents/{id}/error", s.reportAgentError)
+
+		// Stream (delegates to Broadcaster.ServeHTTP)
+		r.Get("/stream", s.Broadcaster.ServeHTTP)
+
+		// Pipeline
+		r.Get("/phases", s.listPhases)
+		r.Get("/roles", s.listRoles)
+		r.Get("/roles/{role}/instruction", s.getRoleInstruction)
+		r.Get("/tickets/{id}/pipeline", s.getTicketPipeline)
+		r.Post("/agents/{id}/phase_complete", s.phaseComplete)
+		r.Post("/agents/{id}/phase_fail", s.phaseFail)
+
+		// Ticket hierarchy + approval
+		r.Post("/tickets/{id}/decompose", s.decomposeTicket)
+		r.Post("/tickets/{id}/approve", s.approveTicket)
+		r.Post("/tickets/{id}/reject", s.rejectTicket)
+		r.Get("/tickets/{id}/children", s.listChildren)
+		r.Get("/approvals/pending", s.listPendingApprovals)
+
+		// Groups (team channel)
+		r.Get("/groups/{id}/messages", s.listGroupMessages)
+		r.Post("/groups/{id}/messages", s.addGroupMessage)
 	})
 
 	// VCS Webhooks
 	r.Post("/webhooks/gitlab", s.gitlabWebhook)
 	r.Post("/webhooks/github", s.githubWebhook)
 
-	// Agent session proxy
+	// Agent session proxy (HTTP reverse proxy to agent pod)
 	r.Handle("/agent-session/{ticketID}/*", http.HandlerFunc(s.agentSessionProxy))
 
 	// Static assets (CSS, JS)
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
+
+	// Favicon (empty to prevent 404)
+	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 	// SPA fallback — serves index.html for all non-API, non-static routes
 	r.Get("/*", s.serveSPA)
@@ -248,6 +294,9 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list tickets: "+err.Error())
 		return
 	}
+	if tickets == nil {
+		tickets = []*models.Ticket{}
+	}
 	if offset > len(tickets) {
 		offset = len(tickets)
 	}
@@ -261,12 +310,14 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req struct {
-		ID          string   `json:"id"`
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Labels      []string `json:"labels"`
-		IssueType   string   `json:"issue_type"`
-		Priority    string   `json:"priority"`
+		ID            string   `json:"id"`
+		Title         string   `json:"title"`
+		Description   string   `json:"description"`
+		Labels        []string `json:"labels"`
+		IssueType     string   `json:"issue_type"`
+		Priority      string   `json:"priority"`
+		TicketType    string   `json:"ticket_type"`
+		SelectedRepos []string `json:"selected_repos"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -291,12 +342,14 @@ func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket := &database.TicketInput{
-		ID:          req.ID,
-		Title:       req.Title,
-		Description: req.Description,
-		Labels:      req.Labels,
-		IssueType:   req.IssueType,
-		Priority:    req.Priority,
+		ID:            req.ID,
+		Title:         req.Title,
+		Description:   req.Description,
+		Labels:        req.Labels,
+		IssueType:     req.IssueType,
+		Priority:      req.Priority,
+		TicketType:    req.TicketType,
+		SelectedRepos: req.SelectedRepos,
 	}
 	if err := s.DB.CreateTicketAndEnqueue(ctx, ticket); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create ticket: "+err.Error())
@@ -343,6 +396,17 @@ func (s *Server) updateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = ticket
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+}
+
+func (s *Server) deleteTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeleteTicket(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete ticket: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("ticket_requeued", map[string]string{"ticket_id": id, "reason": "deleted"})
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
 func (s *Server) reopenTicket(w http.ResponseWriter, r *http.Request) {
@@ -518,8 +582,15 @@ func (s *Server) completeAgentTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 	var req struct {
-		TicketID string `json:"ticket_id"`
-		Status   string `json:"status"`
+		TicketID           string  `json:"ticket_id"`
+		Status             string  `json:"status"`
+		LLMPromptTokens    int     `json:"llm_prompt_tokens"`
+		LLMCompletionTokens int    `json:"llm_completion_tokens"`
+		LLMTotalCostUSD    float64 `json:"llm_total_cost_usd"`
+		LinesAdded         int     `json:"lines_added"`
+		LinesRemoved       int     `json:"lines_removed"`
+		FilesChanged       int     `json:"files_changed"`
+		ModelUsed          string  `json:"model_used"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -542,15 +613,18 @@ func (s *Server) completeAgentTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.TicketID != "" {
-		if err := s.DB.UpdateTicketStatus(ctx, req.TicketID, "completed"); err != nil {
-			slog.Warn("failed to complete ticket", "ticket_id", req.TicketID, "error", err)
+		if err := s.DB.CompleteAgentTaskTx(ctx, id, req.TicketID, newStatus,
+			req.LLMPromptTokens, req.LLMCompletionTokens, req.LLMTotalCostUSD,
+			req.LinesAdded, req.LinesRemoved, req.FilesChanged); err != nil {
+			slog.Error("failed to complete agent task transactionally", "ticket_id", req.TicketID, "error", err)
 		} else {
 			s.Broadcaster.Broadcast("ticket_completed", map[string]string{"ticket_id": req.TicketID})
 		}
-	}
-	if err := s.DB.SetAgentStatus(ctx, id, newStatus); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to set agent status: "+err.Error())
-		return
+	} else {
+		if err := s.DB.SetAgentStatus(ctx, id, newStatus); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to set agent status: "+err.Error())
+			return
+		}
 	}
 	kc := s.k8sOrError(w)
 	if kc != nil && req.TicketID != "" {
@@ -598,39 +672,168 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAgentInstructions(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	instructions, err := s.DB.ListInstructionsDB(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list instructions: "+err.Error())
+		return
+	}
+	if instructions == nil {
+		instructions = []*repository.Instruction{}
+	}
+	writeJSON(w, http.StatusOK, instructions)
 }
 
 func (s *Server) createAgentInstruction(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var in repository.InstructionInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Name == "" || in.Content == "" {
+		writeError(w, http.StatusBadRequest, "name and content are required")
+		return
+	}
+	id, err := s.DB.CreateInstructionDB(ctx, &in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create instruction: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
 func (s *Server) updateAgentInstruction(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.InstructionInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.DB.UpdateInstructionDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update instruction: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
 }
 
 func (s *Server) deleteAgentInstruction(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeleteInstructionDB(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete instruction: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+}
+
+func (s *Server) reportAgentError(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentID := chi.URLParam(r, "id")
+	var req struct {
+		TicketID string `json:"ticket_id"`
+		Error    string `json:"error"`
+		Phase    string `json:"phase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TicketID == "" {
+		writeError(w, http.StatusBadRequest, "ticket_id is required")
+		return
+	}
+	slog.Warn("agent reported error", "agent_id", agentID, "ticket_id", req.TicketID, "error", req.Error, "phase", req.Phase)
+	if err := s.DB.SetAgentStatus(ctx, agentID, "error"); err != nil {
+		slog.Error("failed to set agent error status", "agent_id", agentID, "error", err)
+	}
+	if err := s.DB.RequeueTicket(ctx, req.TicketID, s.Config.AgentMaxRetries); err != nil {
+		slog.Error("failed to requeue ticket after agent error", "ticket_id", req.TicketID, "error", err)
+	}
+	s.Broadcaster.Broadcast("ticket_requeued", map[string]string{
+		"ticket_id": req.TicketID, "reason": "agent error: " + req.Error,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": agentID, "ticket_id": req.TicketID, "status": "requeued"})
 }
 
 func (s *Server) listAgentProfiles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	profiles, err := s.DB.ListAgentProfilesDB(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list agent profiles: "+err.Error())
+		return
+	}
+	if profiles == nil {
+		profiles = []*models.AgentProfile{}
+	}
+	writeJSON(w, http.StatusOK, profiles)
 }
 
 func (s *Server) createAgentProfile(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var p models.AgentProfile
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if p.ID == "" || p.Name == "" {
+		writeError(w, http.StatusBadRequest, "id and name are required")
+		return
+	}
+	if err := s.DB.CreateAgentProfileDB(ctx, &p); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create agent profile: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
 }
 
 func (s *Server) getAgentMemory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	blocks, err := s.DB.ListMemoryBlocksDB(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list memory blocks: "+err.Error())
+		return
+	}
+	if blocks == nil {
+		blocks = []*repository.MemoryBlock{}
+	}
+	writeJSON(w, http.StatusOK, blocks)
 }
 
 func (s *Server) updateAgentMemory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.MemoryBlockInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Label == "" {
+		writeError(w, http.StatusBadRequest, "label is required")
+		return
+	}
+	if err := s.DB.SetMemoryBlockDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to set memory block: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": id, "label": in.Label, "status": "updated"})
 }
 
 func (s *Server) deleteAgentMemory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	label := r.URL.Query().Get("label")
+	if label == "" {
+		writeError(w, http.StatusBadRequest, "label query parameter is required")
+		return
+	}
+	if err := s.DB.DeleteMemoryBlockDB(ctx, id, label); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete memory block: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": id, "label": label, "status": "deleted"})
 }
 
 func (s *Server) getQueue(w http.ResponseWriter, r *http.Request) {
@@ -639,6 +842,9 @@ func (s *Server) getQueue(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get queue: "+err.Error())
 		return
+	}
+	if queue == nil {
+		queue = []*models.QueueItem{}
 	}
 	writeJSON(w, http.StatusOK, queue)
 }
@@ -676,8 +882,19 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) bulkUpdateRepos(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement bulk update
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx := r.Context()
+	var repos []database.RepoInput
+	if err := json.NewDecoder(r.Body).Decode(&repos); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	for _, repo := range repos {
+		if err := s.DB.UpdateRepoDB(ctx, &repo); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update repo "+repo.Name+": "+err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "updated": len(repos)})
 }
 
 func (s *Server) getRepo(w http.ResponseWriter, r *http.Request) {
@@ -692,13 +909,41 @@ func (s *Server) getRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateRepo(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	var repo database.RepoInput
+	if err := json.NewDecoder(r.Body).Decode(&repo); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	repo.Name = name
+	if err := s.DB.UpdateRepoDB(ctx, &repo); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "updated"})
 }
 
 func (s *Server) patchRepo(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	var patch map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	allowed := map[string]bool{"url": true, "branch": true, "description": true, "active": true}
+	filtered := make(map[string]interface{})
+	for k, v := range patch {
+		if allowed[k] {
+			filtered[k] = v
+		}
+	}
+	if err := s.DB.PatchRepoDB(ctx, name, filtered); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to patch repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "patched"})
 }
 
 func (s *Server) deleteRepo(w http.ResponseWriter, r *http.Request) {
@@ -712,8 +957,253 @@ func (s *Server) deleteRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRepoBranches(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement via VCS provider
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	repo, err := s.DB.GetRepo(ctx, name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "repo not found")
+		return
+	}
+	provider := s.buildVCSProvider()
+	if provider == nil {
+		writeError(w, http.StatusServiceUnavailable, "VCS provider not configured")
+		return
+	}
+	projectPath := extractProjectPath(repo.URL, provider)
+	branches, err := provider.ListBranches(ctx, projectPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list branches: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, branches)
+}
+
+func (s *Server) activateRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	if err := s.DB.SetRepoActiveDB(ctx, name, true); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to activate repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "active"})
+}
+
+func (s *Server) deactivateRepo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := chi.URLParam(r, "name")
+	if err := s.DB.SetRepoActiveDB(ctx, name, false); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to deactivate repo: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "inactive"})
+}
+
+func (s *Server) listGitLabProjects(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	provider := s.buildVCSProvider()
+	if provider == nil {
+		writeError(w, http.StatusServiceUnavailable, "VCS provider not configured")
+		return
+	}
+	projects, err := provider.ListProjects(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list projects: "+err.Error())
+		return
+	}
+	repos, _ := s.DB.ListRepos(ctx, false)
+	repoMap := map[string]bool{}
+	for _, r := range repos {
+		repoMap[r.Name] = true
+	}
+	type gitlabProject struct {
+		ID               int                    `json:"id"`
+		Name             string                 `json:"name"`
+		PathWithNamespace string                `json:"path_with_namespace"`
+		URL              string                 `json:"url"`
+		DefaultBranch    string                 `json:"default_branch"`
+		Description      string                 `json:"description"`
+		Topics           []string               `json:"topics"`
+		GroupPath        string                 `json:"group_path"`
+		GroupName        string                 `json:"group_name"`
+		AlreadyImported  bool                   `json:"already_imported"`
+	}
+	result := make([]gitlabProject, 0, len(projects))
+	for _, p := range projects {
+		url, _ := p["http_url_to_repo"].(string)
+		if url == "" {
+			url, _ = p["ssh_url_to_repo"].(string)
+		}
+		if url == "" {
+			continue
+		}
+		name, _ := p["name"].(string)
+		pathWithNS, _ := p["path_with_namespace"].(string)
+		defaultBranch, _ := p["default_branch"].(string)
+		desc, _ := p["description"].(string)
+		if defaultBranch == "" {
+			defaultBranch = "main"
+		}
+		var topics []string
+		if raw, ok := p["topics"]; ok {
+			if arr, ok := raw.([]interface{}); ok {
+				for _, v := range arr {
+					if s, ok := v.(string); ok {
+						topics = append(topics, s)
+					}
+				}
+			}
+		}
+		groupPath := ""
+		groupName := ""
+		if ns, ok := p["namespace"].(map[string]interface{}); ok {
+			groupPath, _ = ns["full_path"].(string)
+			groupName, _ = ns["name"].(string)
+		}
+		if groupPath == "" {
+			if idx := strings.LastIndex(pathWithNS, "/"); idx >= 0 {
+				groupPath = pathWithNS[:idx]
+			}
+		}
+		result = append(result, gitlabProject{
+			ID:               int(p["id"].(float64)),
+			Name:             name,
+			PathWithNamespace: pathWithNS,
+			URL:              url,
+			DefaultBranch:    defaultBranch,
+			Description:      desc,
+			Topics:           topics,
+			GroupPath:        groupPath,
+			GroupName:        groupName,
+			AlreadyImported:  repoMap[name],
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) importSelectedRepos(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req struct {
+		Repos []struct {
+			Name        string `json:"name"`
+			URL         string `json:"url"`
+			Branch      string `json:"branch"`
+			Description string `json:"description"`
+		} `json:"repos"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	imported := 0
+	for _, r := range req.Repos {
+		in := &database.RepoInput{
+			Name: r.Name, URL: r.URL, Branch: r.Branch, Description: r.Description, Active: true,
+		}
+		if in.Branch == "" {
+			in.Branch = "development"
+		}
+		if err := s.DB.AddRepo(ctx, in); err != nil {
+			slog.Warn("failed to import repo", "name", r.Name, "error", err)
+			continue
+		}
+		imported++
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "imported": imported})
+}
+
+func (s *Server) initFromGitLab(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	provider := s.buildVCSProvider()
+	if provider == nil {
+		writeError(w, http.StatusServiceUnavailable, "VCS provider not configured")
+		return
+	}
+	projects, err := provider.ListProjects(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list projects: "+err.Error())
+		return
+	}
+	imported := 0
+	for _, p := range projects {
+		name, _ := p["name"].(string)
+		url, _ := p["url"].(string)
+		if name == "" || url == "" {
+			continue
+		}
+		in := &database.RepoInput{Name: name, URL: url, Branch: "development", Active: true}
+		if err := s.DB.AddRepo(ctx, in); err != nil {
+			slog.Warn("failed to import repo", "name", name, "error", err)
+			continue
+		}
+		imported++
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "imported": imported})
+}
+
+func (s *Server) buildVCSProvider() vcs.VCSProvider {
+	vcsProvider := s.Config.VCSProvider
+	gitlabHost := s.Config.GitLabHost
+	gitlabToken := s.Config.GitLabToken
+	githubToken := s.Config.GitHubToken
+	githubHost := s.Config.GitHubHost
+
+	if s.DB != nil {
+		if v, err := s.DB.GetSetting(context.Background(), "vcs_provider"); err == nil && v != "" {
+			vcsProvider = v
+		}
+		if v, err := s.DB.GetSetting(context.Background(), "gitlab_host"); err == nil && v != "" {
+			gitlabHost = v
+		}
+		if v, err := s.DB.GetSetting(context.Background(), "gitlab_token"); err == nil && v != "" {
+			gitlabToken = v
+		}
+		if v, err := s.DB.GetSetting(context.Background(), "git_token"); err == nil && v != "" {
+			githubToken = v
+		}
+	}
+
+	if vcsProvider == "github" {
+		return github.New(githubHost, githubToken)
+	}
+	return gitlab.New(gitlabHost, gitlabToken)
+}
+
+func extractProjectPath(repoURL string, provider vcs.VCSProvider) string {
+	host := provider.GetHost()
+	if host == "" {
+		return ""
+	}
+	hostIdx := indexOf(repoURL, host)
+	if hostIdx < 0 {
+		return ""
+	}
+	rest := repoURL[hostIdx+len(host):]
+	rest = trimPrefix(rest, "/")
+	rest = trimSuffix(rest, ".git")
+	return rest
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimPrefix(s, prefix string) string {
+	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
+		return s[len(prefix):]
+	}
+	return s
+}
+
+func trimSuffix(s, suffix string) string {
+	if len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix {
+		return s[:len(s)-len(suffix)]
+	}
+	return s
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -758,70 +1248,305 @@ func (s *Server) listMCPServers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list MCP servers: "+err.Error())
 		return
 	}
+	if servers == nil {
+		servers = []*models.MCPServer{}
+	}
 	writeJSON(w, http.StatusOK, servers)
 }
 
 func (s *Server) createMCPServer(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var in repository.MCPServerInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Name == "" || in.Command == "" {
+		writeError(w, http.StatusBadRequest, "name and command are required")
+		return
+	}
+	id, err := s.DB.CreateMCPServerDB(ctx, &in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create MCP server: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
 func (s *Server) updateMCPServer(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.MCPServerInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.DB.UpdateMCPServerDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update MCP server: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
 }
 
 func (s *Server) deleteMCPServer(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeleteMCPServerDB(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete MCP server: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
 func (s *Server) listPlugins(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	ctx := r.Context()
+	plugins, err := s.DB.ListPluginsDB(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list plugins: "+err.Error())
+		return
+	}
+	if plugins == nil {
+		plugins = []*repository.Plugin{}
+	}
+	writeJSON(w, http.StatusOK, plugins)
 }
 
 func (s *Server) createPlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	ctx := r.Context()
+	var in repository.PluginInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	id, err := s.DB.CreatePluginDB(ctx, &in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create plugin: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
 func (s *Server) updatePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var in repository.PluginInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.DB.UpdatePluginDB(ctx, id, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update plugin: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
 }
 
 func (s *Server) deletePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
-	ch := s.Broadcaster.AddClient()
-	defer s.Broadcaster.RemoveClient(ch)
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming not supported")
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if err := s.DB.DeletePluginDB(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete plugin: "+err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(http.StatusOK)
-
-	for {
-		select {
-		case event, ok := <-ch:
-			if !ok {
-				return
-			}
-			data, _ := json.Marshal(event.Data)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, string(data))
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		}
-	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
+
+
 func (s *Server) agentSessionProxy(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement reverse proxy to agent pods
-	writeError(w, http.StatusNotImplemented, "agent session proxy not yet implemented")
+	kc := s.k8sOrError(w)
+	if kc == nil {
+		return
+	}
+	ctx := r.Context()
+	ticketID := chi.URLParam(r, "ticketID")
+	podName := "agent-worker-" + strings.ToLower(ticketID)
+	podIP, err := kc.GetPodIP(ctx, podName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get pod: "+err.Error())
+		return
+	}
+	if podIP == "" {
+		writeError(w, http.StatusNotFound, "agent pod not found or has no IP")
+		return
+	}
+	target := fmt.Sprintf("http://%s:4096", podIP)
+	proxy := httputil.NewSingleHostReverseProxy(mustParseURL(target))
+	proxy.FlushInterval = -1
+	r.URL.Path = "/" + chi.URLParam(r, "*")
+	proxy.ServeHTTP(w, r)
+}
+
+func mustParseURL(raw string) *url.URL {
+	u, err := url.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}
+
+// --- Pipeline handlers ---
+
+func (s *Server) listPhases(w http.ResponseWriter, r *http.Request) {
+	phases := []map[string]interface{}{
+		{"id": "work", "name": "Work", "order": 1, "role": "developer"},
+		{"id": "test", "name": "Test", "order": 2, "role": "qa"},
+		{"id": "review", "name": "Review", "order": 3, "role": "reviewer"},
+		{"id": "ship", "name": "Ship", "order": 4, "role": "release"},
+		{"id": "listen", "name": "Listen", "order": 5, "role": "monitor"},
+	}
+	writeJSON(w, http.StatusOK, phases)
+}
+
+func (s *Server) listRoles(w http.ResponseWriter, r *http.Request) {
+	roles := []map[string]interface{}{
+		{"id": "developer", "name": "Developer", "instruction": "Implement the requested changes."},
+		{"id": "qa", "name": "QA", "instruction": "Run tests and verify the implementation."},
+		{"id": "reviewer", "name": "Reviewer", "instruction": "Review code quality and correctness."},
+		{"id": "release", "name": "Release", "instruction": "Create MR and handle pipeline."},
+		{"id": "monitor", "name": "Monitor", "instruction": "Watch MR feedback and respond."},
+	}
+	writeJSON(w, http.StatusOK, roles)
+}
+
+func (s *Server) getRoleInstruction(w http.ResponseWriter, r *http.Request) {
+	role := chi.URLParam(r, "role")
+	instructions := map[string]string{
+		"developer": "Implement the requested changes. Write tests. Follow project conventions.",
+		"qa":        "Run all tests. Report failures with context. Suggest fixes.",
+		"reviewer":  "Review code quality, correctness, and adherence to conventions.",
+		"release":   "Create a merge request with a clear description. Monitor pipeline.",
+		"monitor":   "Watch MR feedback. Respond to comments. Handle requested changes.",
+	}
+	instr, ok := instructions[role]
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown role")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"role": role, "instruction": instr})
+}
+
+func (s *Server) getTicketPipeline(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	steps, err := s.DB.ListPipelineSteps(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list pipeline steps: "+err.Error())
+		return
+	}
+	if steps == nil {
+		steps = []*repository.PipelineStep{}
+	}
+	writeJSON(w, http.StatusOK, steps)
+}
+
+func (s *Server) phaseComplete(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentID := chi.URLParam(r, "id")
+	var req struct {
+		TicketID    string `json:"ticket_id"`
+		Phase       string `json:"phase"`
+		Result      string `json:"result"`
+		LLMUsage    string `json:"llm_usage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TicketID == "" || req.Phase == "" {
+		writeError(w, http.StatusBadRequest, "ticket_id and phase are required")
+		return
+	}
+	if s.PipelineEngine == nil {
+		writeError(w, http.StatusServiceUnavailable, "pipeline engine not available")
+		return
+	}
+	next, err := s.PipelineEngine.CompletePhase(ctx, agentID, req.TicketID, req.Phase, req.Result, req.LLMUsage)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "phase complete failed: "+err.Error())
+		return
+	}
+	resp := map[string]interface{}{"agent_id": agentID, "ticket_id": req.TicketID, "completed_phase": req.Phase}
+	if next != "" {
+		resp["next_phase"] = string(next)
+	} else {
+		resp["status"] = "completed"
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) phaseFail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentID := chi.URLParam(r, "id")
+	var req struct {
+		TicketID string `json:"ticket_id"`
+		Phase    string `json:"phase"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TicketID == "" || req.Phase == "" {
+		writeError(w, http.StatusBadRequest, "ticket_id and phase are required")
+		return
+	}
+	if s.PipelineEngine == nil {
+		writeError(w, http.StatusServiceUnavailable, "pipeline engine not available")
+		return
+	}
+	if err := s.PipelineEngine.FailPhase(ctx, agentID, req.TicketID, req.Phase, req.Reason); err != nil {
+		writeError(w, http.StatusInternalServerError, "phase fail failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"agent_id": agentID, "ticket_id": req.TicketID, "failed_phase": req.Phase, "reason": req.Reason})
+}
+
+// --- Group / team channel handlers ---
+
+func (s *Server) listGroupMessages(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	msgs, err := s.DB.ListGroupMessages(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list messages: "+err.Error())
+		return
+	}
+	if msgs == nil {
+		msgs = []*repository.GroupMessage{}
+	}
+	writeJSON(w, http.StatusOK, msgs)
+}
+
+func (s *Server) addGroupMessage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var req struct {
+		AgentID     string `json:"agent_id"`
+		Content     string `json:"content"`
+		MessageType string `json:"message_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+	if req.MessageType == "" {
+		req.MessageType = "message"
+	}
+	if err := s.DB.AddGroupMessage(ctx, id, req.AgentID, req.MessageType, req.Content); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add message: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("group_message", map[string]string{"group_id": id, "agent_id": req.AgentID})
+	writeJSON(w, http.StatusCreated, map[string]string{"group_id": id, "status": "created"})
 }
 
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
@@ -849,4 +1574,85 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// WriteJSONForTest exports writeJSON for testing.
+func WriteJSONForTest(w http.ResponseWriter, status int, v interface{}) { writeJSON(w, status, v) }
+
+// WriteErrorForTest exports writeError for testing.
+func WriteErrorForTest(w http.ResponseWriter, status int, msg string) { writeError(w, status, msg) }
+
+// --- Ticket hierarchy + approval handlers ---
+
+func (s *Server) decomposeTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	ticket, err := s.DB.GetTicket(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "ticket not found")
+		return
+	}
+	if ticket.Type != "idea" {
+		writeError(w, http.StatusBadRequest, "only idea tickets can be decomposed")
+		return
+	}
+	s.Broadcaster.Broadcast("decompose_requested", map[string]string{"ticket_id": id})
+	writeJSON(w, http.StatusAccepted, map[string]string{"ticket_id": id, "status": "decompose_requested"})
+}
+
+func (s *Server) approveTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if err := s.DB.ApproveTicket(ctx, id, req.Feedback); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to approve: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("ticket_approved", map[string]string{"ticket_id": id, "feedback": req.Feedback})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket_id": id, "status": "approved"})
+}
+
+func (s *Server) rejectTicket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if err := s.DB.RejectTicket(ctx, id, req.Feedback); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reject: "+err.Error())
+		return
+	}
+	s.Broadcaster.Broadcast("ticket_rejected", map[string]string{"ticket_id": id, "feedback": req.Feedback})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket_id": id, "status": "rejected"})
+}
+
+func (s *Server) listChildren(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	children, err := s.DB.ListChildren(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list children: "+err.Error())
+		return
+	}
+	if children == nil {
+		children = []*models.Ticket{}
+	}
+	writeJSON(w, http.StatusOK, children)
+}
+
+func (s *Server) listPendingApprovals(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	tickets, err := s.DB.ListPendingApprovals(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list pending approvals: "+err.Error())
+		return
+	}
+	if tickets == nil {
+		tickets = []*models.Ticket{}
+	}
+	writeJSON(w, http.StatusOK, tickets)
 }

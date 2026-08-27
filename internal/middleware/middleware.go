@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/maelklingler/hivemind/internal/database/repository"
 )
 
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
@@ -68,7 +70,7 @@ func APIKeyAuth(apiKey string) func(http.Handler) http.Handler {
 				return
 			}
 			path := r.URL.Path
-			if path == "/healthz" || path == "/readyz" || path == "/metrics" || path == "/" {
+			if path == "/healthz" || path == "/readyz" || path == "/metrics" || path == "/" || path == "/api/stream" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -97,6 +99,32 @@ type rateLimiter struct {
 }
 
 func RateLimit(perMinute int) func(http.Handler) http.Handler {
+	return RateLimitWithRedis(perMinute, nil)
+}
+
+// RateLimitWithRedis returns a rate-limit middleware. If rlRepo is non-nil,
+// it uses Redis for distributed rate-limiting (multi-replica safe). Otherwise
+// it falls back to the in-memory limiter.
+func RateLimitWithRedis(perMinute int, rlRepo repository.RateLimitRepository) func(http.Handler) http.Handler {
+	if rlRepo != nil {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ip := r.RemoteAddr
+				allowed, err := rlRepo.Allow(r.Context(), ip, perMinute, time.Minute)
+				if err != nil {
+					// Fall back to allow on Redis error to avoid blocking all traffic.
+					next.ServeHTTP(w, r)
+					return
+				}
+				if !allowed {
+					http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+
 	limiter := &rateLimiter{
 		requests: make(map[string][]time.Time),
 		limit:    perMinute,

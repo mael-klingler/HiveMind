@@ -70,13 +70,21 @@ type Config struct {
 	TrackBranch         string
 	BranchFallbackOrder []string
 	LeankgEnabled       bool
+	AgentPermWrite      string
+	AgentPermBash       string
+	AgentPermExtDir     string
+	AgentPermDoomLoop   string
 }
 
 func Load() *Config {
-	return &Config{
+	return LoadFromDB(nil)
+}
+
+func LoadFromDB(getSetting func(key string) (string, error)) *Config {
+	c := &Config{
 		Port:                getEnv("ORCHESTRATOR_PORT", "8080"),
 		AgentNamespace:      getEnv("AGENT_NAMESPACE", "hivemind"),
-		AgentImage:          getEnv("AGENT_IMAGE", "hivemind-opencode:latest"),
+		AgentImage:          getEnv("AGENT_IMAGE", "hivemind-opencode:v0.1.0"),
 		AgentMaxRetries:     getEnvInt("AGENT_MAX_RETRIES", 3),
 		AgentRetryDelay:     getEnvInt("AGENT_RETRY_DELAY", 120),
 		AgentStaleTimeout:   getEnvInt("AGENT_STALE_TIMEOUT", 3600),
@@ -122,7 +130,68 @@ func Load() *Config {
 		TrackBranch:         getEnv("TRACK_BRANCH", "development"),
 		BranchFallbackOrder: getEnvSlice("BRANCH_FALLBACK_ORDER", []string{"development", "qa", "main", "master"}),
 		LeankgEnabled:       getEnvBool("LEANKG_ENABLED", true),
+		AgentPermWrite:      getEnv("AGENT_PERM_WRITE", "allow"),
+		AgentPermBash:       getEnv("AGENT_PERM_BASH", "allow"),
+		AgentPermExtDir:     getEnv("AGENT_PERM_EXT_DIR", "allow"),
+		AgentPermDoomLoop:   getEnv("AGENT_PERM_DOOM_LOOP", "deny"),
 	}
+	if getSetting != nil {
+		if v, err := getSetting("vcs_provider"); err == nil && v != "" {
+			c.VCSProvider = v
+		}
+		if v, err := getSetting("gitlab_host"); err == nil && v != "" {
+			c.GitLabHost = v
+		}
+		if v, err := getSetting("gitlab_token"); err == nil && v != "" {
+			c.GitLabToken = v
+		}
+		if v, err := getSetting("git_token"); err == nil && v != "" {
+			c.GitHubToken = v
+		}
+		if v, err := getSetting("git_user"); err == nil && v != "" {
+			c.GitUser = v
+		}
+		if v, err := getSetting("ollama_model"); err == nil && v != "" {
+			c.OllamaModel = v
+		}
+		if v, err := getSetting("opencode_model"); err == nil && v != "" {
+			c.OpencodeModel = v
+		}
+		if v, err := getSetting("ollama_cloud_api_key"); err == nil && v != "" {
+			c.OllamaCloudAPIKey = v
+		}
+		if v, err := getSetting("ollama_host"); err == nil && v != "" {
+			c.OllamaHost = v
+		}
+		if v, err := getSetting("ollama_base_url"); err == nil && v != "" {
+			c.OllamaBaseURL = v
+		}
+		if v, err := getSetting("agent_image"); err == nil && v != "" {
+			c.AgentImage = v
+		}
+		if v, err := getSetting("agent_namespace"); err == nil && v != "" {
+			c.AgentNamespace = v
+		}
+		if v, err := getSetting("agent_max_retries"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.AgentMaxRetries = n
+			}
+		}
+		if v, err := getSetting("agent_retry_delay"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.AgentRetryDelay = n
+			}
+		}
+		if v, err := getSetting("dry_run"); err == nil && v != "" {
+			c.DryRun = v == "true" || v == "1"
+		}
+		if v, err := getSetting("agent_stale_timeout"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.AgentStaleTimeout = n
+			}
+		}
+	}
+	return c
 }
 
 func (c *Config) OrchestrationURL() string {
@@ -160,9 +229,14 @@ func MaskSettings(settings map[string]string) map[string]string {
 
 var allowedSettings = map[string]bool{
 	"git_token": true, "gitlab_token": true, "gitlab_host": true,
+	"git_user": true, "gitlab_ssh_key_base64": true, "ssh_key_path": true,
+	"default_branch": true, "branch_fallback_order": true,
 	"ollama_host": true, "ollama_base_url": true, "ollama_model": true,
-	"opencode_model": true, "agent_namespace": true, "agent_image": true,
-	"agent_max_retries": true, "dry_run": true, "vcs_provider": true,
+	"ollama_timeout": true, "ollama_cloud_api_key": true,
+	"opencode_model": true, "opencode_port": true,
+	"agent_namespace": true, "agent_image": true,
+	"agent_max_retries": true, "agent_retry_delay": true, "max_agents": true,
+	"dry_run": true, "vcs_provider": true,
 	"comment_poll_interval": true, "agent_stale_timeout": true,
 	"track_branch": true, "test_command": true, "pvc_mount_path": true,
 	"work_dir": true, "leankg_enabled": true,

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -29,7 +30,7 @@ import (
 )
 
 type Client struct {
-	ClientSet *kubernetes.Clientset
+	ClientSet kubernetes.Interface
 	Namespace string
 }
 
@@ -89,12 +90,33 @@ func (c *Client) ListPods(ctx context.Context, labelSelector string) ([]corev1.P
 
 func (c *Client) DeletePod(ctx context.Context, name string) error {
 	err := c.ClientSet.CoreV1().Pods(c.Namespace).Delete(ctx, name, metav1.DeleteOptions{
-		GracePeriodSeconds: ptr(int64(0)),
+		GracePeriodSeconds:     ptr(int64(300)),
+		PropagationPolicy:      ptr(metav1.DeletePropagationForeground),
 	})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
 	return nil
+}
+
+// WaitForPodDeletion polls until the pod is gone or timeout expires.
+func (c *Client) WaitForPodDeletion(ctx context.Context, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pod, err := c.GetPod(ctx, name)
+		if err != nil {
+			return err
+		}
+		if pod == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("pod %s still exists after %s", name, timeout)
 }
 
 func (c *Client) CreatePod(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, error) {
@@ -125,6 +147,7 @@ func (c *Client) CreateConfigMap(ctx context.Context, name string, data map[stri
 }
 
 func (c *Client) ReplaceConfigMap(ctx context.Context, name string, data map[string]string, labels map[string]string) (*corev1.ConfigMap, error) {
+	existing, err := c.GetConfigMap(ctx, name)
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -132,6 +155,9 @@ func (c *Client) ReplaceConfigMap(ctx context.Context, name string, data map[str
 			Labels:    labels,
 		},
 		Data: data,
+	}
+	if existing != nil {
+		cm.ResourceVersion = existing.ResourceVersion
 	}
 	updated, err := c.ClientSet.CoreV1().ConfigMaps(c.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
@@ -204,6 +230,19 @@ func (c *Client) GetPodLogs(ctx context.Context, name string, tailLines int64) (
 	return string(logs), nil
 }
 
+// GetPodIP returns the pod IP of a running pod, or empty string if not found
+// or not yet assigned.
+func (c *Client) GetPodIP(ctx context.Context, name string) (string, error) {
+	pod, err := c.GetPod(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if pod == nil {
+		return "", nil
+	}
+	return pod.Status.PodIP, nil
+}
+
 func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 	_, err := c.ClientSet.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
@@ -216,6 +255,93 @@ func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 	}, metav1.CreateOptions{})
 	return err
+}
+
+// EnsureSecret creates a secret if it does not already exist. If it exists,
+// it is left unchanged (secrets are managed externally or via EnsureSecrets).
+func (c *Client) EnsureSecret(ctx context.Context, name string, stringData map[string]string, secretType corev1.SecretType) error {
+	existing, err := c.GetSecret(ctx, name)
+	if err != nil {
+		return fmt.Errorf("check secret %s: %w", name, err)
+	}
+	if existing != nil {
+		needUpdate := false
+		for key, expected := range stringData {
+			actual, ok := existing.Data[key]
+			if !ok || string(actual) != expected {
+				needUpdate = true
+				break
+			}
+		}
+		if needUpdate {
+			slog.Warn("secret drift detected, updating", "secret", name)
+			_, err := c.UpdateSecret(ctx, name, stringData, secretType)
+			return err
+		}
+		return nil
+	}
+	_, err = c.CreateSecret(ctx, name, stringData, secretType)
+	return err
+}
+
+func (c *Client) UpdateSecret(ctx context.Context, name string, stringData map[string]string, secretType corev1.SecretType) (*corev1.Secret, error) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Namespace},
+		Type:       secretType,
+		StringData: stringData,
+	}
+	updated, err := c.ClientSet.CoreV1().Secrets(c.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// EnsureSecrets idempotently creates the set of secrets required by agent pods.
+// This is called once at orchestrator startup (not per spawn) to avoid races
+// when multiple agent pods are spawned concurrently.
+func (c *Client) EnsureSecrets(ctx context.Context, params SecretParams) error {
+	if params.GitLabToken != "" {
+		if err := c.EnsureSecret(ctx, "gitlab-token", map[string]string{"token": params.GitLabToken}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure gitlab-token secret: %w", err)
+		}
+	}
+	if params.GitHubToken != "" {
+		if err := c.EnsureSecret(ctx, "github-token", map[string]string{"token": params.GitHubToken}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure github-token secret: %w", err)
+		}
+	}
+	if params.OllamaCloudAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "ollama-cloud-api-key", map[string]string{"api-key": params.OllamaCloudAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure ollama-cloud secret: %w", err)
+		}
+	}
+	if params.OpenAIAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "openai-api-key", map[string]string{"api-key": params.OpenAIAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure openai secret: %w", err)
+		}
+	}
+	if params.AnthropicAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "anthropic-api-key", map[string]string{"api-key": params.AnthropicAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure anthropic secret: %w", err)
+		}
+	}
+	if params.HivemindAPIKey != "" {
+		if err := c.EnsureSecret(ctx, "orchestrator-env", map[string]string{"HIVEMIND_API_KEY": params.HivemindAPIKey}, corev1.SecretTypeOpaque); err != nil {
+			return fmt.Errorf("ensure orchestrator-env secret: %w", err)
+		}
+	}
+	return nil
+}
+
+// SecretParams holds the secret values to ensure at startup.
+type SecretParams struct {
+	GitLabToken       string
+	GitHubToken       string
+	OllamaCloudAPIKey string
+	OpenAIAPIKey      string
+	AnthropicAPIKey   string
+	HivemindAPIKey    string
 }
 
 func (c *Client) CleanupAgentResources(ctx context.Context, ticketID string) {

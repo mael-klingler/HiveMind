@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HiveMind Orchestrator</title>
-  <link rel="stylesheet" href="/static/css/shared.css">
-  <script src="/static/js/shared.js"></script>
+  <link rel="stylesheet" href="/static/css/shared.css?v=22">
+  <script src="/static/js/shared.js?v=22"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
 <body>
@@ -89,7 +89,7 @@
                     <div class="agent-dot" :class="a.status || 'idle'"></div>
                     <div class="agent-info">
                       <div class="agent-name" x-text="a.name"></div>
-                      <div class="agent-ticket" x-text="a.status === 'running' && a.current_ticket_id ? a.current_ticket_id : a.status"></div>
+                      <div class="agent-ticket" x-text="a.status === 'running' && a.current_task ? a.current_task : a.status"></div>
                       <div class="agent-progress"><div class="agent-progress-bar" :style="'width:' + (a.progress || 0) + '%'"></div></div>
                     </div>
                   </div>
@@ -177,9 +177,23 @@
                 </div>
                 <div class="form-group"><label>Labels (comma-separated)</label><input x-model="newTicket.labelsStr" placeholder="backend, api, bug"></div>
                 <div class="form-group"><label>Repositories</label>
-                  <div class="checkbox-list" style="max-height:140px">
-                    <template x-for="r in repoNames" :key="r">
-                      <div class="checkbox-item"><input type="checkbox" :value="r" x-model="newTicket.selectedRepos"><span x-text="r"></span></div>
+                  <div class="group-tree" style="max-height:200px;overflow-y:auto">
+                    <template x-for="group in repoTree" :key="group.path">
+                      <div>
+                        <div class="group-tree-header" @click="group.expanded = !group.expanded" style="padding:.35rem .65rem">
+                          <span class="arrow" :class="group.expanded ? 'expanded' : ''">&#9654;</span>
+                          <span class="group-name" x-text="group.name"></span>
+                          <span class="group-count" x-text="'(' + group.repos.length + ')'"></span>
+                        </div>
+                        <div x-show="group.expanded">
+                          <template x-for="r in group.repos" :key="r">
+                            <div class="group-project" style="padding-left:1.8rem">
+                              <input type="checkbox" :value="r" x-model="newTicket.selectedRepos" style="margin-top:.15rem">
+                              <span style="font-size:.78rem" x-text="r"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
                     </template>
                   </div>
                   <div class="help">Select repos manually to skip AI auto-matching</div>
@@ -235,7 +249,7 @@
                     <div class="agent-avatar" x-text="a.name ? a.name.charAt(0).toUpperCase() : '?'"></div>
                     <div class="agent-details">
                       <div class="agent-name"><span x-text="a.name"></span> <span class="tag" :class="a.status === 'running' ? 'tag-running' : 'tag-idle'" x-text="a.status"></span></div>
-                      <div class="agent-model">ID: <span x-text="a.id"></span><span x-show="a.model_name"> | Model: <span x-text="a.model_name"></span></span><span x-show="a.current_ticket_id"> | Ticket: <span x-text="a.current_ticket_id"></span></span></div>
+                      <div class="agent-model">ID: <span x-text="a.id"></span><span x-show="a.model_name"> | Model: <span x-text="a.model_name"></span></span><span x-show="a.current_task"> | Ticket: <span x-text="a.current_task"></span></span></div>
                       <div class="agent-skills">
                         <template x-for="s in (a.skills || [])" :key="s"><span class="tag tag-skill" x-text="s"></span></template>
                         <template x-for="iid in (a.instruction_ids || [])" :key="iid">
@@ -627,21 +641,78 @@
               <div class="modal-body">
                 <template x-if="gitlabProjects.length === 0"><div class="loading">Loading GitLab projects...</div></template>
                 <template x-if="gitlabProjects.length > 0">
-                  <div style="max-height:50vh;overflow-y:auto">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
-                      <label style="font-size:.8rem;color:var(--text2)" x-text="gitlabProjects.filter(p=>!p.already_imported).length + ' projects available'"></label>
-                      <button class="btn btn-secondary btn-sm" @click="toggleAllGitlab()">Toggle All</button>
+                  <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+                      <label style="font-size:.8rem;color:var(--text2)" x-text="gitlabSelected.size + ' of ' + gitlabProjects.filter(p => !p.already_imported).length + ' selected'"></label>
+                      <div style="display:flex;gap:.4rem">
+                        <button class="btn btn-secondary btn-sm" @click="selectAllGitlab(true)">Select All</button>
+                        <button class="btn btn-secondary btn-sm" @click="selectAllGitlab(false)">Deselect All</button>
+                        <button class="btn btn-secondary btn-sm" @click="expandAllGitlabGroups(true)">Expand</button>
+                        <button class="btn btn-secondary btn-sm" @click="expandAllGitlabGroups(false)">Collapse</button>
+                      </div>
                     </div>
-                    <template x-for="p in gitlabProjects.filter(p=>!p.already_imported)" :key="p.name">
-                      <label style="display:flex;align-items:flex-start;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border)">
-                        <input type="checkbox" class="gitlab-project-check" :data-name="p.name" :data-url="p.url" :data-branch="p.default_branch || 'development'" :data-description="p.description || ''" :data-tags="(p.topics||[]).join(',')" checked style="margin-top:.25rem">
+                    <div class="group-tree" style="max-height:55vh;overflow-y:auto">
+                      <template x-for="group in gitlabTree" :key="group.path">
                         <div>
-                          <div style="font-size:.85rem;font-weight:600;color:var(--text)"><span x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch || 'development'"></span></div>
-                          <div style="font-size:.72rem;color:var(--muted2)" x-text="p.url"></div>
-                          <template x-if="p.description"><div style="font-size:.75rem;color:var(--text2);margin-top:.15rem" x-text="p.description.substring(0,80) + (p.description.length > 80 ? '...' : '')"></div></template>
+                          <div class="group-tree-header" @click="group.expanded = !group.expanded">
+                            <span class="arrow" :class="group.expanded ? 'expanded' : ''">&#9654;</span>
+                            <span class="group-name" x-text="group.name"></span>
+                            <span class="group-count" x-text="'(' + group.count + ')'"></span>
+                            <div class="group-check" @click.stop="toggleGroupSelect(group)">
+                              <input type="checkbox" :checked="isGroupAllSelected(group)" style="accent-color:var(--accent);width:13px;height:13px;pointer-events:none">
+                            </div>
+                          </div>
+                          <div x-show="group.expanded" class="group-tree-children">
+                            <template x-for="sub in group.children" :key="sub.path">
+                              <div class="group-subgroup">
+                                <template x-if="sub.projects.length > 0">
+                                  <div>
+                                    <div class="group-tree-header" @click="sub.expanded = !sub.expanded">
+                                      <span class="arrow" :class="sub.expanded ? 'expanded' : ''">&#9654;</span>
+                                      <span class="group-name" x-text="sub.name"></span>
+                                      <span class="group-count" x-text="'(' + sub.count + ')'"></span>
+                                      <div class="group-check" @click.stop="toggleSubSelect(sub)">
+                                        <input type="checkbox" :checked="isSubAllSelected(sub)" style="accent-color:var(--accent);width:13px;height:13px;pointer-events:none">
+                                      </div>
+                                    </div>
+                                    <div x-show="sub.expanded">
+                                      <template x-for="p in sub.projects" :key="p.id">
+                                        <div class="group-project subgroup-project" :style="p.already_imported ? 'opacity:.45' : ''">
+                                          <input type="checkbox" :disabled="p.already_imported" :checked="gitlabSelected.has(p.id)" @change="toggleGitlabProject(p.id, $event)" style="margin-top:.2rem;accent-color:var(--accent)">
+                                          <div class="group-project-info">
+                                            <div><span class="group-project-name" x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch"></span><template x-if="p.already_imported"><span style="font-size:.65rem;color:var(--green);margin-left:.3rem">imported</span></template></div>
+                                            <div class="group-project-path" x-text="p.path_with_namespace"></div>
+                                            <template x-if="p.description"><div class="group-project-desc" x-text="p.description.substring(0,80) + (p.description.length > 80 ? '...' : '')"></div></template>
+                                            <template x-if="(p.topics||[]).length > 0">
+                                              <div class="group-project-tags"><template x-for="t in (p.topics||[])" :key="t"><span class="repo-tag" x-text="t"></span></template></div>
+                                            </template>
+                                          </div>
+                                        </div>
+                                      </template>
+                                    </div>
+                                  </div>
+                                </template>
+                                <template x-if="sub.projects.length === 0">
+                                  <div class="group-tree-header" style="padding-left:1.8rem;cursor:default">
+                                    <span class="group-name" x-text="sub.name"></span>
+                                    <span class="group-count" style="color:var(--muted)">(empty)</span>
+                                  </div>
+                                </template>
+                              </div>
+                            </template>
+                            <template x-for="p in group.directProjects" :key="p.id">
+                              <div class="group-project" :style="p.already_imported ? 'opacity:.45' : ''">
+                                <input type="checkbox" :disabled="p.already_imported" :checked="gitlabSelected.has(p.id)" @change="toggleGitlabProject(p.id, $event)" style="margin-top:.2rem;accent-color:var(--accent)">
+                                <div class="group-project-info">
+                                  <div><span class="group-project-name" x-text="p.name"></span> <span class="repo-branch" x-text="p.default_branch"></span><template x-if="p.already_imported"><span style="font-size:.65rem;color:var(--green);margin-left:.3rem">imported</span></template></div>
+                                  <div class="group-project-path" x-text="p.path_with_namespace"></div>
+                                </div>
+                              </div>
+                            </template>
+                          </div>
                         </div>
-                      </label>
-                    </template>
+                      </template>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -749,7 +820,7 @@
                       <tr>
                         <td><span class="pod-dot" :class="a.status || 'idle'"></span><span x-text="a.name || a.id"></span></td>
                         <td x-text="a.status || 'idle'"></td>
-                        <td x-text="a.current_ticket_id || '—'"></td>
+                        <td x-text="a.current_task || '—'"></td>
                         <td x-text="a.status === 'running' ? (a.progress || 0) + '%' : '—'"></td>
                       </tr>
                     </template>
@@ -794,6 +865,7 @@ function app() {
         }
       });
       HM.loadVersion();
+      this.refreshDash();
       this.initSSE();
     },
 
@@ -866,8 +938,10 @@ function kanbanPage() {
     detailHtml: '',
     detailFooter: '',
     detailTicket: null,
+    vcsHost: '',
     newTicket: { id: '', title: '', description: '', issue_type: 'Task', priority: 'Medium', labelsStr: '', selectedRepos: [] },
     repoNames: [],
+    repoTree: [],
     columns: [
       { key: 'queued', label: 'Queued' },
       { key: 'running', label: 'Running' },
@@ -918,12 +992,54 @@ function kanbanPage() {
       try {
         this.allTickets = await HM.api('/tickets');
         const appEl = document.querySelector('[x-data]');
-        if (appEl && appEl.__x) appEl.__x.$data.ticketCount = this.allTickets.length;
+        if (appEl && appEl.__x) appEl.$data.ticketCount = this.allTickets.length;
+        if (!this.vcsHost) {
+          try {
+            const settings = await HM.api('/settings');
+            const h = (settings || []).find(s => s.key === 'gitlab_host');
+            if (h && h.value) this.vcsHost = h.value;
+          } catch(e2) {}
+        }
       } catch (e) { console.error(e); }
     },
 
     async loadRepoNames() {
-      try { this.repoNames = await HM.api('/repo-names'); } catch (e) { this.repoNames = []; }
+      try {
+        const repos = await HM.api('/repos');
+        this.repoNames = repos.map(r => r.name);
+        this.repoTree = this.buildRepoTree(repos);
+      } catch (e) { this.repoNames = []; this.repoTree = []; }
+    },
+
+    buildRepoTree(repos) {
+      const groups = {};
+      const groupOrder = ['capture-core', 'ai', 'Infra'];
+      const groupDisplayNames = { 'capture-core': 'CaptureCore', 'ai': 'AI', 'Infra': 'Infra' };
+      for (const r of repos) {
+        let group = 'Other';
+        const url = r.url || '';
+        const gitlabMatch = url.match(/gitlab\.capturecore\.org\/([^/]+(?:\/[^/]+)?)\//);
+        if (gitlabMatch) {
+          const gp = gitlabMatch[1];
+          const topGroup = gp.split('/')[0];
+          if (groupOrder.includes(topGroup)) group = topGroup;
+          else group = gp;
+        } else if (url.includes('github.com')) {
+          group = 'GitHub';
+        }
+        if (!groups[group]) groups[group] = { path: group, name: groupDisplayNames[group] || group, expanded: true, repos: [] };
+        groups[group].repos.push(r.name);
+      }
+      const tree = [];
+      for (const gName of groupOrder) {
+        if (groups[gName]) tree.push(groups[gName]);
+      }
+      if (groups['GitHub']) tree.push(groups['GitHub']);
+      if (groups['Other']) tree.push(groups['Other']);
+      for (const gName of Object.keys(groups)) {
+        if (!groupOrder.includes(gName) && gName !== 'GitHub' && gName !== 'Other') tree.push(groups[gName]);
+      }
+      return tree;
     },
 
     async openDetail(ticketId) {
@@ -940,7 +1056,19 @@ function kanbanPage() {
       const labels = this.parseLabels(t.labels);
       const labelStr = labels.join(', ') || '—';
       const selRepos = (() => { try { const r = JSON.parse(t.selected_repos || '[]'); return r.length ? '<div class="detail-field"><label>Manual Repos</label><div class="val" style="color:var(--accent)">' + r.join(', ') + '</div></div>' : ''; } catch(e) { return ''; } })();
-      const mr = t.mr_url ? '<div class="section-block green"><h4>Merge Request</h4><a href="' + HM.escapeHtml(t.mr_url) + '" target="_blank" style="font-size:0.8rem">' + HM.escapeHtml(t.mr_url) + '</a>' + HM.pipelineBadge(t.mr_pipeline_status) + '</div>' : '';
+      let mr = '';
+      if (t.mr_url) {
+        mr = '<div class="section-block green"><h4>Merge Request</h4><div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap"><a href="' + HM.escapeHtml(t.mr_url) + '" target="_blank" class="btn btn-primary btn-sm">Open MR &rarr;</a><span style="font-size:.75rem;color:var(--muted)">' + HM.escapeHtml(t.mr_url) + '</span></div>' + HM.pipelineBadge(t.mr_pipeline_status) + '</div>';
+      } else if (t.branch) {
+        const host = (this.vcsHost || 'gitlab.capturecore.org').replace(/^https?:\/\//, '');
+        if (t.mr_project_path) {
+          const branchUrl = 'https://' + host + '/' + HM.escapeHtml(t.mr_project_path) + '/-/tree/' + encodeURIComponent(t.branch);
+          const commitsUrl = 'https://' + host + '/' + HM.escapeHtml(t.mr_project_path) + '/-/commits/' + encodeURIComponent(t.branch);
+          mr = '<div class="section-block blue"><h4>Agent Branch</h4><div style="font-size:.8rem;margin-bottom:.25rem"><code>' + HM.escapeHtml(t.branch) + '</code> in <code>' + HM.escapeHtml(t.mr_project_path) + '</code></div><div style="display:flex;gap:.5rem;flex-wrap:wrap"><a href="' + branchUrl + '" target="_blank" class="btn btn-sm" style="background:var(--accent);color:#fff">View Files &rarr;</a><a href="' + commitsUrl + '" target="_blank" class="btn btn-secondary btn-sm">View Commits &rarr;</a></div></div>';
+        } else {
+          mr = '<div class="section-block blue"><h4>Agent Branch</h4><div style="font-size:.8rem"><code>' + HM.escapeHtml(t.branch) + '</code></div><div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">Branch created by agent — MR link will appear once merge request is created</div></div>';
+        }
+      }
       const retry = t.retry_count > 0 ? '<div class="detail-field" style="margin-top:.5rem"><label>Retry History</label><div class="val" style="color:var(--yellow)">' + t.retry_count + 'x rejected</div></div>' : '';
       const review = t.review_notes ? '<div class="detail-field" style="margin-top:.5rem"><label>Review Notes</label><div class="notes-box">' + HM.escapeHtml(t.review_notes) + '</div></div>' : '';
       const statusCls = {queued:'medium',running:'high',completed:'low',merged:'low',failed:'critical'}[t.status] || 'medium';
@@ -1021,8 +1149,10 @@ function kanbanPage() {
         issue_type: this.newTicket.issue_type,
         priority: this.newTicket.priority,
         labels: this.newTicket.labelsStr.split(',').map(s => s.trim()).filter(Boolean),
-        selected_repos: this.newTicket.selectedRepos,
       };
+      if (this.newTicket.selectedRepos && this.newTicket.selectedRepos.length > 0) {
+        data.selected_repos = [...this.newTicket.selectedRepos];
+      }
       if (!data.title) { HM.toast('Please enter a title', 'error'); return; }
       try {
         await HM.api('/tickets', 'POST', data);
@@ -1066,9 +1196,13 @@ function agentPage() {
 
     async refreshData() {
       try {
-        [this.agentProfiles, this.mcpServers, this.instructions, this.plugins] = await Promise.all([
+        const [profiles, mcps, instrs, plugins] = await Promise.all([
           HM.api('/agent-profiles'), HM.api('/mcp-servers'), HM.api('/agent-instructions'), HM.api('/plugins')
         ]);
+        this.agentProfiles = profiles || [];
+        this.mcpServers = mcps || [];
+        this.instructions = instrs || [];
+        this.plugins = plugins || [];
         this.repoNames = await HM.api('/repo-names').catch(() => []);
       } catch(e) { console.error(e); }
       try { this.loadModelSettings(); } catch(e) {}
@@ -1077,18 +1211,21 @@ function agentPage() {
     getInstructionName(id) { const i = this.instructions.find(x => x.id === id); return i ? i.name : ''; },
 
     async loadModelSettings() {
-      const s = await HM.api('/settings');
-      const byKey = {}; s.forEach(item => { byKey[item.key] = item.value; });
-      this.modelSettings = {
-        opencode_model: byKey.opencode_model || '',
-        ollama_model: byKey.ollama_model || '',
-        ollama_base_url: byKey.ollama_base_url || '',
-        ollama_timeout: byKey.ollama_timeout || '',
-        agent_retry_delay: byKey.agent_retry_delay || '',
-        agent_max_retries: byKey.agent_max_retries || '',
-        agent_image: byKey.agent_image || '',
-        dry_run: byKey.dry_run || 'false'
-      };
+      try {
+        const s = await HM.api('/settings');
+        if (!s) return;
+        const byKey = {}; s.forEach(item => { byKey[item.key] = item.value; });
+        this.modelSettings = {
+          opencode_model: byKey.opencode_model || '',
+          ollama_model: byKey.ollama_model || '',
+          ollama_base_url: byKey.ollama_base_url || '',
+          ollama_timeout: byKey.ollama_timeout || '',
+          agent_retry_delay: byKey.agent_retry_delay || '',
+          agent_max_retries: byKey.agent_max_retries || '',
+          agent_image: byKey.agent_image || '',
+          dry_run: byKey.dry_run || 'false'
+        };
+      } catch(e) { console.error('loadModelSettings error:', e); }
     },
 
     async saveModelSettings() {
@@ -1112,8 +1249,7 @@ function agentPage() {
       if (!this.agentForm.id) { HM.toast('Agent ID is required', 'error'); return; }
       const data = { id: this.agentForm.id, name: this.agentForm.name, model_name: this.agentForm.model_name, skills: this.agentForm.skills, instruction_ids: this.agentForm.instruction_ids, repo_affinities: this.agentForm.repo_affinities };
       try {
-        if (this.editingAgentId) { await HM.api('/agent-profiles/' + this.editingAgentId, 'PATCH', data); }
-        else { await HM.api('/agent-profiles', 'POST', data); }
+        await HM.api('/agent-profiles', 'POST', data);
         this.showAgentModal = false; await this.refreshData(); HM.toast(this.editingAgentId ? 'Updated!' : 'Created!');
       } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
@@ -1143,30 +1279,6 @@ function agentPage() {
       try {
         if (this.editingMcp) { await HM.api('/mcp-servers/' + this.editingMcp, 'PATCH', data); } else { await HM.api('/mcp-servers', 'POST', data); }
         this.showMcpModal = false; await this.refreshData(); HM.toast(this.editingMcp ? 'Updated!' : 'Added!');
-      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
-    },
-    async toggleMcp(name, val) { await HM.api('/mcp-servers/' + name, 'PATCH', { enabled: val }); await this.refreshData(); },
-    async deleteMcp(name) { if (!confirm('Really delete MCP server "' + name + '"?')) return; await HM.api('/mcp-servers/' + name, 'DELETE'); await this.refreshData(); HM.toast('Deleted!'); },
-
-    // Instructions
-    openInstrModal(id = null) {
-      this.editingInstrId = id;
-      if (id !== null) {
-        const i = this.instructions.find(x => x.id === id);
-        if (!i) return;
-        this.instrForm = { name: i.name, content: i.content, enabled: i.enabled ? 1 : 0, sort_order: i.sort_order || 0 };
-      } else {
-        this.instrForm = { name: '', content: '', enabled: 1, sort_order: 0 };
-      }
-      this.showInstrModal = true;
-    },
-    editInstr(id) { this.openInstrModal(id); },
-    async saveInstr() {
-      if (!this.instrForm.name || !this.instrForm.content) { HM.toast('Name and content are required', 'error'); return; }
-      const data = { name: this.instrForm.name, content: this.instrForm.content, enabled: this.instrForm.enabled === 1, sort_order: this.instrForm.sort_order };
-      try {
-        if (this.editingInstrId !== null) { await HM.api('/agent-instructions/' + this.editingInstrId, 'PATCH', data); } else { await HM.api('/agent-instructions', 'POST', data); }
-        this.showInstrModal = false; await this.refreshData(); HM.toast(this.editingInstrId !== null ? 'Updated!' : 'Added!');
       } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
     async toggleInstr(id, val) { await HM.api('/agent-instructions/' + id, 'PATCH', { enabled: val }); await this.refreshData(); },
@@ -1224,7 +1336,9 @@ function agentPage() {
     },
     async deleteMemoryBlock(blockId) {
       if (!confirm('Really delete this memory block?')) return;
-      await HM.api('/agent-memory/' + this.memoryAgentId + '/' + blockId, 'DELETE');
+      const block = this.memoryBlocks.find(b => b.id === blockId);
+      if (!block) return;
+      await HM.api('/agent-memory/' + this.memoryAgentId + '?label=' + encodeURIComponent(block.label), 'DELETE');
       await this.loadMemoryBlocks(); HM.toast('Deleted!');
     }
   };
@@ -1242,6 +1356,9 @@ function reposPage() {
     showGitlabModal: false,
     showBulkBranchModal: false,
     gitlabProjects: [],
+    gitlabGroupFilter: '',
+    gitlabTree: [],
+    gitlabSelected: new Set(),
     addRepoForm: { name: '', url: '', branch: 'development', tagsStr: '', description: '' },
     editRepoForm: { name: '', url: '', branch: '', tagsStr: '', description: '' },
     bulkBranch: 'development',
@@ -1286,22 +1403,133 @@ function reposPage() {
     },
     async deleteRepo(name) { if (!confirm('Really remove repository "' + name + '"?')) return; try { await HM.api('/repos/' + encodeURIComponent(name), 'DELETE'); HM.toast('Repository removed'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); } },
     async initFromGitlab() {
-      HM.toast('Loading GitLab projects...'); try { this.gitlabProjects = await HM.api('/repos/gitlab-projects'); this.showGitlabModal = true; } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+      HM.toast('Loading GitLab projects...');
+      try {
+        this.gitlabProjects = await HM.api('/repos/gitlab-projects');
+        this.gitlabSelected = new Set();
+        this.gitlabProjects.forEach(p => { if (!p.already_imported) this.gitlabSelected.add(p.id); });
+        this.gitlabTree = this.buildGitlabTree(this.gitlabProjects);
+        this.showGitlabModal = true;
+      } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
-    toggleAllGitlab() { const checks = document.querySelectorAll('.gitlab-project-check'); const allChecked = [...checks].every(c => c.checked); checks.forEach(c => c.checked = !allChecked); },
+    buildGitlabTree(projects) {
+      const groups = {};
+      for (const p of projects) {
+        const gp = p.group_path || 'other';
+        const parts = gp.split('/');
+        const topGroup = parts[0] || 'other';
+        if (!groups[topGroup]) groups[topGroup] = { path: topGroup, name: topGroup, expanded: true, children: {}, directProjects: [], repos: [], count: 0 };
+        if (parts.length > 1) {
+          const subName = parts.slice(1).join('/');
+          if (!groups[topGroup].children[subName]) groups[topGroup].children[subName] = { path: gp, name: subName, expanded: true, projects: [], count: 0 };
+          groups[topGroup].children[subName].projects.push(p);
+          groups[topGroup].children[subName].count++;
+        } else {
+          groups[topGroup].directProjects.push(p);
+        }
+        groups[topGroup].count++;
+      }
+      const tree = [];
+      const groupOrder = ['capture-core', 'ai', 'Infra', 'other'];
+      const groupNames = { 'capture-core': 'CaptureCore', 'ai': 'AI', 'Infra': 'Infra', 'other': 'Other' };
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        const ai = groupOrder.indexOf(a);
+        const bi = groupOrder.indexOf(b);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
+        return a.localeCompare(b);
+      });
+      for (const key of sortedKeys) {
+        const g = groups[key];
+        g.name = groupNames[key] || key;
+        const children = [];
+        const subOrder = ['backend', 'Deploy', 'frontend', 'ml', 'platform', 'tools'];
+        const subDisplayNames = { 'backend': 'backend', 'Deploy': 'Deploy', 'frontend': 'frontend', 'ml': 'ML', 'platform': 'platform', 'tools': 'tools' };
+        const subKeys = Object.keys(g.children).sort((a, b) => {
+          const ai2 = subOrder.indexOf(a);
+          const bi2 = subOrder.indexOf(b);
+          if (ai2 >= 0 && bi2 >= 0) return ai2 - bi2;
+          if (ai2 >= 0) return -1;
+          if (bi2 >= 0) return 1;
+          return a.localeCompare(b);
+        });
+        for (const sk of subKeys) {
+          const sub = g.children[sk];
+          sub.name = subDisplayNames[sk] || sk;
+          children.push(sub);
+        }
+        g.children = children;
+        tree.push(g);
+      }
+      return tree;
+    },
+    isGroupAllSelected(group) {
+      const all = [...group.directProjects, ...group.children.flatMap(s => s.projects)];
+      const selectable = all.filter(p => !p.already_imported);
+      return selectable.length > 0 && selectable.every(p => this.gitlabSelected.has(p.id));
+    },
+    isGroupPartialSelected(group) {
+      const all = [...group.directProjects, ...group.children.flatMap(s => s.projects)];
+      const selectable = all.filter(p => !p.already_imported);
+      const selected = selectable.filter(p => this.gitlabSelected.has(p.id));
+      return selected.length > 0 && selected.length < selectable.length;
+    },
+    isSubAllSelected(sub) {
+      const selectable = sub.projects.filter(p => !p.already_imported);
+      return selectable.length > 0 && selectable.every(p => this.gitlabSelected.has(p.id));
+    },
+    isSubPartialSelected(sub) {
+      const selectable = sub.projects.filter(p => !p.already_imported);
+      const selected = selectable.filter(p => this.gitlabSelected.has(p.id));
+      return selected.length > 0 && selected.length < selectable.length;
+    },
+    toggleGroupSelect(group) {
+      const all = [...group.directProjects, ...group.children.flatMap(s => s.projects)];
+      const selectable = all.filter(p => !p.already_imported);
+      const allSel = selectable.every(p => this.gitlabSelected.has(p.id));
+      selectable.forEach(p => { if (allSel) this.gitlabSelected.delete(p.id); else this.gitlabSelected.add(p.id); });
+      this.gitlabSelected = new Set(this.gitlabSelected);
+    },
+    toggleSubSelect(sub) {
+      const selectable = sub.projects.filter(p => !p.already_imported);
+      const allSel = selectable.every(p => this.gitlabSelected.has(p.id));
+      selectable.forEach(p => { if (allSel) this.gitlabSelected.delete(p.id); else this.gitlabSelected.add(p.id); });
+      this.gitlabSelected = new Set(this.gitlabSelected);
+    },
+    toggleGitlabProject(id, event) {
+      if (event.target.checked) this.gitlabSelected.add(id);
+      else this.gitlabSelected.delete(id);
+      this.gitlabSelected = new Set(this.gitlabSelected);
+    },
+    selectAllGitlab(select) {
+      if (select) {
+        this.gitlabProjects.forEach(p => { if (!p.already_imported) this.gitlabSelected.add(p.id); });
+      } else {
+        this.gitlabSelected = new Set();
+      }
+      this.gitlabSelected = new Set(this.gitlabSelected);
+    },
+    expandAllGitlabGroups(expand) {
+      for (const g of this.gitlabTree) {
+        g.expanded = expand;
+        for (const sub of g.children) { sub.expanded = expand; }
+      }
+    },
     async importSelectedGitlab() {
-      const checks = document.querySelectorAll('.gitlab-project-check:checked');
-      if (!checks.length) { HM.toast('No projects selected', 'error'); return; }
-      const repos = [...checks].map(c => ({ name: c.dataset.name, url: c.dataset.url, branch: c.dataset.branch, description: c.dataset.description, tags: c.dataset.tags ? c.dataset.tags.split(',').filter(Boolean) : [] }));
+      const selected = this.gitlabProjects.filter(p => this.gitlabSelected.has(p.id) && !p.already_imported);
+      if (!selected.length) { HM.toast('No projects selected', 'error'); return; }
+      const repos = selected.map(p => ({ name: p.name, url: p.url, branch: p.default_branch, description: p.description || '', tags: (p.topics || []) }));
       this.showGitlabModal = false; HM.toast('Importing ' + repos.length + ' repos...');
-      try { const result = await HM.api('/repos/import-selected', 'POST', { repos }); HM.toast(result.added.length + ' repos imported' + (result.skipped.length ? ', ' + result.skipped.length + ' skipped' : '')); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+      try { const result = await HM.api('/repos/import-selected', 'POST', { repos }); HM.toast(result.imported + ' repos imported'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     },
     async bulkSwitchBranch() {
       const branch = this.bulkBranch.trim();
       if (!branch) { HM.toast('Branch name required', 'error'); return; }
       if (!confirm('Switch all ' + this.repos.length + ' repos to branch "' + branch + '"?')) return;
       this.showBulkBranchModal = false;
-      try { const result = await HM.api('/repos', 'PATCH', { branch }); HM.toast(result.count + ' repos switched to "' + branch + '"'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
+      const updates = this.repos.map(r => ({ name: r.name, url: r.url, branch: branch, description: r.description || '', tags: r.tags || [], active: r.active }));
+      try { const result = await HM.api('/repos', 'PATCH', updates); HM.toast(result.updated + ' repos switched to "' + branch + '"'); await this.loadRepos(); } catch(e) { HM.toast('Error: ' + e.message, 'error'); }
     }
   };
 }
@@ -1322,6 +1550,7 @@ function settingsPage() {
     async loadSettings() {
       try {
         const s = await HM.api('/settings');
+        if (!s) return;
         s.forEach(item => { if (this.settings.hasOwnProperty(item.key)) this.settings[item.key] = item.value; });
       } catch(e) { console.error(e); }
     },
@@ -1333,8 +1562,7 @@ function settingsPage() {
     },
 
     async restartOrchestrator() {
-      if (!confirm('Really restart the orchestrator? Running agents will be terminated.')) return;
-      try { await HM.api('/restart', 'POST'); HM.toast('Restart initiated...'); } catch(e) { HM.toast('Restart request sent (connection will be interrupted)', 'error'); }
+      HM.toast('Use kubectl rollout restart deployment/orchestrator -n hivemind to restart', 'error');
     }
   };
 }

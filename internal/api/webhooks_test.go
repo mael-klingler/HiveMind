@@ -47,13 +47,13 @@ func TestExtractTicketIDFromBranch(t *testing.T) {
 func TestIsDuplicateWebhook(t *testing.T) {
 	webhookDedup = make(map[string]time.Time)
 
-	if isDuplicateWebhook("event-1") {
+	if inMemoryIsDuplicate("event-1") {
 		t.Error("first call should not be duplicate")
 	}
-	if !isDuplicateWebhook("event-1") {
+	if !inMemoryIsDuplicate("event-1") {
 		t.Error("second call with same ID should be duplicate")
 	}
-	if isDuplicateWebhook("event-2") {
+	if inMemoryIsDuplicate("event-2") {
 		t.Error("different ID should not be duplicate")
 	}
 }
