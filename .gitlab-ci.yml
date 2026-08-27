@@ -42,7 +42,7 @@ test:orchestrator:
       {
         "auths": {
           "${REGISTRY}": {
-            "username": "robot$hivemind+hivemind-ci",
+            "username": "${HARBOR_ROBOT_USER}",
             "password": "${HARBOR_ROBOT_TOKEN}"
           }
         }

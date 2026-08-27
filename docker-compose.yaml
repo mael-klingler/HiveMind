@@ -7,7 +7,7 @@ services:
     container_name: orchestrator-serve
     command: ["-serve"]
     environment:
-      - DATABASE_URL=postgres://hivemind:hivemind@hivemind-postgres-local:5432/hivemind?sslmode=disable
+      - DATABASE_URL=postgres://hivemind:${POSTGRES_PASSWORD:-hivemind}@hivemind-postgres-local:5432/hivemind?sslmode=disable
       - REDIS_URL=redis://hivemind-redis-local:6379
       - GITLAB_HOST=${GITLAB_HOST}
       - GITLAB_TOKEN=${GITLAB_TOKEN}
@@ -53,7 +53,7 @@ services:
     container_name: hivemind-postgres-local
     environment:
       POSTGRES_USER: hivemind
-      POSTGRES_PASSWORD: hivemind
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hivemind}
       POSTGRES_DB: hivemind
     volumes:
       - hivemind-pgdata:/var/lib/postgresql/data
@@ -102,7 +102,7 @@ services:
     container_name: hivemind-grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=hivemind
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
